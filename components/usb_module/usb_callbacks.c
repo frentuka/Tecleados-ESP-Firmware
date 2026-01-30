@@ -17,8 +17,8 @@
 
 // ======== Packet processing queues ========
 #define PROCESS_QUEUE_LENGTH 4
-static QueueHandle_t rx_queue = NULL;
-static QueueHandle_t tx_queue = NULL;
+static QueueHandle_t rx_processing_queue = NULL;
+static QueueHandle_t tx_processing_queue = NULL;
 
 // ============ RX Buffer ============
 
@@ -27,7 +27,7 @@ static QueueHandle_t tx_queue = NULL;
 #define MAX_RX_BUF_SIZE_IN_PAYLOADS MAX_RX_BUF_SIZE / MAX_PAYLOAD_LENGTH // 500 packets long
 
 static uint8_t rx_buf[MAX_RX_BUF_SIZE] = {0};
-static uint16_t rx_len = 0;
+static uint16_t rx_buf_len = 0;
 static uint64_t rx_last_packet_timestamp_us = 0;      // last received packet timestamp
 static uint16_t rx_last_packet_remaining_packets = 0;
 
@@ -38,7 +38,9 @@ static uint16_t rx_last_packet_remaining_packets = 0;
 #define MAX_TX_BUF_SIZE_IN_PAYLOADS MAX_TX_BUF_SIZE / MAX_PAYLOAD_LENGTH
 
 static uint8_t tx_buf[MAX_TX_BUF_SIZE] = {0};
-static uint16_t tx_len = 0;
+static uint16_t tx_buf_len = 0;
+static uint16_t tx_buf_idx = 0;
+static uint16_t tx_buf_last_packet_sent_idx = 0;
 static uint64_t tx_last_packet_timestamp_us = 0; // last sent packet timestamp
 static bool tx_awaiting_response = false;
 
@@ -114,13 +116,13 @@ void usbmod_tud_hid_set_report_cb(uint8_t instance,
     build_send_single_msg_packet(PAYLOAD_FLAG_ACK, msg.remaining_packets, 0, NULL);
 
     // check process queue initialization
-    if (rx_queue == NULL) {
+    if (rx_processing_queue == NULL) {
         ESP_LOGE(TAG, "Process queue not initialized");
         return;
     }
 
     // send packet to be processed on another thread
-    if (xQueueSend(rx_queue, &msg, 0) != pdTRUE) {
+    if (xQueueSend(rx_processing_queue, &msg, 0) != pdTRUE) {
         ESP_LOGE(TAG, "Process queue full, dropping packet");
     }
 }
@@ -148,6 +150,11 @@ static void process_incoming_packet(usb_packet_msg_t msg)
         process_tx_response(msg);
         return;
     }
+}
+
+static void process_outgoing_packet(usb_packet_msg_t msg)
+{
+
 }
 
 // HID report descriptor callback - return correct descriptor per interface
@@ -244,13 +251,13 @@ static void process_tx_response(const usb_packet_msg_t msg)
     }
 }
 
-// ======== rx stuff ========
+// ============ RX Stuff ============
 
 // Erase rx buffer in order to receive new data
 static void erase_rx_buffer()
 {
     memset(rx_buf, 0, sizeof(rx_buf));
-    rx_len = 0;
+    rx_buf_len = 0;
     rx_last_packet_timestamp_us = 0;
     ESP_LOGI(TAG, "RX buffer erased");
 }
@@ -258,15 +265,15 @@ static void erase_rx_buffer()
 // Will store data in rx buffer appending it next to data already stored
 static bool append_payload_to_rx_buffer(const uint8_t *data, uint8_t data_len)
 {
-    if (rx_len + data_len > MAX_RX_BUF_SIZE) {
-        ESP_LOGE(TAG, "Error: trying to append packets bigger than available space (trying: %lu, max av: %lu)", data_len + rx_len, MAX_RX_BUF_SIZE);
+    if (rx_buf_len + data_len > MAX_RX_BUF_SIZE) {
+        ESP_LOGE(TAG, "RX BUF Error: trying to append packets bigger than available space (trying: %lu, max av: %lu)", data_len + rx_buf_len, MAX_RX_BUF_SIZE);
         return false;
     }
 
-    memcpy(rx_buf + rx_len, data, data_len);
-    rx_len+= data_len;
+    memcpy(rx_buf + rx_buf_len, data, data_len);
+    rx_buf_len+= data_len;
 
-    ESP_LOGI(TAG, "Appended data. Data length: %d. Buffer length: %d sizeof(rx_buf): %ull", data_len, rx_len, sizeof(rx_buf));
+    ESP_LOGI(TAG, "Appended data to RX buf. Data length: %d. Buffer length: %d sizeof(rx_buf): %ull", data_len, rx_buf_len, sizeof(rx_buf));
 
     return true;
 }
@@ -274,13 +281,40 @@ static bool append_payload_to_rx_buffer(const uint8_t *data, uint8_t data_len)
 // Execute payload inside rx_buffer. Will erase rx_buffer afterwards, regardless of the result.
 static bool process_rx_buffer()
 {
-    ESP_LOGI(TAG, "Processing RX buffer. rx_len: %u", rx_len);
-    print_bytes_as_chars(TAG, rx_buf, rx_len);
+    ESP_LOGI(TAG, "Processing RX buffer. rx_buf_len: %u", rx_buf_len);
+    print_bytes_as_chars(TAG, rx_buf, rx_buf_len);
 
     return true;
 }
 
-// ============ tx stuff ============
+// ============ TX Stuff ============
+
+// Erase tx buffer in order to receive new data
+static void erase_tx_buffer()
+{
+    memset(tx_buf, 0, sizeof(tx_buf));
+    tx_buf_len = 0;
+    tx_buf_idx = 0;
+    tx_buf_last_packet_sent_idx = 0;
+    tx_last_packet_timestamp_us = 0;
+    ESP_LOGI(TAG, "TX buffer erased");
+}
+
+// Will store data in rx buffer appending it next to data already stored
+static bool append_payload_to_tx_buffer(const uint8_t *data, uint8_t data_len)
+{
+    if (tx_buf_len + data_len > MAX_TX_BUF_SIZE) {
+        ESP_LOGE(TAG, "TX BUF Error: trying to append packets bigger than available space (trying: %lu, max av: %lu)", data_len + tx_buf_len, MAX_TX_BUF_SIZE);
+        return false;
+    }
+
+    memcpy(tx_buf + tx_buf_len, data, data_len);
+    tx_buf_len+= data_len;
+
+    ESP_LOGI(TAG, "Appended data to TX buf. Data length: %d. Buffer length: %d sizeof(tx_buf): %ull", data_len, tx_buf_len, sizeof(tx_buf));
+
+    return true;
+}
 
 static bool build_send_single_msg_packet(uint8_t flag, uint16_t rem, uint8_t payload_len, uint8_t *payload)
 {
@@ -309,49 +343,121 @@ static bool send_single_packet(uint8_t *packet, uint16_t packet_len)
         result = tud_hid_n_report(ITF_NUM_HID_COMM, REPORT_ID_COMM, packet, packet_len);
     }
 
-    if (result) ESP_LOGI(TAG, "Report sent successfully");
+    if (result) ESP_LOGI(TAG, "Report sent successfully.");
     else        ESP_LOGE(TAG, "Unable to send usb report.");
 
     return result;
 }
 
-static bool send_payload(const uint8_t *payload, uint16_t payload_len)
+// Will extract the next payload available and increment buffer's idx.
+// If payload extraction is valid, msg.flags will be 0xFF. Otherwise, 0x00
+static usb_packet_msg_t tx_buf_extract_next_msg()
 {
-
-
-
-
-
-    if (xQueueSend(tx_queue, &msg, 0) != pdTRUE) {
-        ESP_LOGE(TAG, "Process queue full, dropping packet");
+    usb_packet_msg_t msg = {0}; // msg.flags == 0x00 -> error
+    if (!tx_buf_len) {
+        ESP_LOGE(TAG, "Couldn't extract next msg from tx_buf. len == 0");
+        return msg;
     }
+
+    if (tx_buf_idx >= tx_buf_len) {
+        ESP_LOGE(TAG, "Couldn't extract next msg from tx_buf. idx >= len");
+        return msg;
+    }
+
+    // extraction should succeed
+
+    uint16_t stripped_payload_len = tx_buf_len - tx_buf_idx;
+    stripped_payload_len = stripped_payload_len > MAX_PAYLOAD_LENGTH ? MAX_PAYLOAD_LENGTH : stripped_payload_len;
+
+    // increment idx
+    tx_buf_last_packet_sent_idx = tx_buf_idx;
+    tx_buf_idx+= stripped_payload_len;
+
+    // calculate bytes left to calculate amount of remaining packets
+    uint16_t bytes_left = tx_buf_len - stripped_payload_len;
+    
+    // set all values
+    msg.flags = 0xFF; // msg.flags == 0xFF -> success
+    msg.remaining_packets = (bytes_left + MAX_PAYLOAD_LENGTH - 1) / MAX_PAYLOAD_LENGTH;
+    memcpy(msg.payload, tx_buf + tx_buf_idx, stripped_payload_len);
+    msg.payload_len = stripped_payload_len;
+
+    // append crc data
+    usb_crc_prepare_packet((uint8_t*) &msg);
+
+    // buffer emptying should be managed in tx_processing_queue
+
+     return msg;
 }
 
-// ======== init ========
+// Send full payload via tx
+static bool send_payload(const uint8_t *payload, uint16_t payload_len)
+{
+    // Check for buffer content
+    if (tx_buf_len) {
+        ESP_LOGE(TAG, "Can't send payload: dirty buffer");
+        return false;
+    }
+
+    // Check if any response is being awaited
+    if (tx_awaiting_response) {
+        ESP_LOGE(TAG, "Can't send payload: awaiting for response");
+        return false;
+    }
+
+    // fill buffer
+    memcpy(tx_buf, payload, payload_len);
+    tx_buf_len = payload_len;
+
+    // Extract first message
+    usb_packet_msg_t first_msg = tx_buf_extract_next_msg();
+
+    if (first_msg.flags != 0xFF) {
+        ESP_LOGE(TAG, "TX Buffer first message extraction failed. Aborting.");
+        erase_tx_buffer();
+        return false;
+    }
+
+    // Send first payload message. The others (if any) should be sent over
+    if (!send_single_packet(&first_msg, COMM_REPORT_SIZE)) {
+        ESP_LOGE(TAG, "TX Process queue full, dropping packet.");
+        return false;
+    }
+
+    return true;
+}
+
+// ============ init ============
 
 static void processing_task(void *pvParameters) {
     usb_packet_msg_t msg;
     while (1) {
         // check for incoming packets
-        if (xQueueReceive(rx_queue, &msg, portMAX_DELAY) == pdTRUE) {
+        if (xQueueReceive(rx_processing_queue, &msg, portMAX_DELAY) == pdTRUE) {
             process_incoming_packet(msg);
         }
 
-        if (xQueueReceive(tx_queue, &msg, portMAX_DELAY) == pdTRUE) {
+        if (xQueueReceive(tx_processing_queue, &msg, portMAX_DELAY) == pdTRUE) {
             process_outgoing_packet(msg);
         }
 
-        // check for packet timeout
+        // check for packet timeout (rx_buf)
         uint64_t rx_timestamp_elapsed = esp_timer_get_time() - rx_last_packet_timestamp_us;
         if (rx_last_packet_timestamp_us && rx_timestamp_elapsed > RX_TIMEOUT_MS * 1000) {
             erase_rx_buffer();
+        }
+
+        // check for packet timeout (rx_buf)
+        uint64_t tx_timestamp_elapsed = esp_timer_get_time() - tx_last_packet_timestamp_us;
+        if (tx_last_packet_timestamp_us && tx_timestamp_elapsed > TX_TIMEOUT_MS * 1000) {
+            erase_tx_buffer();
         }
     }
 }
 
 void usb_callbacks_init(void) {
-    rx_queue = xQueueCreate(PROCESS_QUEUE_LENGTH, sizeof(usb_packet_msg_t));
-    if (rx_queue == NULL) {
+    rx_processing_queue = xQueueCreate(PROCESS_QUEUE_LENGTH, sizeof(usb_packet_msg_t));
+    if (rx_processing_queue == NULL) {
         ESP_LOGE(TAG, "Failed to create process queue");
         return;
     }
