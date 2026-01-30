@@ -7,46 +7,55 @@
 
 #include "freertos/queue.h"
 #include "freertos/task.h"
+
 #include "esp_log.h"
+#include "esp_timer.h"
 
 #include "tinyusb.h"
 
 #define TAG "usb_callbacks"
 
-#define MAX_RX_BUF_SIZE 21500 // 21.5KB -> 43(payload size) * 100(polling rate) * 5(seconds)
-#define MAX_RX_BUF_SIZE_IN_PAYLOADS MAX_RX_BUF_SIZE / MAX_PAYLOAD_LENGTH // 500 packets long
-// which is the max amount of packets that can ideally be sent in 5 seconds
-
-// function declaration here for wide usage, implementation at the bottom
-static void erase_rx_buffer();
-static bool append_to_rx_buffer(const uint8_t *data, uint8_t data_len);
-static bool process_rx_buffer();
-
-static void process_tx_callback(const uint8_t *payload);
-static void process_rx_callback(const uint8_t *payload);
-
-static void process_recvd_flag_ack();
-static void process_recvd_flag_nak();
-static void process_recvd_flag_ok();
-static void process_recvd_flag_err();
-static void process_recvd_flag_abort();
-
-static void send_ack(uint8_t idx);
-static void send_nak(uint8_t idx);
-static void send_ok(uint8_t idx);
-static void send_err(uint8_t idx);
-static void send_abort(void);
-
-// ============ HID CONFIG COMMS - Interrupt-driven Approach ============
-
 // ======== Packet processing queues ========
 #define PROCESS_QUEUE_LENGTH 4
-static QueueHandle_t process_queue = NULL;
+static QueueHandle_t rx_queue = NULL;
+static QueueHandle_t tx_queue = NULL;
 
-// Buffers to capture full payload before executing order
+// ============ RX Buffer ============
+
+#define RX_TIMEOUT_MS 1000 // max timeout for incoming sequential packets
+#define MAX_RX_BUF_SIZE 21500 // 21.5KB -> 43(payload size) * 100(polling rate) * 5(seconds)
+#define MAX_RX_BUF_SIZE_IN_PAYLOADS MAX_RX_BUF_SIZE / MAX_PAYLOAD_LENGTH // 500 packets long
+
 static uint8_t rx_buf[MAX_RX_BUF_SIZE] = {0};
 static uint16_t rx_len = 0;
-static uint16_t last_packet_remaining_packets = 0;
+static uint64_t rx_last_packet_timestamp_us = 0;      // last received packet timestamp
+static uint16_t rx_last_packet_remaining_packets = 0;
+
+// ============ TX Buffer ============
+
+#define TX_TIMEOUT_MS 1000
+#define MAX_TX_BUF_SIZE 21500
+#define MAX_TX_BUF_SIZE_IN_PAYLOADS MAX_TX_BUF_SIZE / MAX_PAYLOAD_LENGTH
+
+static uint8_t tx_buf[MAX_TX_BUF_SIZE] = {0};
+static uint16_t tx_len = 0;
+static uint64_t tx_last_packet_timestamp_us = 0; // last sent packet timestamp
+static bool tx_awaiting_response = false;
+
+// ============ Function declaration ============
+
+static void erase_rx_buffer();
+static bool append_payload_to_rx_buffer(const uint8_t *data, uint8_t data_len);
+static bool process_rx_buffer();
+
+static void process_rx_request(const usb_packet_msg_t msg);
+static void process_tx_response(const usb_packet_msg_t msg);
+
+static bool build_send_single_msg_packet(uint8_t flag, uint16_t rem, uint8_t payload_len, uint8_t *payload);
+static bool send_single_packet(uint8_t *packet, uint16_t packet_len);
+static bool send_payload(const uint8_t *payload, uint16_t payload_len);
+
+// ============ Callbacks ============
 
 // Updated HID callbacks to route by interface
 uint16_t usbmod_tud_hid_get_report_cb(uint8_t instance,
@@ -69,6 +78,8 @@ void usbmod_tud_hid_set_report_cb(uint8_t instance,
                            uint16_t bufsize)
 {
     (void) report_type;
+
+    // to-do: keyboard state listeners
     
     if (instance != ITF_NUM_HID_COMM) {
         return;
@@ -87,28 +98,34 @@ void usbmod_tud_hid_set_report_cb(uint8_t instance,
         return;
     }
 
-    // Validate payload's CRT
-    if (!usb_crc_verify_packet(payload)) {
-        ESP_LOGE(TAG, "Unable to validate payload. Responding with ERR.");
-        //return; // to-do: answer with ERR
-    }
-
-    // Process packet
+    // create msg
     usb_packet_msg_t msg = {0};
     memcpy(&msg, payload, payload_len);
 
-    // Send packet to be processed on another thread
-    if (process_queue == NULL) {
+
+    // Validate payload's CRT
+    if (!usb_crc_verify_packet(payload)) {
+        ESP_LOGE(TAG, "Unable to validate payload. Responding with NAK.");
+        build_send_single_msg_packet(PAYLOAD_FLAG_NAK, msg.remaining_packets, 0, NULL);
+        return;
+    }
+
+    // message payload is correct and can be acknowledged
+    build_send_single_msg_packet(PAYLOAD_FLAG_ACK, msg.remaining_packets, 0, NULL);
+
+    // check process queue initialization
+    if (rx_queue == NULL) {
         ESP_LOGE(TAG, "Process queue not initialized");
         return;
     }
 
-    if (xQueueSend(process_queue, &msg, 0) != pdTRUE) {
+    // send packet to be processed on another thread
+    if (xQueueSend(rx_queue, &msg, 0) != pdTRUE) {
         ESP_LOGE(TAG, "Process queue full, dropping packet");
     }
 }
 
-static void process_rx_packet(usb_packet_msg_t msg)
+static void process_incoming_packet(usb_packet_msg_t msg)
 {
     ESP_LOGI(TAG, "Received payload. len: %u, flags: %u, remaining: %u", msg.payload_len, msg.flags, msg.remaining_packets);
     print_bytes_as_chars(TAG, msg.payload, msg.payload_len);
@@ -119,70 +136,17 @@ static void process_rx_packet(usb_packet_msg_t msg)
         return;
     }
 
-    // Verify remaining_packets
-    if (msg.remaining_packets >= last_packet_remaining_packets) {
-        erase_rx_buffer();
-        last_packet_remaining_packets = msg.remaining_packets;
+    bool is_rx = msg.flags & PAYLOAD_FLAG_FIRST || msg.flags & PAYLOAD_FLAG_MID || msg.flags & PAYLOAD_FLAG_LAST;
+    bool is_tx = !is_rx && (msg.flags & PAYLOAD_FLAG_ACK || msg.flags & PAYLOAD_FLAG_NAK || msg.flags & PAYLOAD_FLAG_OK || msg.flags & PAYLOAD_FLAG_ERR || msg.flags & PAYLOAD_FLAG_ABORT);
+    
+    if (is_rx) {
+        process_rx_request(msg);
+        return;
     }
 
-    // Process flags
-    bool result = false;
-    switch (msg.flags)
-    {
-        // rx-wise
-
-        case PAYLOAD_FLAG_FIRST: // being the first one, erase buffer and start storing it
-            erase_rx_buffer();
-            result = append_to_rx_buffer(msg.payload, msg.payload_len);
-            if (!result) {
-                ESP_LOGE(TAG, "Error when appending to rx buffer");
-                send_nak(0);
-            }
-            break;
-
-        case PAYLOAD_FLAG_MID:
-            result = append_to_rx_buffer(msg.payload, msg.payload_len);
-            if (!result) {
-                ESP_LOGE(TAG, "Error when appending to rx buffer");
-                send_nak(msg.remaining_packets);
-            }
-            break;
-        
-        case PAYLOAD_FLAG_LAST: // being the last one, append and send buffer to be processed
-            append_to_rx_buffer(msg.payload, msg.payload_len);
-            result = process_rx_buffer();
-            if (!result) {
-                ESP_LOGE(TAG, "Error when processing rx buffer");
-                erase_rx_buffer();
-                send_nak(msg.remaining_packets);
-            }
-            break;
-        
-        // tx-wise (todo)
-
-        case PAYLOAD_FLAG_ACK:
-            process_recvd_flag_ack();
-            break;
-
-        case PAYLOAD_FLAG_NAK:
-            process_recvd_flag_nak();
-            break;
-        
-        case PAYLOAD_FLAG_OK:
-            process_recvd_flag_ok();
-            break;
-
-        case PAYLOAD_FLAG_ERR:
-            process_recvd_flag_err();
-            break;
-        
-        case PAYLOAD_FLAG_ABORT:
-            process_recvd_flag_abort();
-            break;
-
-        default:
-            ESP_LOGE(TAG, "Unable to determine payload flag for %u", msg.flags);
-            break;
+    if (is_tx) {
+        process_tx_response(msg);
+        return;
     }
 }
 
@@ -196,18 +160,103 @@ uint8_t const * tud_hid_descriptor_report_cb(uint8_t instance) {
     return NULL;
 }
 
-// ======== rx processing ========
+// ======== Flag processing ========
+
+static void process_rx_request(const usb_packet_msg_t msg)
+{
+    bool result = false;
+
+    if (msg.flags & PAYLOAD_FLAG_FIRST) {
+        ESP_LOGI(TAG, "Identified FIRST flag");
+
+        erase_rx_buffer();
+        result = append_payload_to_rx_buffer(msg.payload, msg.payload_len);
+
+        if (!result) {
+            ESP_LOGE(TAG, "Error when appending to rx buffer. Aborting.");
+            build_send_single_msg_packet(PAYLOAD_FLAG_ABORT, msg.remaining_packets, 0, NULL);
+        }
+    }
+
+    if (msg.flags & PAYLOAD_FLAG_MID) {
+        ESP_LOGI(TAG, "Identified MID flag");
+
+        result = append_payload_to_rx_buffer(msg.payload, msg.payload_len);
+
+        if (!result) {
+            ESP_LOGE(TAG, "Error when appending to rx buffer. Aborting.");
+            build_send_single_msg_packet(PAYLOAD_FLAG_ABORT, msg.remaining_packets, 0, NULL);
+        }
+    }
+
+    if (msg.flags & PAYLOAD_FLAG_LAST) {
+        ESP_LOGI(TAG, "Identified LAST flag");
+
+        result = append_payload_to_rx_buffer(msg.payload, msg.payload_len);
+        if (result) {
+            result = process_rx_buffer();
+            if (!result) {
+                ESP_LOGE(TAG, "Error when processing rx buffer. Responding with ERR.");
+                build_send_single_msg_packet(PAYLOAD_FLAG_ERR, msg.remaining_packets, 0, NULL);
+            }
+        } else {
+            ESP_LOGE(TAG, "Error when appending to rx buffer. Aborting.");
+            build_send_single_msg_packet(PAYLOAD_FLAG_ABORT, msg.remaining_packets, 0, NULL);
+        }
+    }
+
+    if (result)
+        rx_last_packet_timestamp_us = esp_timer_get_time();
+    
+    return;
+}
+
+static void process_tx_response(const usb_packet_msg_t msg)
+{
+    // Check unexpected response
+    if (!tx_awaiting_response) {
+        ESP_LOGE(TAG, "Received unexpected TX response. Ignoring.");
+        return;
+    }
+
+    if (msg.flags & PAYLOAD_FLAG_ACK) {
+        
+    }
+
+    if (msg.flags & PAYLOAD_FLAG_NAK) {
+        
+    }
+
+//
+
+    if (msg.flags & PAYLOAD_FLAG_OK) {
+        
+    }
+
+    if (msg.flags & PAYLOAD_FLAG_ERR) {
+        
+    }
+
+//
+
+    if (msg.flags & PAYLOAD_FLAG_ABORT) {
+        
+    }
+}
+
+// ======== rx stuff ========
 
 // Erase rx buffer in order to receive new data
 static void erase_rx_buffer()
 {
     memset(rx_buf, 0, sizeof(rx_buf));
     rx_len = 0;
+    rx_last_packet_timestamp_us = 0;
     ESP_LOGI(TAG, "RX buffer erased");
 }
 
 // Will store data in rx buffer appending it next to data already stored
-static bool append_to_rx_buffer(const uint8_t *data, uint8_t data_len)
+static bool append_payload_to_rx_buffer(const uint8_t *data, uint8_t data_len)
 {
     if (rx_len + data_len > MAX_RX_BUF_SIZE) {
         ESP_LOGE(TAG, "Error: trying to append packets bigger than available space (trying: %lu, max av: %lu)", data_len + rx_len, MAX_RX_BUF_SIZE);
@@ -222,91 +271,60 @@ static bool append_to_rx_buffer(const uint8_t *data, uint8_t data_len)
     return true;
 }
 
-// This function should be called when all rx_buffer contains a full set of good payloads
+// Execute payload inside rx_buffer. Will erase rx_buffer afterwards, regardless of the result.
 static bool process_rx_buffer()
 {
     ESP_LOGI(TAG, "Processing RX buffer. rx_len: %u", rx_len);
     print_bytes_as_chars(TAG, rx_buf, rx_len);
+
     return true;
 }
 
-// ======== flag processing ========
+// ============ tx stuff ============
 
-static void process_recvd_flag_ack()
+static bool build_send_single_msg_packet(uint8_t flag, uint16_t rem, uint8_t payload_len, uint8_t *payload)
 {
-    // todo
-}
+    uint8_t packet[COMM_REPORT_SIZE] = {0};
+    packet[0] = flag;
+    packet[1] = rem & 0xFF;
+    packet[2] = (rem >> 8) & 0xFF;
+    packet[3] = payload_len;
+    memcpy(packet + 4, payload, payload_len);
 
-static void process_recvd_flag_nak()
-{
-    // todo
+    return send_single_packet(packet, COMM_REPORT_SIZE);
 }
-
-static void process_recvd_flag_ok()
-{
-    // todo
-}
-
-static void process_recvd_flag_err()
-{
-    // todo
-}
-
-static void process_recvd_flag_abort()
-{
-    // todo
-}
-
-// ======== responses ========
 
 #define PACKET_SEND_MAX_ATTEMPTS 3
 #define PACKET_SEND_ATTEMPT_DELAY_MS 10
 
-// will send a packet of length COMM_REPORT_SIZE - 1 where last byte will be CRC
-static void send_single_packet(uint8_t *packet, uint16_t packet_len)
+// will send a packet of length COMM_REPORT_SIZE where last byte will be CRC
+static bool send_single_packet(uint8_t *packet, uint16_t packet_len)
 {
-    // fix packet length
-    if (packet_len < COMM_REPORT_SIZE) {
-        memset(packet + packet_len, 0, COMM_REPORT_SIZE - packet_len);
-        packet_len = COMM_REPORT_SIZE;
-    }
-
     usb_crc_prepare_packet(packet);
     bool result = tud_hid_n_report(ITF_NUM_HID_COMM, REPORT_ID_COMM, packet, packet_len);
+
     for (uint8_t i = 1; !result && 1 < PACKET_SEND_MAX_ATTEMPTS; i++) {
         ESP_LOGE(TAG, "Failed report send attempt...");
         vTaskDelay(pdMS_TO_TICKS(PACKET_SEND_ATTEMPT_DELAY_MS));
         result = tud_hid_n_report(ITF_NUM_HID_COMM, REPORT_ID_COMM, packet, packet_len);
     }
 
-    if (result) {
-        ESP_LOGI(TAG, "Report sent successfully");
+    if (result) ESP_LOGI(TAG, "Report sent successfully");
+    else        ESP_LOGE(TAG, "Unable to send usb report.");
+
+    return result;
+}
+
+static bool send_payload(const uint8_t *payload, uint16_t payload_len)
+{
+
+
+
+
+
+    if (xQueueSend(tx_queue, &msg, 0) != pdTRUE) {
+        ESP_LOGE(TAG, "Process queue full, dropping packet");
     }
-}
-
-static void send_ack(uint8_t idx)
-{
-
-}
-
-static void send_nak(uint8_t idx)
-{
-
-}
-
-static void send_ok(uint8_t idx)
-{
-
-}
-
-static void send_err(uint8_t idx)
-{
-
-}
-
-static void send_abort(void)
-{
-
 }
 
 // ======== init ========
@@ -314,17 +332,30 @@ static void send_abort(void)
 static void processing_task(void *pvParameters) {
     usb_packet_msg_t msg;
     while (1) {
-        if (xQueueReceive(process_queue, &msg, portMAX_DELAY) == pdTRUE) {
-            process_rx_packet(msg);
+        // check for incoming packets
+        if (xQueueReceive(rx_queue, &msg, portMAX_DELAY) == pdTRUE) {
+            process_incoming_packet(msg);
+        }
+
+        if (xQueueReceive(tx_queue, &msg, portMAX_DELAY) == pdTRUE) {
+            process_outgoing_packet(msg);
+        }
+
+        // check for packet timeout
+        uint64_t rx_timestamp_elapsed = esp_timer_get_time() - rx_last_packet_timestamp_us;
+        if (rx_last_packet_timestamp_us && rx_timestamp_elapsed > RX_TIMEOUT_MS * 1000) {
+            erase_rx_buffer();
         }
     }
 }
 
 void usb_callbacks_init(void) {
-    process_queue = xQueueCreate(PROCESS_QUEUE_LENGTH, sizeof(usb_packet_msg_t));
-    if (process_queue == NULL) {
-        ESP_LOGE(TAG, "Failed to create process_queue");
+    rx_queue = xQueueCreate(PROCESS_QUEUE_LENGTH, sizeof(usb_packet_msg_t));
+    if (rx_queue == NULL) {
+        ESP_LOGE(TAG, "Failed to create process queue");
         return;
     }
-    xTaskCreate(processing_task, "usb_processing_task", 4096, NULL, 5, NULL);
+
+    // 32KB stack size
+    xTaskCreate(processing_task, "usb_processing_task", 8192, NULL, 5, NULL);
 }

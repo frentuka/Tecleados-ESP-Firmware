@@ -51,7 +51,7 @@ def main():
     mid   = 0x40
     last  = 0x20
     
-    total_len = 23000
+    total_len = 2300
     packet_size = 43
     num_packets = (total_len + packet_size - 1) // packet_size  # ceil division
 
