@@ -51,7 +51,7 @@ def main():
     mid   = 0x40
     last  = 0x20
     
-    total_len = 2300
+    total_len = 120
     packet_size = 43
     num_packets = (total_len + packet_size - 1) // packet_size  # ceil division
 
@@ -84,6 +84,26 @@ def main():
 
         print(f"Remaining: {rem} Writing {len(out_payload)} bytes: {out_payload.hex()}")
         dev.write(out_payload)
+
+        # Wait for ACK
+        ack_flag = 0x10
+        timeout = 1.0  # seconds
+        start_time = time.time()
+        while True:
+            try:
+                response = dev.read(49)  # 49 bytes, 1s timeout per read
+            except Exception as e:
+                print(f"Read error: {e}")
+                break
+            if response:
+                print(f"Received response: {bytes(response).hex()}")
+                # Check if response contains ACK flag
+                if len(response) > 1 and response[1] & ack_flag:
+                    print("ACK received.")
+                    break
+            if time.time() - start_time > timeout:
+                print("Timeout waiting for ACK.")
+                break
 
     dev.close()
 
