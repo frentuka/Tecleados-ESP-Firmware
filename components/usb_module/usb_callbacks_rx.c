@@ -119,8 +119,12 @@ static bool append_payload_to_rx_buffer(const uint8_t *data, uint8_t data_len)
 // Execute payload inside rx_buffer. Will erase rx_buffer afterwards, regardless of the result.
 static bool process_rx_buffer()
 {
+    if (!rx_buf_len) {
+        ESP_LOGE(TAG, "Can't process a buffer that's 0 bytes long");
+        return false;
+    }
+
     ESP_LOGI(TAG, "Processing RX buffer. rx_buf_len: %u", rx_buf_len);
-    print_bytes_as_chars(TAG, rx_buf, rx_buf_len);
 
     return true;
 }

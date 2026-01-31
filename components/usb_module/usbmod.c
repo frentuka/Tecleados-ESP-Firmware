@@ -18,6 +18,41 @@
 
 #define TAG "USBModule"
 
+/*
+    handle callbacks to usb_callbacks
+    (workaround to tinyusb not wanting to link with usb_callbacks)
+*/
+
+uint16_t tud_hid_get_report_cb(uint8_t instance,
+                              uint8_t report_id,
+                              hid_report_type_t report_type,
+                              uint8_t *buffer,
+                              uint16_t reqlen)
+{
+    return usbmod_tud_hid_get_report_cb(
+        instance,
+        report_id,
+        report_type,
+        buffer,
+        reqlen
+    );
+}
+
+void tud_hid_set_report_cb(uint8_t instance,
+                           uint8_t report_id,
+                           hid_report_type_t report_type,
+                           uint8_t const *buffer,
+                           uint16_t bufsize)
+{
+    usbmod_tud_hid_set_report_cb(
+        instance,
+        report_id,
+        report_type,
+        buffer,
+        bufsize
+    );
+}
+
 // ============ KEYBOARD HID FUNCTIONS ============
 
 bool usb_keyboard_use_boot_protocol(void)
@@ -75,6 +110,18 @@ void usb_send_keystroke(uint8_t hid_keycode)
     }
 }
 
+// ======== Callbacks ========
+
+void usbmod_register_callback(usb_msg_type_t callback_type, usb_data_callback_t callback)
+{
+    register_callback(callback_type, callback);
+}
+
+bool usbmod_execute_callback(usb_msg_type_t callback_type, uint8_t const *data, uint16_t data_len)
+{
+    execute_callback(callback_type, data, data_len);
+}
+
 
 /*
     Main USB module
@@ -103,39 +150,4 @@ void usb_init()
     usb_callbacks_init();
 
     ESP_LOGI(TAG, "USB initialized !");
-}
-
-/*
-    handle callbacks to usb_callbacks
-    (workaround to tinyusb not wanting to link with usb_callbacks)
-*/
-
-uint16_t tud_hid_get_report_cb(uint8_t instance,
-                              uint8_t report_id,
-                              hid_report_type_t report_type,
-                              uint8_t *buffer,
-                              uint16_t reqlen)
-{
-    return usbmod_tud_hid_get_report_cb(
-        instance,
-        report_id,
-        report_type,
-        buffer,
-        reqlen
-    );
-}
-
-void tud_hid_set_report_cb(uint8_t instance,
-                           uint8_t report_id,
-                           hid_report_type_t report_type,
-                           uint8_t const *buffer,
-                           uint16_t bufsize)
-{
-    usbmod_tud_hid_set_report_cb(
-        instance,
-        report_id,
-        report_type,
-        buffer,
-        bufsize
-    );
 }

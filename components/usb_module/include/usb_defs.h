@@ -8,7 +8,8 @@ typedef enum usb_msg_type: uint8_t {
 	CFG_GET = 0,
 	CFG_SET,
 	SYSTEM_GET,
-    ACTION
+    ACTION,
+    USB_MSG_TYPE_COUNT
 } usb_msg_type_t;
 
 // ======== flags ========
@@ -38,3 +39,7 @@ typedef struct __attribute__ ((packed)) {
     uint8_t payload[MAX_PAYLOAD_LENGTH];
     uint8_t crt;
 } usb_packet_msg_t;
+
+// ======== callback type ========
+
+typedef bool (*usb_data_callback_t)(uint8_t *data, uint16_t data_len);

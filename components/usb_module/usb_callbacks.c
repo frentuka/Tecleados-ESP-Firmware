@@ -20,7 +20,7 @@
 
 #define TAG "USB Callbacks"
 
-// ======== Packet processing queues ========
+// ============ Packet processing queues ============
 
 #define PROCESS_QUEUE_LENGTH 4
 static QueueHandle_t rx_processing_queue = NULL;
@@ -133,20 +133,6 @@ uint8_t const * tud_hid_descriptor_report_cb(uint8_t instance) {
     return NULL;
 }
 
-// ======== Flag processing ========
-
-
-
-
-
-// ============ RX Stuff ============
-
-
-
-// ============ TX Stuff ============
-
-
-
 // ============ init ============
 
 static void rx_processing_task(void *pvParameters) {
@@ -189,6 +175,33 @@ static void timeouts_task(void *pvParameters)
         // Throttle loop to max 50hz
         vTaskDelay(pdMS_TO_TICKS(20));
     }
+}
+
+static usb_data_callback_t s_type_callbacks[USB_MSG_TYPE_COUNT] = {0};
+
+void register_callback(usb_msg_type_t callback_type, usb_data_callback_t callback)
+{
+    if (callback_type >= USB_MSG_TYPE_COUNT) {
+        ESP_LOGE(TAG, "Failed to register callback: type > USB_MSG_TYPE_COUNT");
+        return;
+    }
+
+    s_type_callbacks[callback_type] = callback;
+}
+
+bool execute_callback(usb_msg_type_t callback_type, uint8_t const *data, uint16_t data_len)
+{
+    if (callback_type >= USB_MSG_TYPE_COUNT) {
+        ESP_LOGE(TAG, "Failed to execute callback: type > USB_MSG_TYPE_COUNT");
+        return false;
+    }
+
+    if (!s_type_callbacks[callback_type]) {
+        ESP_LOGE(TAG, "Failed to execute callback: callback not registered");
+        return false;
+    }
+
+    return s_type_callbacks[callback_type];
 }
 
 void usb_callbacks_init(void) {
