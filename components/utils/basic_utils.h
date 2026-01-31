@@ -15,9 +15,9 @@
   (byte & 0x02 ? '1' : '0'), \
   (byte & 0x01 ? '1' : '0')
 
-const uint16_t PRINT_BYTES_AS_CHARS_MAX = 128;
-
 static inline void print_bytes_as_chars(const char *tag, const uint8_t *data, size_t len) {
+    const uint16_t PRINT_BYTES_AS_CHARS_MAX = 128;
+
     size_t start = 0;
     while (start < len) {
         size_t buf_idx = 0;

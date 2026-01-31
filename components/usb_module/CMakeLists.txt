@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "usb_callbacks_rx.c" "usb_crc.c" "usb_callbacks.c" "usbmod.c"
+    SRCS "usbmod.c" "usb_send.c" "usb_callbacks.c" "usb_callbacks_rx.c" "usb_callbacks_tx.c" "usb_crc.c"
     INCLUDE_DIRS "." "include" "../../components/utils"
     REQUIRES esp_tinyusb driver freertos keyboard config_module
 )
