@@ -1,3 +1,5 @@
+#pragma once
+
 #ifndef USB_DESCRIPTORS_H_
 #define USB_DESCRIPTORS_H_
 
@@ -133,7 +135,7 @@ static uint8_t const desc_configuration[] = {
         EPNUM_HID_COMM_OUT,             // bEndpointAddress (OUT)
         EPNUM_HID_COMM_IN,              // bEndpointAddress (IN)
         COMM_REPORT_SIZE,               // wMaxPacketSize
-        20                              // bInterval (milliseconds)
+        5                               // bInterval (milliseconds)
     )
 };
 

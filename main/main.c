@@ -40,11 +40,9 @@ void single_press_test()
     char* chars = "Tecleados";
 
     kb_manager_set_paused(true);
-    vTaskDelay(pdMS_TO_TICKS(50));
     if (tud_mounted()) {
         while (*chars) {
             usb_send_char(*chars);
-            vTaskDelay(pdMS_TO_TICKS(5));
             chars++;
         }
     }

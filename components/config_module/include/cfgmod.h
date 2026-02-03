@@ -9,7 +9,7 @@
 // Keep NVS keys short (<= 15 chars including null terminator).
 #define CFGMOD_MAX_KEY_LEN 12
 
-typedef enum cfgmod_kind {
+typedef enum cfgmod_kind: uint8_t {
 	CFGMOD_KIND_LAYOUT = 0,
 	CFGMOD_KIND_MACRO,
     CFGMOD_KIND_CONNECTION,
@@ -17,7 +17,7 @@ typedef enum cfgmod_kind {
 	CFGMOD_KIND_MAX
 } cfgmod_kind_t;
 
-typedef enum cfgmod_msg_type {
+typedef enum usb_cmd_msg_type: uint8_t {
 	CFGMOD_MSG_REQUEST = 0,
 	CFGMOD_MSG_RESPONSE,
 	CFGMOD_MSG_NOTIFY

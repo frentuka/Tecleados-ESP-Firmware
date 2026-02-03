@@ -2,6 +2,7 @@
 #include <stdbool.h>
 
 #include "usb_crc.h"
+#include "usb_descriptors.h"
 
 // Precomputed CRC-8 table for polynomial 0x07 (reflected)
 static const uint8_t crc8_table[256] = {
@@ -32,15 +33,15 @@ static uint8_t compute_crc8(const uint8_t *data, size_t len) {
     return crc;
 }
 
-// 48-bit packet: 47-bit payload + 1-bit crc
-void usb_crc_prepare_packet(const uint8_t *payload, uint8_t *packet) {
-    for (int i = 0; i < 47; ++i) packet[i] = payload[i];
-    uint8_t crc = compute_crc8(packet, 47);  // Over seq + payload
-    packet[47] = crc;
+// will fix packet size to COMM_REPORT_SIZE and last byte will be CRC
+void usb_crc_prepare_packet(uint8_t *packet) {
+    uint8_t payload_size = COMM_REPORT_SIZE - 1;
+    uint8_t crc = compute_crc8(packet, payload_size);  // Over payload
+    packet[payload_size] = crc;
 }
 
 // verify packet
 bool usb_crc_verify_packet(const uint8_t *packet) {
-    uint8_t crc = compute_crc8(packet, 48);  // Over seq + payload + received CRC
+    uint8_t crc = compute_crc8(packet, 48);  // Over payload + received CRC
     return (crc == 0);  // 1 if valid, 0 if error
 }
