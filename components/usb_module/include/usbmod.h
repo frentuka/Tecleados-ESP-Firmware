@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "usb_defs.h"
+
 #include "tinyusb.h"
 
 // test stuff

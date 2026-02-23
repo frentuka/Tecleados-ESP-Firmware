@@ -119,7 +119,7 @@ void usbmod_register_callback(usb_msg_type_t callback_type, usb_data_callback_t 
 
 bool usbmod_execute_callback(usb_msg_type_t callback_type, uint8_t const *data, uint16_t data_len)
 {
-    execute_callback(callback_type, data, data_len);
+    return execute_callback(callback_type, data, data_len);
 }
 
 
