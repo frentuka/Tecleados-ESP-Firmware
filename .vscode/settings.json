@@ -4,12 +4,9 @@
     "IDF_TARGET": "esp32s3"
   },
   "idf.flashType": "UART",
-  "idf.espIdfPathWin": "X:\\appcrap\\Espressif\\frameworks\\esp-idf-v5.5.2",
-  "idf.pythonInstallPath": "C:\\Users\\srleg\\.espressif\\tools\\idf-python\\3.11.2\\python.exe",
   "idf.openOcdConfigs": [
     "board/esp32s3-builtin.cfg"
   ],
-  "idf.toolsPathWin": "X:\\appcrap\\Espressif",
   "files.associations": {
     "freertos.h": "c",
     "stdio.h": "c",
