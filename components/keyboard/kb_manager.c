@@ -1,7 +1,6 @@
 #include <limits.h>
 #include <string.h>
 
-
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -13,13 +12,12 @@
 #include "kb_layout.h"
 #include "kb_matrix.h"
 #include "kb_report.h"
-
+#include "kb_state.h"
 
 #include "class/hid/hid.h" // HID_KEY_* defines
 #include "tusb.h"          // for HID protocol enums if needed
 #include "usb_descriptors.h"
 #include "usbmod.h"
-
 
 static const char *TAG = "kb_manager";
 static const uint32_t MAX_POLLING_RATE = 1200; // def 1000
@@ -191,6 +189,7 @@ static void kb_manager_task(void *arg) {
 
 void kb_manager_start(void) {
   ESP_LOGI(TAG, "Starting keyboard manager...");
+  kb_state_init();
   kb_matrix_gpio_init();
   vTaskDelay(pdMS_TO_TICKS(500));
   xTaskCreatePinnedToCore(kb_manager_task, "kb_mgr", 4096, NULL, 5, NULL, 1);
@@ -206,9 +205,9 @@ void kb_manager_test_nkro_keypress(uint8_t row, uint8_t col) {
   memset(nkro, 0, sizeof(nkro));
   nkro[kc >> 3] |= (uint8_t)(1U << (kc & 7U));
 
-  usb_send_keyboard_nkro(nkro, sizeof(nkro));
+  usb_send_keyboard_nkro(0, nkro, sizeof(nkro));
   vTaskDelay(pdMS_TO_TICKS(20));
 
   memset(nkro, 0, sizeof(nkro));
-  usb_send_keyboard_nkro(nkro, sizeof(nkro));
+  usb_send_keyboard_nkro(0, nkro, sizeof(nkro));
 }

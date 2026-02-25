@@ -44,6 +44,9 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
     if (event->connect.status == 0) {
       ESP_LOGI(TAG, "Device connected, handle=%d", event->connect.conn_handle);
       g_ble_conn_handle = event->connect.conn_handle;
+
+      int rc = ble_gap_security_initiate(event->connect.conn_handle);
+      ESP_LOGI(TAG, "Security initiation requested: %d", rc);
     } else {
       ESP_LOGI(TAG, "Connection failed, restarting advertising");
       ble_hid_advertise();
@@ -107,6 +110,16 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
                event->notify_tx.attr_handle, event->notify_tx.status);
     }
     break;
+
+  case BLE_GAP_EVENT_MTU:
+    ESP_LOGI(TAG, "MTU update event; conn_handle=%d mtu=%d",
+             event->mtu.conn_handle, event->mtu.value);
+    break;
+
+  case BLE_GAP_EVENT_CONN_UPDATE:
+    ESP_LOGI(TAG, "Connection parameters updated, status=%d",
+             event->conn_update.status);
+    return 0; // Accept
 
   default:
     break;
@@ -207,7 +220,7 @@ void ble_hid_init(void) {
       BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
   ble_hs_cfg.sm_their_key_dist =
       BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
-  ble_hs_cfg.sm_mitm = 1; // Require MITM protection
+  ble_hs_cfg.sm_mitm = 0; // "Just Works" without MITM protection
   ble_hs_cfg.sm_sc = 1;   // Secure Connections (BLE 4.2+)
 
   // 4. Register GATT services (you'll add your HID service here later)

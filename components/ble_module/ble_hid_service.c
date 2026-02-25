@@ -23,6 +23,7 @@
 
 #include "esp_log.h"
 #include "host/ble_hs.h"
+#include "kb_state.h"
 
 #define TAG "ble_hid_svc"
 
@@ -37,6 +38,8 @@
 #define UUID_HID_CONTROL_POINT 0x2A4C
 #define UUID_HID_REPORT 0x2A4D
 #define UUID_HID_PROTOCOL_MODE 0x2A4E
+#define UUID_HID_BOOT_KEYB_IN 0x2A22
+#define UUID_HID_BOOT_KEYB_OUT 0x2A32
 
 /* Battery Service */
 #define UUID_BAS_SVC 0x180F
@@ -54,7 +57,7 @@
 /* ========================================================================= */
 
 /* HID Information: v1.11, no country code, normally connectable */
-static const uint8_t hid_info[] = {0x11, 0x01, 0x00, 0x02};
+static const uint8_t hid_info[] = {0x11, 0x01, 0x00, 0x03};
 
 /**
  * HID Report Map — Standard 6KRO Keyboard
@@ -118,10 +121,13 @@ static const uint8_t hid_report_map[] = {
 
 static uint8_t hid_protocol_mode = 1; // 1 = Report Protocol (default)
 static uint8_t hid_control_point = 0;
-static uint8_t hid_input_report[8] = {0}; // 8 bytes, no Report ID prefix
+static uint8_t hid_input_report[8] = {0}; // 8 bytes
 
 /* Attribute handles (set by NimBLE during registration) */
 static uint16_t hid_input_report_handle;
+static uint16_t hid_output_report_handle;
+static uint16_t hid_boot_in_handle;
+static uint16_t hid_boot_out_handle;
 static uint16_t bas_battery_level_handle;
 
 /* ========================================================================= */
@@ -134,6 +140,9 @@ static int dis_access_cb(uint16_t conn_handle, uint16_t attr_handle,
                          struct ble_gatt_access_ctxt *ctxt, void *arg);
 static int bas_access_cb(uint16_t conn_handle, uint16_t attr_handle,
                          struct ble_gatt_access_ctxt *ctxt, void *arg);
+static int hid_report_ref_access_cb(uint16_t conn_handle, uint16_t attr_handle,
+                                    struct ble_gatt_access_ctxt *ctxt,
+                                    void *arg);
 
 /* ========================================================================= */
 /* GATT Service Table                                                        */
@@ -150,7 +159,7 @@ static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
                     /* PnP ID */
                     .uuid = BLE_UUID16_DECLARE(UUID_DIS_PNP_ID),
                     .access_cb = dis_access_cb,
-                    .flags = BLE_GATT_CHR_F_READ,
+                    .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC,
                 },
                 {0},
             },
@@ -169,7 +178,8 @@ static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
                     .uuid = BLE_UUID16_DECLARE(UUID_BAS_BATTERY_LEVEL),
                     .access_cb = bas_access_cb,
                     .val_handle = &bas_battery_level_handle,
-                    .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
+                    .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC |
+                             BLE_GATT_CHR_F_NOTIFY,
                 },
                 {0},
             },
@@ -185,22 +195,42 @@ static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
                     /* HID Information */
                     .uuid = BLE_UUID16_DECLARE(UUID_HID_INFORMATION),
                     .access_cb = hid_access_cb,
-                    .flags = BLE_GATT_CHR_F_READ,
+                    .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC,
                     .arg = (void *)(uintptr_t)UUID_HID_INFORMATION,
                 },
                 {
                     /* Report Map */
                     .uuid = BLE_UUID16_DECLARE(UUID_HID_REPORT_MAP),
                     .access_cb = hid_access_cb,
-                    .flags = BLE_GATT_CHR_F_READ,
+                    .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC,
                     .arg = (void *)(uintptr_t)UUID_HID_REPORT_MAP,
                 },
                 {
                     /* Protocol Mode — HOGP mandates READ | WRITE_NO_RSP */
                     .uuid = BLE_UUID16_DECLARE(UUID_HID_PROTOCOL_MODE),
                     .access_cb = hid_access_cb,
-                    .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE_NO_RSP,
+                    .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC |
+                             BLE_GATT_CHR_F_WRITE_NO_RSP,
                     .arg = (void *)(uintptr_t)UUID_HID_PROTOCOL_MODE,
+                },
+                {
+                    /* Boot Keyboard Input Report — READ + NOTIFY */
+                    .uuid = BLE_UUID16_DECLARE(UUID_HID_BOOT_KEYB_IN),
+                    .access_cb = hid_access_cb,
+                    .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC |
+                             BLE_GATT_CHR_F_NOTIFY,
+                    .val_handle = &hid_boot_in_handle,
+                    .arg = (void *)(uintptr_t)UUID_HID_BOOT_KEYB_IN,
+                },
+                {
+                    /* Boot Keyboard Output Report — READ + WRITE + WRITE_NO_RSP
+                     */
+                    .uuid = BLE_UUID16_DECLARE(UUID_HID_BOOT_KEYB_OUT),
+                    .access_cb = hid_access_cb,
+                    .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC |
+                             BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
+                    .val_handle = &hid_boot_out_handle,
+                    .arg = (void *)(uintptr_t)UUID_HID_BOOT_KEYB_OUT,
                 },
                 {
                     /* HID Control Point */
@@ -215,7 +245,8 @@ static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
                      * We manually add the Report Reference (0x2908). */
                     .uuid = BLE_UUID16_DECLARE(UUID_HID_REPORT),
                     .access_cb = hid_access_cb,
-                    .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
+                    .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC |
+                             BLE_GATT_CHR_F_NOTIFY,
                     .val_handle = &hid_input_report_handle,
                     .arg = (void *)(uintptr_t)UUID_HID_REPORT,
                     .descriptors =
@@ -224,9 +255,30 @@ static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
                                 /* Report Reference: Report ID=0, Type=Input */
                                 .uuid =
                                     BLE_UUID16_DECLARE(UUID_REPORT_REFERENCE),
-                                .access_cb = hid_access_cb,
+                                .access_cb = hid_report_ref_access_cb,
                                 .att_flags = BLE_ATT_F_READ,
-                                .arg = (void *)(uintptr_t)UUID_REPORT_REFERENCE,
+                                .arg = (void *)(uintptr_t)1, // 1 for Input
+                            },
+                            {0},
+                        },
+                },
+                {
+                    /* Output Report — READ + WRITE + WRITE_NO_RSP */
+                    .uuid = BLE_UUID16_DECLARE(UUID_HID_REPORT),
+                    .access_cb = hid_access_cb,
+                    .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC |
+                             BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
+                    .val_handle = &hid_output_report_handle,
+                    .arg = (void *)(uintptr_t)UUID_HID_REPORT,
+                    .descriptors =
+                        (struct ble_gatt_dsc_def[]){
+                            {
+                                /* Report Reference: Report ID=0, Type=Output */
+                                .uuid =
+                                    BLE_UUID16_DECLARE(UUID_REPORT_REFERENCE),
+                                .access_cb = hid_report_ref_access_cb,
+                                .att_flags = BLE_ATT_F_READ,
+                                .arg = (void *)(uintptr_t)2, // 2 for Output
                             },
                             {0},
                         },
@@ -244,8 +296,9 @@ static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
 
 static int dis_access_cb(uint16_t conn_handle, uint16_t attr_handle,
                          struct ble_gatt_access_ctxt *ctxt, void *arg) {
-  /* PnP ID: USB-IF vendor source, Vendor=0x04E5, Product=0x0121, Version=1.0 */
-  static const uint8_t pnp_id[7] = {0x02, 0xE5, 0x04, 0x21, 0x01, 0x01, 0x01};
+  /* PnP ID: Bluetooth SIG vendor source (0x01), Vendor ESPRESSIF (0x02E5),
+   * Product=0x0121, Version=1.0 */
+  static const uint8_t pnp_id[7] = {0x01, 0xE5, 0x02, 0x21, 0x01, 0x01, 0x01};
   int rc = os_mbuf_append(ctxt->om, pnp_id, sizeof(pnp_id));
   return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
 }
@@ -254,6 +307,16 @@ static int bas_access_cb(uint16_t conn_handle, uint16_t attr_handle,
                          struct ble_gatt_access_ctxt *ctxt, void *arg) {
   uint8_t battery_level = 69;
   int rc = os_mbuf_append(ctxt->om, &battery_level, sizeof(battery_level));
+  return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+}
+
+static int hid_report_ref_access_cb(uint16_t conn_handle, uint16_t attr_handle,
+                                    struct ble_gatt_access_ctxt *ctxt,
+                                    void *arg) {
+  uint8_t is_output = ((uintptr_t)arg == 2) ? 1 : 0;
+  /* Report ID = 0 (No Report ID used), Type = 0x01 (Input) or 0x02 (Output) */
+  uint8_t report_ref[2] = {0x00, is_output ? 0x02 : 0x01};
+  int rc = os_mbuf_append(ctxt->om, report_ref, sizeof(report_ref));
   return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
 }
 
@@ -300,18 +363,47 @@ static int hid_access_cb(uint16_t conn_handle, uint16_t attr_handle,
     break;
 
   case UUID_HID_REPORT:
+    if (attr_handle == hid_input_report_handle) {
+      if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
+        rc = os_mbuf_append(ctxt->om, hid_input_report,
+                            sizeof(hid_input_report));
+        return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+      }
+    } else if (attr_handle == hid_output_report_handle) {
+      if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
+        uint8_t out_report = kb_state_get_leds();
+        rc = os_mbuf_append(ctxt->om, &out_report, 1);
+        return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+      } else if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR) {
+        if (ctxt->om->om_len == 1) {
+          kb_state_update_leds(ctxt->om->om_data[0]);
+          return 0;
+        }
+        return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+      }
+    }
+    break;
+
+  case UUID_HID_BOOT_KEYB_IN:
     if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
       rc = os_mbuf_append(ctxt->om, hid_input_report, sizeof(hid_input_report));
       return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
     }
     break;
 
-  case UUID_REPORT_REFERENCE: {
-    /* Report ID = 0 (no Report ID in descriptor), Type = 0x01 (Input) */
-    uint8_t report_ref[2] = {0x00, 0x01};
-    rc = os_mbuf_append(ctxt->om, report_ref, sizeof(report_ref));
-    return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
-  }
+  case UUID_HID_BOOT_KEYB_OUT:
+    if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
+      uint8_t out_report = kb_state_get_leds();
+      rc = os_mbuf_append(ctxt->om, &out_report, 1);
+      return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+    } else if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR) {
+      if (ctxt->om->om_len == 1) {
+        kb_state_update_leds(ctxt->om->om_data[0]);
+        return 0;
+      }
+      return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+    }
+    break;
 
   default:
     break;
@@ -346,14 +438,18 @@ int ble_hid_tx_keyboard_report(uint16_t conn_handle, const uint8_t *report,
   /* Update local state (so read-back returns current value) */
   memcpy(hid_input_report, report, 8);
 
-  /* Send 8-byte notification (no Report ID prefix since Report Map has none) */
-  struct os_mbuf *om =
-      ble_hs_mbuf_from_flat(hid_input_report, sizeof(hid_input_report));
+  struct os_mbuf *om = ble_hs_mbuf_from_flat(hid_input_report, 8);
   if (!om) {
     return BLE_HS_ENOMEM;
   }
 
-  return ble_gatts_notify_custom(conn_handle, hid_input_report_handle, om);
+  /* Boot descriptor mandates an 8 byte report without Report ID */
+  if (hid_protocol_mode == 0) {
+    return ble_gatts_notify_custom(conn_handle, hid_boot_in_handle, om);
+  } else {
+    /* Send standard 8-byte notification directly */
+    return ble_gatts_notify_custom(conn_handle, hid_input_report_handle, om);
+  }
 }
 
 int ble_hid_notify_battery_level(uint16_t conn_handle, uint8_t level) {
