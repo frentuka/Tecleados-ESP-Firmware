@@ -23,6 +23,7 @@
 #include "rgb.h"
 #include "cfgmod.h"
 #include "usbmod.h"
+#include "blemod.h"
 
 #include "tinyusb.h"
 #include "tinyusb_default_config.h"
@@ -62,8 +63,11 @@ void double_press_test()
 static void init_procedure(void)
 {
     button_init(*single_press_test, *double_press_test);
-    usb_init();
     cfg_init();
+
+    usb_init();
+    ble_hid_init();
+    
     kb_manager_start();
 }
 
