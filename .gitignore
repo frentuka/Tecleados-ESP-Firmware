@@ -55,6 +55,7 @@ dkms.conf
 *.dwo
 
 build/
+.cache/
 sdkconfig.old
 sdkconfig.ci
 
