@@ -1,7 +1,9 @@
 #include "kb_state.h"
 #include "esp_log.h"
 
-static const char *TAG = "kb_state";
+#include "rgb.h"
+
+#define TAG "kb_state"
 static uint8_t s_led_status = 0;
 
 void kb_state_init(void) {
@@ -16,8 +18,13 @@ void kb_state_update_leds(uint8_t led_status) {
              led_status, (led_status & KB_LED_CAPS_LOCK) ? 1 : 0,
              (led_status & KB_LED_NUM_LOCK) ? 1 : 0);
 
-    // TODO: In the future, this is where we would trigger actual physical LEDs
-    // rgb_module_set_caps_lock_led((led_status & KB_LED_CAPS_LOCK) != 0);
+    bool caps_on = (led_status & KB_LED_CAPS_LOCK) != 0;
+    if (caps_on) {
+      rgb_set_color((RGBColor){25, 0, 0});
+      rgb_set(true);
+    } else {
+      rgb_set(false);
+    }
   }
 }
 
