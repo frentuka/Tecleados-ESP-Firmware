@@ -59,6 +59,13 @@ bool usb_send_keyboard_nkro(uint8_t modifier, const uint8_t *bitmap,
   return tud_hid_n_report(ITF_NUM_HID_KBD, REPORT_ID_NKRO, buf, len + 1);
 }
 
+bool usb_send_consumer_report(uint16_t keycode) {
+  if (tud_mounted() && tud_hid_n_ready(ITF_NUM_HID_KBD)) {
+    return tud_hid_n_report(ITF_NUM_HID_KBD, REPORT_ID_CONSUMER, &keycode, 2);
+  }
+  return false;
+}
+
 // Test functions
 
 static void block_until_kb_ready() {

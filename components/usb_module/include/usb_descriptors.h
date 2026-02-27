@@ -26,6 +26,7 @@ static tusb_desc_device_t const desc_device = {
 #define REPORT_ID_KEYBOARD 1
 #define REPORT_ID_NKRO 2
 #define REPORT_ID_COMM 3
+#define REPORT_ID_CONSUMER 4
 
 #define NKRO_KEYS 0xE7
 #define NKRO_BYTES ((NKRO_KEYS + 7) / 8)
@@ -37,6 +38,9 @@ static tusb_desc_device_t const desc_device = {
 static uint8_t const desc_hid_report_kbd[] = {
     // 6KRO boot keyboard
     TUD_HID_REPORT_DESC_KEYBOARD(HID_REPORT_ID(REPORT_ID_KEYBOARD)),
+
+    // Consumer Control (Media)
+    TUD_HID_REPORT_DESC_CONSUMER(HID_REPORT_ID(REPORT_ID_CONSUMER)),
 
     // NKRO bitmap
     0x05, 0x01,           // Usage Page (Generic Desktop)

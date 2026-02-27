@@ -7,11 +7,9 @@
   "idf.openOcdConfigs": [
     "board/esp32s3-builtin.cfg"
   ],
-
   "idf.espIdfPath": "X:\\appcrap\\Espressif\\frameworks\\esp-idf-v5.5.3",
   "idf.toolsPath": "X:\\appcrap\\Espressif",
   "idf.pythonBinPath": "X:\\appcrap\\Espressif\\tools\\idf-python\\3.11.2\\python.exe",
-
   "files.associations": {
     "freertos.h": "c",
     "stdio.h": "c",
@@ -30,4 +28,10 @@
   "cmake.configureOnOpen": false,
   "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json",
   "idf.currentSetup": "X:/appcrap/Espressif/frameworks/esp-idf-v5.5.3/",
+  "[c]": {
+    "editor.formatOnSave": false
+  },
+  "[cpp]": {
+    "editor.formatOnSave": false
+  }
 }

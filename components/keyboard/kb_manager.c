@@ -10,6 +10,7 @@
 #include "kb_manager.h"
 
 #include "kb_layout.h"
+#include "kb_macro.h"
 #include "kb_matrix.h"
 #include "kb_report.h"
 #include "kb_state.h"
@@ -91,6 +92,9 @@ static void kb_manager_task(void *arg) {
   uint8_t s_last_matrix[KB_MATRIX_BITMAP_BYTES]; // last sent debounced matrix
                                                  // bitmap
 
+  uint16_t s_active_action_codes[KB_MATRIX_ROW_COUNT][KB_MATRIX_COL_COUNT];
+  memset(s_active_action_codes, 0, sizeof(s_active_action_codes));
+
   while (1) {
     // benchmark
     int64_t now_us = esp_timer_get_time();
@@ -152,6 +156,32 @@ static void kb_manager_task(void *arg) {
         !s_last_matrix_valid ||
         (memcmp(s_matrix, s_last_matrix, KB_MATRIX_BITMAP_BYTES) != 0);
 
+    if (matrix_changed) {
+      for (uint8_t r = 0; r < KB_MATRIX_ROW_COUNT; ++r) {
+        for (uint8_t c = 0; c < KB_MATRIX_COL_COUNT; ++c) {
+          size_t bit_index = (r * KB_MATRIX_COL_COUNT) + c;
+          bool curr = get_bit(s_matrix, bit_index);
+          bool prev =
+              s_last_matrix_valid ? get_bit(s_last_matrix, bit_index) : false;
+
+          if (curr != prev) {
+            if (curr) {
+              // physical down
+              uint8_t layer = kb_macro_get_active_layer();
+              uint16_t action = kb_layout_get_action_code(r, c, layer);
+              s_active_action_codes[r][c] = action;
+              kb_macro_process_action(action, true);
+            } else {
+              // physical up
+              uint16_t action = s_active_action_codes[r][c];
+              kb_macro_process_action(action, false);
+              s_active_action_codes[r][c] = 0; // ACTION_CODE_NONE
+            }
+          }
+        }
+      }
+    }
+
     bool should_send =
         !s_paused &&
         (matrix_changed || (boot_protocol != s_last_boot_protocol) ||
@@ -161,7 +191,7 @@ static void kb_manager_task(void *arg) {
     // send report
     if (should_send) {
       s_last_report_sent_us = now_us;
-      esp_err_t kb_report_result = kb_send_report(s_matrix);
+      esp_err_t kb_report_result = kb_macro_send_report();
 
       // save for logging
       if (kb_report_result == ESP_OK) {
@@ -190,14 +220,15 @@ static void kb_manager_task(void *arg) {
 void kb_manager_start(void) {
   ESP_LOGI(TAG, "Starting keyboard manager...");
   kb_state_init();
+  kb_macro_init();
   kb_matrix_gpio_init();
   vTaskDelay(pdMS_TO_TICKS(500));
   xTaskCreatePinnedToCore(kb_manager_task, "kb_mgr", 4096, NULL, 5, NULL, 1);
 }
 
 void kb_manager_test_nkro_keypress(uint8_t row, uint8_t col) {
-  uint8_t kc = kb_layout_get_keycode(row, col, KB_LAYER_BASE);
-  if (kc == HID_KEY_NONE || kc >= NKRO_KEYS) {
+  uint16_t kc = kb_layout_get_action_code(row, col, KB_LAYER_BASE);
+  if (kc == ACTION_CODE_NONE || kc >= NKRO_KEYS) {
     return;
   }
 

@@ -13,63 +13,33 @@
 #include "ble_hid_service.h"
 #include "blemod.h"
 
-static inline void set_bit(uint8_t *bitmap, size_t bit_index) {
-  bitmap[bit_index >> 3] |= (uint8_t)(1U << (bit_index & 7U));
-}
-
-static void matrix_to_6kro(const uint8_t *matrix, uint8_t *modifiers,
-                           uint8_t basic_keys[6]) {
+static void virtual_nkro_to_6kro(const uint8_t *v_nkro, uint8_t *modifiers,
+                                 uint8_t basic_keys[6]) {
   memset(basic_keys, 0, 6);
   *modifiers = 0;
   size_t out = 0;
 
-  for (uint8_t r = 0; r < KB_MATRIX_ROW_COUNT; ++r) {
-    for (uint8_t c = 0; c < KB_MATRIX_COL_COUNT; ++c) {
-      size_t bit_index = (r * KB_MATRIX_COL_COUNT) + c;
-      uint8_t byte = matrix[bit_index >> 3];
-      uint8_t bit = (uint8_t)(1U << (bit_index & 7U));
-      if (byte & bit) {
-        uint8_t layer = kb_layout_get_active_layer(matrix);
-        uint8_t kc = kb_layout_get_keycode(r, c, layer);
-        if (kc != HID_KEY_NONE) {
-          if (kc >= 0xE0 && kc <= 0xE7) {
-            *modifiers |= (1 << (kc - 0xE0));
-          } else if (out < 6) {
-            basic_keys[out++] = kc;
-          }
-        }
+  for (uint16_t kc = 1; kc < 256; ++kc) {
+    size_t byte_idx = kc >> 3;
+    uint8_t bit = (uint8_t)(1U << (kc & 7U));
+    if (v_nkro[byte_idx] & bit) {
+      if (kc >= 0xE0 && kc <= 0xE7) {
+        *modifiers |= (1 << (kc - 0xE0));
+      } else if (out < 6) {
+        basic_keys[out++] = (uint8_t)kc;
       }
     }
   }
 }
 
-static void matrix_to_nkro(const uint8_t *matrix, uint8_t *nkro) {
-  memset(nkro, 0, NKRO_BYTES);
-
-  for (uint8_t r = 0; r < KB_MATRIX_ROW_COUNT; ++r) {
-    for (uint8_t c = 0; c < KB_MATRIX_COL_COUNT; ++c) {
-      size_t bit_index = (r * KB_MATRIX_COL_COUNT) + c;
-      uint8_t byte = matrix[bit_index >> 3];
-      uint8_t bit = (uint8_t)(1U << (bit_index & 7U));
-      if (byte & bit) {
-        uint8_t layer = kb_layout_get_active_layer(matrix);
-        uint8_t kc = kb_layout_get_keycode(r, c, layer);
-        if (kc != HID_KEY_NONE && kc < NKRO_KEYS) {
-          set_bit(nkro, kc);
-        }
-      }
-    }
-  }
-}
-
-esp_err_t kb_send_report(const uint8_t *matrix) {
+esp_err_t kb_send_report(const uint8_t *v_nkro) {
   esp_err_t final_result = ESP_FAIL;
 
   // Extract keys and separate standard keys from modifiers (0xE0 - 0xE7)
   uint8_t modifiers = 0;
   uint8_t basic_keys[6] = {0};
 
-  matrix_to_6kro(matrix, &modifiers, basic_keys);
+  virtual_nkro_to_6kro(v_nkro, &modifiers, basic_keys);
 
   // 1. Send via BLE if connected
   if (ble_hid_is_connected()) {
@@ -90,12 +60,30 @@ esp_err_t kb_send_report(const uint8_t *matrix) {
     if (usb_keyboard_use_boot_protocol()) {
       result = usb_send_keyboard_6kro(modifiers, basic_keys);
     } else {
-      uint8_t s_nkro[NKRO_BYTES];
-      matrix_to_nkro(matrix, s_nkro);
-      result = usb_send_keyboard_nkro(modifiers, s_nkro, NKRO_BYTES);
+      result = usb_send_keyboard_nkro(modifiers, v_nkro, NKRO_BYTES);
     }
 
     if (result) {
+      final_result = ESP_OK;
+    }
+  }
+
+  return final_result;
+}
+
+esp_err_t kb_send_consumer_report(uint16_t media_keycode) {
+  esp_err_t final_result = ESP_FAIL;
+
+  // 1. Send via BLE if connected
+  if (ble_hid_is_connected()) {
+    if (ble_hid_send_consumer_report(media_keycode) == ESP_OK) {
+      final_result = ESP_OK;
+    }
+  }
+
+  // 2. Send via USB if mounted and ready
+  if (tud_mounted() && tud_hid_n_ready(ITF_NUM_HID_KBD)) {
+    if (usb_send_consumer_report(media_keycode)) {
       final_result = ESP_OK;
     }
   }

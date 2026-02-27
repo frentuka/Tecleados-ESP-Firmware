@@ -20,6 +20,8 @@
 #include "esp_system.h"
 
 #include "kb_manager.h"
+#include "kb_macro.h"
+#include "kb_layout.h"
 
 #include "blemod.h"
 #include "button.h"
@@ -36,26 +38,15 @@ enum ColorSet { Red, Green, Blue };
 enum ColorSet current_color = Red;
 
 void single_press_test() {
-  ESP_LOGI(TAG, "test single press");
-  char *chars = "Tecleados";
-
-  kb_manager_set_paused(true);
-  if (tud_mounted()) {
-    while (*chars) {
-      usb_send_char(*chars);
-      chars++;
-    }
-  }
-  kb_manager_set_paused(false);
-
-  // // ensure key release
-  // uint8_t no_keys[6] = { 0 };
-  // tud_hid_keyboard_report(REPORT_ID_KEYBOARD, 0, no_keys);
+  ESP_LOGI(TAG, "test single press: Media Play/Pause");
+  kb_macro_process_action(MEDIA_ACTION_PLAY, true);
+  kb_macro_process_action(MEDIA_ACTION_PLAY, false);
 }
 
 void double_press_test() {
-  ESP_LOGI(TAG, "test double press");
-  kb_manager_test_nkro_keypress(3, 3);
+  ESP_LOGI(TAG, "test double press: Media Mute");
+  kb_macro_process_action(SYS_ACTION_MUTE, true);
+  kb_macro_process_action(SYS_ACTION_MUTE, false);
 }
 
 static void init_procedure(void) {

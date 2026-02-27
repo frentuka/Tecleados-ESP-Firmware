@@ -258,3 +258,17 @@ esp_err_t ble_hid_send_keyboard_report(const uint8_t *report, size_t len) {
 
   return ESP_OK;
 }
+
+esp_err_t ble_hid_send_consumer_report(uint16_t media_keycode) {
+  if (!ble_hid_is_connected()) {
+    return ESP_ERR_INVALID_STATE;
+  }
+
+  int rc = ble_hid_tx_consumer_report(g_ble_conn_handle, media_keycode);
+  if (rc != 0) {
+    ESP_LOGE(TAG, "Failed consumer tx: %d", rc);
+    return ESP_FAIL;
+  }
+
+  return ESP_OK;
+}
