@@ -1,16 +1,16 @@
 #pragma once
 
 #include <stdint.h>
+#include <stdbool.h>
 
 // ======== types ========
 
-typedef enum usb_msg_type: uint8_t {
-	CFG_GET = 0,
-	CFG_SET,
-	SYSTEM_GET,
-    ACTION,
-    USB_MSG_TYPE_COUNT
-} usb_msg_type_t;
+typedef enum usb_msg_module: uint8_t {
+	MODULE_CONFIG = 0,
+	MODULE_SYSTEM,
+    MODULE_ACTION,
+    USB_MODULE_COUNT
+} usb_msg_module_t;
 
 // ======== flags ========
 

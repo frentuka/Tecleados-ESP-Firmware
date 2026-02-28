@@ -3,6 +3,7 @@
 #include <stdio.h>
 
 #include "usb_callbacks_rx.h"
+#include "usb_callbacks.h"
 #include "usb_defs.h"
 #include "usb_send.h"
 #include "usb_crc.h"
@@ -31,10 +32,11 @@ void process_rx_request(const usb_packet_msg_t msg)
 
     if (msg.flags & PAYLOAD_FLAG_FIRST) {
         ESP_LOGI(TAG, "Identified FIRST flag");
-
         erase_rx_buffer();
-        result = append_payload_to_rx_buffer(msg.payload, msg.payload_len);
+    }
 
+    if (msg.flags & (PAYLOAD_FLAG_FIRST | PAYLOAD_FLAG_MID | PAYLOAD_FLAG_LAST)) {
+        result = append_payload_to_rx_buffer(msg.payload, msg.payload_len);
         if (!result) {
             ESP_LOGE(TAG, "Error when appending to rx buffer. Aborting.");
             erase_rx_buffer();
@@ -43,35 +45,13 @@ void process_rx_request(const usb_packet_msg_t msg)
         }
     }
 
-    if (msg.flags & PAYLOAD_FLAG_MID) {
-        ESP_LOGI(TAG, "Identified MID flag");
-
-        result = append_payload_to_rx_buffer(msg.payload, msg.payload_len);
-
+    if ((msg.flags & PAYLOAD_FLAG_LAST) && result) {
+        ESP_LOGI(TAG, "Identified LAST flag, processing buffer.");
+        result = process_rx_buffer();
         if (!result) {
-            ESP_LOGE(TAG, "Error when appending to rx buffer. Aborting.");
+            ESP_LOGE(TAG, "Error when processing rx buffer. Responding with ERR.");
             erase_rx_buffer();
-            build_send_single_msg_packet(PAYLOAD_FLAG_ABORT, msg.remaining_packets, 0, NULL);
-            return;
-        }
-    }
-
-    if (msg.flags & PAYLOAD_FLAG_LAST) {
-        ESP_LOGI(TAG, "Identified LAST flag");
-
-        result = append_payload_to_rx_buffer(msg.payload, msg.payload_len);
-        if (result) {
-            result = process_rx_buffer();
-            if (!result) {
-                ESP_LOGE(TAG, "Error when processing rx buffer. Responding with ERR.");
-                erase_rx_buffer();
-                build_send_single_msg_packet(PAYLOAD_FLAG_ERR, msg.remaining_packets, 0, NULL);
-                return;
-            }
-        } else {
-            ESP_LOGE(TAG, "Error when appending to rx buffer. Aborting.");
-            erase_rx_buffer();
-            build_send_single_msg_packet(PAYLOAD_FLAG_ABORT, msg.remaining_packets, 0, NULL);
+            build_send_single_msg_packet(PAYLOAD_FLAG_ERR, msg.remaining_packets, 0, NULL);
             return;
         }
     }
@@ -125,6 +105,20 @@ static bool process_rx_buffer()
     }
 
     ESP_LOGI(TAG, "Processing RX buffer. rx_buf_len: %u", rx_buf_len);
+
+    usb_msg_module_t module = (usb_msg_module_t)rx_buf[0];
+    if (module >= USB_MODULE_COUNT) {
+        ESP_LOGE(TAG, "Invalid module ID in payload: %d", module);
+        return false;
+    }
+
+    // Pass the rest of the payload to the module callback
+    bool success = execute_callback(module, &rx_buf[1], rx_buf_len - 1);
+    
+    if (!success) {
+        ESP_LOGE(TAG, "Module %d callback failed to execute", module);
+        return false;
+    }
 
     return true;
 }

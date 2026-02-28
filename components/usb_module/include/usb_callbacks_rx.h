@@ -10,4 +10,4 @@
 
 void process_rx_request(const usb_packet_msg_t msg);
 void erase_rx_buffer();
-const uint64_t rx_get_last_packet_timestamp_us();
+uint64_t rx_get_last_packet_timestamp_us();

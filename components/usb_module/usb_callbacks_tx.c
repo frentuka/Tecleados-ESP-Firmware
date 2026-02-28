@@ -82,20 +82,22 @@ void process_tx_response(const usb_packet_msg_t msg)
         tx_nak_resend_attempts++;
     }
 
-// todo
-
     if (msg.flags & PAYLOAD_FLAG_OK) {
-        
+        ESP_LOGI(TAG, "Received OK response");
+        tx_awaiting_response = false;
+        erase_tx_buffer();
     }
 
     if (msg.flags & PAYLOAD_FLAG_ERR) {
-        
+        ESP_LOGE(TAG, "Received ERR response");
+        tx_awaiting_response = false;
+        erase_tx_buffer();
     }
 
-//
-
     if (msg.flags & PAYLOAD_FLAG_ABORT) {
-        
+        ESP_LOGE(TAG, "Received ABORT response");
+        tx_awaiting_response = false;
+        erase_tx_buffer();
     }
 }
 

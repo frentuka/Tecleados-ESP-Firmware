@@ -9,7 +9,7 @@
 
 
 #include "basic_utils.h"
-#include "cfgmod.h"
+
 
 
 #include "freertos/queue.h"
@@ -191,31 +191,31 @@ static void timeouts_task(void *pvParameters) {
   }
 }
 
-static usb_data_callback_t s_type_callbacks[USB_MSG_TYPE_COUNT] = {0};
+static usb_data_callback_t s_module_callbacks[USB_MODULE_COUNT] = {0};
 
-void register_callback(usb_msg_type_t callback_type,
+void register_callback(usb_msg_module_t callback_module,
                        usb_data_callback_t callback) {
-  if (callback_type >= USB_MSG_TYPE_COUNT) {
-    ESP_LOGE(TAG, "Failed to register callback: type > USB_MSG_TYPE_COUNT");
+  if (callback_module >= USB_MODULE_COUNT) {
+    ESP_LOGE(TAG, "Failed to register callback: module > USB_MODULE_COUNT");
     return;
   }
 
-  s_type_callbacks[callback_type] = callback;
+  s_module_callbacks[callback_module] = callback;
 }
 
-bool execute_callback(usb_msg_type_t callback_type, uint8_t const *data,
+bool execute_callback(usb_msg_module_t callback_module, uint8_t const *data,
                       uint16_t data_len) {
-  if (callback_type >= USB_MSG_TYPE_COUNT) {
-    ESP_LOGE(TAG, "Failed to execute callback: type > USB_MSG_TYPE_COUNT");
+  if (callback_module >= USB_MODULE_COUNT) {
+    ESP_LOGE(TAG, "Failed to execute callback: module > USB_MODULE_COUNT");
     return false;
   }
 
-  if (!s_type_callbacks[callback_type]) {
+  if (!s_module_callbacks[callback_module]) {
     ESP_LOGE(TAG, "Failed to execute callback: callback not registered");
     return false;
   }
 
-  return s_type_callbacks[callback_type];
+  return s_module_callbacks[callback_module]((uint8_t *)data, data_len);
 }
 
 void usb_callbacks_init(void) {

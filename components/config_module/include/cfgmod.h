@@ -19,29 +19,21 @@ typedef enum cfgmod_kind : uint8_t {
   CFGMOD_KIND_MAX
 } cfgmod_kind_t;
 
-typedef enum usb_cmd_msg_type : uint8_t {
-  CFGMOD_MSG_REQUEST = 0,
-  CFGMOD_MSG_RESPONSE,
-  CFGMOD_MSG_NOTIFY
-} cfgmod_msg_type_t;
+typedef enum cfgmod_key_id : uint8_t {
+  CFG_KEY_TEST = 0,
+  CFG_KEY_HELLO,
+  CFG_KEY_MAX
+} cfgmod_key_id_t;
 
-typedef struct cfgmod_msg_header {
-  cfgmod_msg_type_t type;
-  cfgmod_kind_t kind;
-  uint16_t seq;
-  uint16_t payload_len;
-} cfgmod_msg_header_t;
-
-typedef esp_err_t (*cfgmod_message_handler_t)(const cfgmod_msg_header_t *header,
-                                              const void *payload,
-                                              size_t payload_len,
-                                              void *user_ctx);
+typedef enum cfgmod_cmd : uint8_t {
+  CFG_CMD_GET = 0,
+  CFG_CMD_SET
+} cfgmod_cmd_t;
 
 typedef struct __attribute__((packed)) cfgmod_wire_header {
-  uint8_t type; // cfgmod_msg_type_t (request/response)
-  uint8_t kind; // cfgmod_kind_t
-  uint16_t seq; // sequence
-  uint16_t payload_len;
+  uint8_t cmd;         // cfgmod_cmd_t (GET/SET)
+  uint8_t key_id;      // cfgmod_key_id_t
+  uint8_t payload_len; // Content length
 } cfgmod_wire_header_t;
 
 // Handle one COMM report and optionally build a response.

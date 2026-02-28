@@ -9,7 +9,7 @@
 #include "usbmod.h"
 
 
-#include "cfgmod.h"
+
 
 #include "esp_err.h"
 #include "esp_log.h"
@@ -110,14 +110,14 @@ void usb_send_keystroke(uint8_t hid_keycode) {
 
 // ======== Callbacks ========
 
-void usbmod_register_callback(usb_msg_type_t callback_type,
+void usbmod_register_callback(usb_msg_module_t callback_module,
                               usb_data_callback_t callback) {
-  register_callback(callback_type, callback);
+  register_callback(callback_module, callback);
 }
 
-bool usbmod_execute_callback(usb_msg_type_t callback_type, uint8_t const *data,
+bool usbmod_execute_callback(usb_msg_module_t callback_module, uint8_t const *data,
                              uint16_t data_len) {
-  return execute_callback(callback_type, data, data_len);
+  return execute_callback(callback_module, data, data_len);
 }
 
 /*
