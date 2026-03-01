@@ -111,18 +111,18 @@ static void process_incoming_packet(usb_packet_msg_t msg) {
            msg.payload_len, msg.flags, msg.remaining_packets);
   print_bytes_as_chars(TAG, msg.payload, msg.payload_len);
 
-  // Verify payload's length
-  if (msg.payload_len == 0) {
-    ESP_LOGE(TAG, "Received payload_len == 0");
-    return;
-  }
-
   bool is_rx = msg.flags & PAYLOAD_FLAG_FIRST || msg.flags & PAYLOAD_FLAG_MID ||
                msg.flags & PAYLOAD_FLAG_LAST;
   bool is_tx =
       !is_rx && (msg.flags & PAYLOAD_FLAG_ACK || msg.flags & PAYLOAD_FLAG_NAK ||
                  msg.flags & PAYLOAD_FLAG_OK || msg.flags & PAYLOAD_FLAG_ERR ||
                  msg.flags & PAYLOAD_FLAG_ABORT);
+
+  // Verify payload's length
+  if (is_rx && msg.payload_len == 0) {
+    ESP_LOGE(TAG, "Received RX payload_len == 0");
+    return;
+  }
 
   if (is_rx) {
     ESP_LOGI(TAG, "process_incoming_packet: Processing RX-wise packet");
@@ -131,8 +131,14 @@ static void process_incoming_packet(usb_packet_msg_t msg) {
   }
 
   if (is_tx) {
-    ESP_LOGI(TAG, "process_incoming_packet: Processing TX-wise packet");
-    process_tx_response(msg);
+    ESP_LOGI(TAG, "process_incoming_packet: Queuing TX-wise packet");
+    if (tx_processing_queue == NULL) {
+      ESP_LOGE(TAG, "tx_processing_queue not initialized");
+      return;
+    }
+    if (xQueueSend(tx_processing_queue, &msg, 0) != pdTRUE) {
+      ESP_LOGE(TAG, "TX Process queue full, dropping packet");
+    }
     return;
   }
 }

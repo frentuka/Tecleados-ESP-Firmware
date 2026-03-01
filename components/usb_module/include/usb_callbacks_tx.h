@@ -4,7 +4,7 @@
 
 // ============ TX Buffer ============
 
-#define TX_TIMEOUT_MS 1000
+#define TX_TIMEOUT_MS 250
 #define MAX_TX_BUF_SIZE 21500
 #define MAX_TX_BUF_SIZE_IN_PAYLOADS MAX_TX_BUF_SIZE / MAX_PAYLOAD_LENGTH
 

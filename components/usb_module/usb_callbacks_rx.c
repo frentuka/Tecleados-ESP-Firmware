@@ -61,7 +61,9 @@ void process_rx_request(const usb_packet_msg_t msg)
         return;
     }
 
-    rx_last_packet_timestamp_us = esp_timer_get_time();
+    if (rx_buf_len > 0) {
+        rx_last_packet_timestamp_us = esp_timer_get_time();
+    }
     
     return;
 }

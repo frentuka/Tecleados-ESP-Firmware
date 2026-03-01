@@ -12,6 +12,7 @@
 #include "basic_utils.h"
 
 #include "esp_log.h"
+#include "esp_timer.h"
 
 #define TAG "USB Callbacks TX"
 
@@ -38,7 +39,10 @@ void process_tx_response(const usb_packet_msg_t msg)
         return;
     }
 
+    bool handled = false;
+
     if (msg.flags & PAYLOAD_FLAG_ACK) {
+        handled = true;
         ESP_LOGI(TAG, "Received ACK:");
         print_bytes_as_chars(TAG, msg.payload, msg.payload_len);
 
@@ -56,17 +60,20 @@ void process_tx_response(const usb_packet_msg_t msg)
         // this was the last packet's ack
         else {
             erase_tx_buffer();
-            
-            tx_awaiting_response = true; // awaiting for OK
+            if (!(msg.flags & PAYLOAD_FLAG_OK)) {
+                tx_awaiting_response = true; // awaiting for OK
+            }
         }
     }
 
     if (msg.flags & PAYLOAD_FLAG_NAK) {
+        handled = true;
         ESP_LOGE(TAG, "Received NAK");
         
         if (tx_nak_resend_attempts >= TX_NAK_RESEND_MAX_ATTEMPTS) {
             ESP_LOGE(TAG, "Max NAK attempts reached. Aborting.");
             build_send_single_msg_packet(PAYLOAD_FLAG_ABORT, 0, 0, NULL);
+            erase_tx_buffer();
             return;
         }
 
@@ -74,8 +81,8 @@ void process_tx_response(const usb_packet_msg_t msg)
         tx_buf_idx = tx_buf_last_packet_sent_idx;
         if (!tx_send_next_packet()) {
             ESP_LOGE(TAG, "Failed to resend packet.");
-            tx_nak_resend_attempts = 0;
             build_send_single_msg_packet(PAYLOAD_FLAG_ABORT, 0, 0, NULL);
+            erase_tx_buffer();
             return;
         }
 
@@ -83,20 +90,27 @@ void process_tx_response(const usb_packet_msg_t msg)
     }
 
     if (msg.flags & PAYLOAD_FLAG_OK) {
+        handled = true;
         ESP_LOGI(TAG, "Received OK response");
-        tx_awaiting_response = false;
         erase_tx_buffer();
     }
 
     if (msg.flags & PAYLOAD_FLAG_ERR) {
+        handled = true;
         ESP_LOGE(TAG, "Received ERR response");
-        tx_awaiting_response = false;
         erase_tx_buffer();
     }
 
     if (msg.flags & PAYLOAD_FLAG_ABORT) {
+        handled = true;
         ESP_LOGE(TAG, "Received ABORT response");
-        tx_awaiting_response = false;
+        erase_tx_buffer();
+        return;
+    }
+
+    if (!handled) {
+        // Catch-all: If flags didn't match any handled TX flag, abort and unlock
+        ESP_LOGE(TAG, "Unhandled TX response flag: %02X. Force erasing buffer.", msg.flags);
         erase_tx_buffer();
     }
 }
@@ -110,6 +124,7 @@ void erase_tx_buffer()
     tx_buf_last_packet_sent_idx = 0;
     tx_last_packet_timestamp_us = 0;
     tx_awaiting_response = false;
+    tx_nak_resend_attempts = 0;
     ESP_LOGI(TAG, "TX buffer erased");
 }
 
@@ -154,12 +169,13 @@ static void tx_buf_extract_next_msg(usb_packet_msg_t *msg)
     uint16_t stripped_payload_len = tx_buf_len - tx_buf_idx;
     stripped_payload_len = stripped_payload_len > MAX_PAYLOAD_LENGTH ? MAX_PAYLOAD_LENGTH : stripped_payload_len;
 
-    // calculate bytes left to calculate amount of remaining packets
+    // calculate bytes left AFTER this packet
     uint16_t bytes_left = tx_buf_len - tx_buf_idx;
+    uint16_t bytes_left_after_this_msg = bytes_left - stripped_payload_len;
     
     // set all values
     msg->flags = 0xFF; // msg.flags == 0xFF -> success
-    msg->remaining_packets = (bytes_left + MAX_PAYLOAD_LENGTH - 1) / MAX_PAYLOAD_LENGTH;
+    msg->remaining_packets = (bytes_left_after_this_msg + MAX_PAYLOAD_LENGTH - 1) / MAX_PAYLOAD_LENGTH;
     memcpy(msg->payload, tx_buf + tx_buf_idx, stripped_payload_len);
     msg->payload_len = stripped_payload_len;
 
@@ -211,6 +227,8 @@ static bool tx_send_next_packet()
         ESP_LOGE(TAG, "TX Process queue full, dropping packet.");
         return false;
     }
+
+    tx_last_packet_timestamp_us = esp_timer_get_time();
 
     return true;
 }

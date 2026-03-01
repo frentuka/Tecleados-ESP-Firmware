@@ -43,16 +43,52 @@ function App() {
   const [logs, setLogs] = useState<LogMessage[]>([]);
 
   const [selectedModule, setSelectedModule] = useState<number>(MODULE_CONFIG);
-  const [selectedCmd, setSelectedCmd] = useState<number>(CFG_CMD_GET);
+  // Default to SET because the dynamic UI implicitly wants to SET what the GET retrieved.
+  // We'll auto request a GET under the hood when selectedModule/selectedKey changes.
+  const selectedCmd: number = CFG_CMD_SET;
   const [selectedKey, setSelectedKey] = useState<number>(CFG_KEY_TEST);
-  const [customPayload, setCustomPayload] = useState('{"val": 123}');
+
+  // Dynamic configuration data state
+  const [configData, setConfigData] = useState<Record<string, any> | null>(null);
+  const [isFetching, setIsFetching] = useState<boolean>(false);
 
   const logsEndRef = useRef<HTMLDivElement>(null);
+  const incomingPayloadRef = useRef<{ cmd: number, keyId: number, status: number, jsonText: string } | null>(null);
 
   // Auto-scroll to bottom of logs
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [logs]);
+
+  // Handle requesting config data when module, key, or connection status changes
+  const fetchConfigData = useCallback(async (module: number, key: number) => {
+    if (!isConnected || module !== MODULE_CONFIG) {
+      setConfigData(null);
+      return;
+    }
+
+    setIsFetching(true);
+    setConfigData(null); // Clear current form while loading
+
+    // Construct a GET packet for the selected module and key
+    const buf = new Uint8Array(3);
+    buf[0] = CFG_CMD_GET;
+    buf[1] = key;
+    buf[2] = 0; // Length 0
+
+    const finalPayload = new Uint8Array(1 + buf.length);
+    finalPayload[0] = module;
+    finalPayload.set(buf, 1);
+
+    await hidService.sendCustomCommReport(finalPayload);
+    // The WebHID callback will parse the jsonText and update configData.
+  }, [isConnected]);
+
+  useEffect(() => {
+    if (isConnected) {
+      fetchConfigData(selectedModule, selectedKey);
+    }
+  }, [isConnected, selectedModule, selectedKey, fetchConfigData]);
 
   const handleLogReceived = useCallback((data: Uint8Array) => {
     // Parse the 48-byte usb_packet_msg_t
@@ -78,19 +114,83 @@ function App() {
     const safeLen = Math.min(payloadLen, 43);
     const payloadBytes = data.slice(4, 4 + safeLen);
 
-    // Decode payload text based on new logic format
-    // For incoming responses, if module is CONFIG, [Mod][Cmd][KeyId][Len]
-    // The ESP actually replies with [Mod][Cmd][Key][Len][Status...][Json...] -> oh wait, ESP replies with [Mod][Cmd][KeyId][Payload_len][Status (4bytes)][...data] 
-    // We can just dump everything after byte 4.
-    let payloadText = new TextDecoder().decode(payloadBytes);
-    payloadText = payloadText.replace(/\0/g, ''); // Remove null terminators
-
     let text = `${getFlagsString(flags)} Len: ${safeLen}, Rem: ${remaining}`;
+    let isParsed = false;
+
     if (safeLen > 0) {
-      if (payloadText.trim() === '' || Array.from(payloadBytes).some(b => b < 32 && b !== 9 && b !== 10 && b !== 13)) {
-        text += ` => Hex: ${Array.from(payloadBytes).map(b => b.toString(16).padStart(2, '0')).join(' ')}`;
-      } else {
-        text += ` => Payload: "${payloadText}"`;
+      // Configuration response: Module 1, length is at least 7 bytes (cmd(1) + key(1) + payload_len(1) + status(4) + potential json)
+      if ((flags & PAYLOAD_FLAG_FIRST) && payloadBytes[0] === MODULE_CONFIG && safeLen >= 7) {
+        // First packet of a config response
+        const cmd = payloadBytes[1];
+        const keyId = payloadBytes[2];
+        // ESP32 esp_err_t is 32-bit signed integer (little endian)
+        const status = (payloadBytes[4] | (payloadBytes[5] << 8) | (payloadBytes[6] << 16) | (payloadBytes[7] << 24));
+
+        const jsonBytes = payloadBytes.slice(8);
+        const jsonText = new TextDecoder().decode(jsonBytes).replace(/\0/g, '');
+
+        incomingPayloadRef.current = { cmd, keyId, status, jsonText };
+
+        if (flags & PAYLOAD_FLAG_LAST) {
+          const cmdStr = cmd === CFG_CMD_GET ? "GET" : (cmd === CFG_CMD_SET ? "SET" : `CMD(${cmd})`);
+          const completeJsonTxt = incomingPayloadRef.current.jsonText;
+          text += ` => [CONFIG ${cmdStr} Key:${keyId} Status:${status}] JSON: ${completeJsonTxt}`;
+
+          if (cmd === CFG_CMD_GET && completeJsonTxt.trim().length > 0) {
+            try {
+              const parsedObj = JSON.parse(completeJsonTxt);
+              setConfigData(parsedObj);
+            } catch (e) {
+              console.error("Config JSON Parse Error (First==Last):", e);
+              setConfigData({});
+            }
+            setIsFetching(false);
+          }
+
+          incomingPayloadRef.current = null;
+          isParsed = true;
+        } else {
+          text += ` => [CONFIG RX START] ${jsonText}`;
+          isParsed = true;
+        }
+      } else if (incomingPayloadRef.current && !(flags & PAYLOAD_FLAG_FIRST)) {
+        // Continuation packet
+        const jsonText = new TextDecoder().decode(payloadBytes).replace(/\0/g, '');
+        incomingPayloadRef.current.jsonText += jsonText;
+
+        if (flags & PAYLOAD_FLAG_LAST) {
+          const { cmd, keyId, status, jsonText: fullJson } = incomingPayloadRef.current;
+          const cmdStr = cmd === CFG_CMD_GET ? "GET" : (cmd === CFG_CMD_SET ? "SET" : `CMD(${cmd})`);
+          text += ` => [CONFIG ${cmdStr} Key:${keyId} Status:${status}] FULL JSON: ${fullJson}`;
+
+          // Parse the fully re-assembled JSON strictly when it's a GET response
+          if (cmd === CFG_CMD_GET && fullJson.trim().length > 0) {
+            try {
+              const parsedObj = JSON.parse(fullJson);
+              setConfigData(parsedObj);
+            } catch (e) {
+              console.error("Config JSON Parse Error:", e);
+              // fallback to empty if malformed to allow users to override
+              setConfigData({});
+            }
+            setIsFetching(false);
+          }
+
+          incomingPayloadRef.current = null;
+          isParsed = true;
+        } else {
+          text += ` => [CONFIG RX MID] ${jsonText}`;
+          isParsed = true;
+        }
+      }
+
+      if (!isParsed) {
+        let payloadText = new TextDecoder().decode(payloadBytes).replace(/\0/g, '');
+        if (payloadText.trim() === '' || Array.from(payloadBytes).some(b => b < 32 && b !== 9 && b !== 10 && b !== 13)) {
+          text += ` => Hex: ${Array.from(payloadBytes).map(b => b.toString(16).padStart(2, '0')).join(' ')}`;
+        } else {
+          text += ` => Payload: "${payloadText}"`;
+        }
       }
     }
 
@@ -124,17 +224,17 @@ function App() {
   const handleSendCustomPayload = async () => {
     let payloadBytes = new Uint8Array(0);
 
-    // Only encode payload data if command is SET
-    if (selectedModule === MODULE_CONFIG && selectedCmd === CFG_CMD_SET) {
+    // Only encode payload data if command is SET and we have a valid form object
+    if (selectedModule === MODULE_CONFIG && selectedCmd === CFG_CMD_SET && configData) {
       const encoder = new TextEncoder();
-      payloadBytes = encoder.encode(customPayload);
+      const stringifiedPayload = JSON.stringify(configData);
+      payloadBytes = encoder.encode(stringifiedPayload);
     }
 
-    // Format: [Module][Command][KeyId][PayloadLen][...Data]
-    const packetLen = 4 + payloadBytes.length;
-    const buf = new Uint8Array(packetLen - 1); // Exclude Module ID from the initial buffer
-
+    let buf: Uint8Array;
     if (selectedModule === MODULE_CONFIG) {
+      const packetLen = 4 + payloadBytes.length;
+      buf = new Uint8Array(packetLen - 1); // Exclude Module ID from the initial buffer
       buf[0] = selectedCmd;
       buf[1] = selectedKey;
       buf[2] = payloadBytes.length;
@@ -143,6 +243,7 @@ function App() {
       }
     } else {
       // System module generic format
+      buf = new Uint8Array(3);
       buf[0] = 0;
       buf[1] = 0;
       buf[2] = 0;
@@ -172,6 +273,61 @@ function App() {
         text: `Sent [${modStr}] Cmd: ${cmdStr}, Key: ${keyStr}, Len: ${payloadBytes.length}`,
       },
     ]);
+  };
+
+  const renderConfigForm = () => {
+    if (isFetching) {
+      return <div style={{ color: 'var(--text-secondary)', padding: '1rem 0' }}>Fetching configuration...</div>;
+    }
+
+    if (!configData || Object.keys(configData).length === 0) {
+      return <div style={{ color: 'var(--text-secondary)', padding: '1rem 0' }}>No configuration data retrieved.</div>;
+    }
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '1rem', padding: '1rem', background: 'var(--bg-color)', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+        <h4 style={{ marginBottom: '0.5rem', marginTop: 0 }}>Configuration Form</h4>
+        {Object.entries(configData).map(([key, value]) => {
+          const isBoolean = typeof value === 'boolean';
+          const isNumber = typeof value === 'number';
+
+          return (
+            <div key={key} style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+              <label style={{ width: '120px', fontSize: '0.9rem', fontWeight: 500 }}>
+                {key}
+              </label>
+              {isBoolean ? (
+                <input
+                  type="checkbox"
+                  checked={value as boolean}
+                  onChange={(e) => {
+                    setConfigData({ ...configData, [key]: e.target.checked });
+                  }}
+                  style={{ width: '20px', height: '20px' }}
+                />
+              ) : (
+                <input
+                  type={isNumber ? "number" : "text"}
+                  value={value as string | number}
+                  onChange={(e) => {
+                    const newValue = isNumber ? Number(e.target.value) : e.target.value;
+                    setConfigData({ ...configData, [key]: newValue });
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: '0.5rem',
+                    borderRadius: '4px',
+                    border: '1px solid var(--border-color)',
+                    background: 'var(--bg-color)',
+                    color: 'var(--text-primary)',
+                  }}
+                />
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
   };
 
   return (
@@ -225,17 +381,6 @@ function App() {
                 <>
                   <div style={{ display: 'flex', gap: '0.5rem' }}>
                     <div style={{ flex: 1 }}>
-                      <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.9rem' }}>Command:</label>
-                      <select
-                        value={selectedCmd}
-                        onChange={(e) => setSelectedCmd(Number(e.target.value))}
-                        style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', background: 'var(--bg-color)', color: 'var(--text-primary)', border: '1px solid var(--border-color)' }}
-                      >
-                        <option value={CFG_CMD_GET}>GET</option>
-                        <option value={CFG_CMD_SET}>SET</option>
-                      </select>
-                    </div>
-                    <div style={{ flex: 1 }}>
                       <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.9rem' }}>Key ID:</label>
                       <select
                         value={selectedKey}
@@ -248,33 +393,17 @@ function App() {
                     </div>
                   </div>
 
-                  {selectedCmd === CFG_CMD_SET && (
-                    <div>
-                      <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.9rem' }}>Payload Data (JSON):</label>
-                      <input
-                        type="text"
-                        value={customPayload}
-                        onChange={(e) => setCustomPayload(e.target.value)}
-                        style={{
-                          width: '100%',
-                          padding: '0.75rem',
-                          borderRadius: '6px',
-                          border: '1px solid var(--border-color)',
-                          background: 'var(--bg-color)',
-                          color: 'var(--text-primary)',
-                        }}
-                      />
-                    </div>
-                  )}
+                  {/* Render the dynamic configuration form */}
+                  {renderConfigForm()}
                 </>
               )}
 
-              <button className="btn" onClick={handleSendCustomPayload} style={{ width: '100%', marginTop: '0.5rem' }}>
+              <button className="btn" onClick={handleSendCustomPayload} disabled={isFetching || !configData} style={{ width: '100%', marginTop: '0.5rem' }}>
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <line x1="22" y1="2" x2="11" y2="13"></line>
                   <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
                 </svg>
-                Send Payload
+                Save Payload
               </button>
             </div>
 
