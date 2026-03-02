@@ -38,8 +38,29 @@ export default function SearchableKeyModal({ currentValue, macros, onSelect, onC
         { name: 'System / BLE', filter: (v: number) => v >= 0x2000 && v <= 0x20FF },
     ];
 
+    const [mouseDownOnOverlay, setMouseDownOnOverlay] = useState(false);
+
+    const handleOverlayMouseDown = (e: React.MouseEvent) => {
+        if (e.target === e.currentTarget) {
+            setMouseDownOnOverlay(true);
+        } else {
+            setMouseDownOnOverlay(false);
+        }
+    };
+
+    const handleOverlayMouseUp = (e: React.MouseEvent) => {
+        if (mouseDownOnOverlay && e.target === e.currentTarget) {
+            onClose();
+        }
+        setMouseDownOnOverlay(false);
+    };
+
     return createPortal(
-        <div className="modal-overlay" onClick={onClose}>
+        <div
+            className="modal-overlay"
+            onMouseDown={handleOverlayMouseDown}
+            onMouseUp={handleOverlayMouseUp}
+        >
             <div className="modal-content" onClick={e => e.stopPropagation()}>
                 <div className="modal-header">
                     <h3>Select Key</h3>

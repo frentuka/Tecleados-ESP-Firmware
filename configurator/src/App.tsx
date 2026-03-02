@@ -425,11 +425,12 @@ function App() {
             />
           </div>
 
-          <div className="dashboard glass-panel">
+          <div className="glass-panel">
             <MacrosDashboard
               macros={macros}
               onSaveMacro={handleSaveMacro}
               onDeleteMacro={handleDeleteMacro}
+              onReload={fetchMacros}
             />
           </div>
 

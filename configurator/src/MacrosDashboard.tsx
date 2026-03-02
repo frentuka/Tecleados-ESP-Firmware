@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import type { Macro, MacroElement } from './App';
 import { getKeyName, getKeyClass, MACRO_BASE } from './KeyDefinitions';
@@ -16,6 +16,8 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros }: Macr
     const [elements, setElements] = useState<MacroElement[]>(initialMacro.elements || []);
     const [isKeyModalOpen, setIsKeyModalOpen] = useState(false);
     const [editingElementIndex, setEditingElementIndex] = useState<number | null>(null);
+    const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+    const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
 
     const addKey = () => {
         setEditingElementIndex(null);
@@ -47,58 +49,100 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros }: Macr
         setElements(newElements);
     };
 
-    const moveElement = (index: number, direction: 'up' | 'down') => {
-        if (direction === 'up' && index === 0) return;
-        if (direction === 'down' && index === elements.length - 1) return;
+    const handleDragStart = (e: React.DragEvent, index: number) => {
+        setDraggedIndex(index);
+        e.dataTransfer.effectAllowed = 'move';
+        // Required for Firefox
+        e.dataTransfer.setData('text/plain', index.toString());
+    };
+
+    const handleDragOver = (e: React.DragEvent, index: number) => {
+        e.preventDefault();
+        setDragOverIndex(index);
+    };
+
+    const handleDrop = (e: React.DragEvent, targetIndex: number) => {
+        e.preventDefault();
+        if (draggedIndex === null || draggedIndex === targetIndex) return;
 
         const newElements = [...elements];
-        const targetIndex = direction === 'up' ? index - 1 : index + 1;
-        [newElements[index], newElements[targetIndex]] = [newElements[targetIndex], newElements[index]];
+        const item = newElements[draggedIndex];
+        newElements.splice(draggedIndex, 1);
+        newElements.splice(targetIndex, 0, item);
         setElements(newElements);
     };
 
+    const handleDragEnd = () => {
+        setDraggedIndex(null);
+        setDragOverIndex(null);
+    };
+
+
+    const [mouseDownOnOverlay, setMouseDownOnOverlay] = useState(false);
+
+    const handleOverlayMouseDown = (e: React.MouseEvent) => {
+        if (e.target === e.currentTarget) {
+            setMouseDownOnOverlay(true);
+        } else {
+            setMouseDownOnOverlay(false);
+        }
+    };
+
+    const handleOverlayMouseUp = (e: React.MouseEvent) => {
+        if (mouseDownOnOverlay && e.target === e.currentTarget) {
+            onClose();
+        }
+        setMouseDownOnOverlay(false);
+    };
+
     return createPortal(
-        <div className="modal-overlay" onClick={onClose}>
+        <div
+            className="modal-overlay"
+            onMouseDown={handleOverlayMouseDown}
+            onMouseUp={handleOverlayMouseUp}
+        >
             <div className="modal-content macro-editor-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '600px' }}>
-                <div className="modal-header">
-                    <h3>{initialMacro.id === -1 ? 'Create Macro' : 'Edit Macro'}</h3>
-                    <button className="btn-close" onClick={onClose}>&times;</button>
-                </div>
-                <div className="modal-body">
-                    <div className="form-group">
-                        <label>Macro Name</label>
+                <div className="modal-header macro-modal-header">
+                    <div className="macro-name-container">
                         <input
                             type="text"
                             value={name}
                             onChange={e => setName(e.target.value)}
-                            placeholder="Enter macro name..."
-                            className="macro-name-input"
+                            placeholder="Macro Name..."
+                            className="macro-name-input-compact"
                         />
                     </div>
-
-                    <div className="macro-editor-actions">
-                        <button className="btn btn-secondary" onClick={addKey}>
+                    <div className="macro-editor-actions-header">
+                        <button className="btn btn-secondary btn-sm" onClick={addKey}>
                             <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M20 5H4c-1.1 0-1.99.9-1.99 2L2 17c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm-9 3h2v2h-2V8zm0 3h2v2h-2v-2zM8 8h2v2H8V8zm0 3h2v2H8v-2zM5 8h2v2H5V8zm0 3h2v2H5v-2zm9 7H8v-2h6v2zm0-5h2v2h-2v-2zm0-3h2v2h-2V8zm3 3h2v2h-2v-2zm0-3h2v2h-2V8z" /></svg>
                             Add Key
                         </button>
-                        <button className="btn btn-secondary" onClick={addSleep}>
+                        <button className="btn btn-secondary btn-sm" onClick={addSleep}>
                             <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zm3.3 14.71L11 12.41V7h2v4.59l3.71 3.71-1.42 1.41z" /></svg>
                             Add Sleep
                         </button>
                     </div>
+                    <button className="btn-close" onClick={onClose}>&times;</button>
+                </div>
+                <div className="modal-body">
 
                     <div className="macro-elements-list">
-                        <label>Sequence</label>
                         {elements.length === 0 ? (
                             <div className="empty-state">No elements added yet.</div>
                         ) : (
                             elements.map((el, i) => (
-                                <div key={i} className="macro-element-row">
-                                    <div className="element-drag-controls">
-                                        <button onClick={() => moveElement(i, 'up')} disabled={i === 0}>▲</button>
-                                        <button onClick={() => moveElement(i, 'down')} disabled={i === elements.length - 1}>▼</button>
-                                    </div>
-
+                                <div
+                                    key={i}
+                                    className={`macro-element-row ${draggedIndex === i ? 'dragging' : ''} ${dragOverIndex === i && draggedIndex !== null && draggedIndex !== i
+                                        ? (draggedIndex > i ? 'drag-over-top' : 'drag-over-bottom')
+                                        : ''
+                                        }`}
+                                    draggable="true"
+                                    onDragStart={(e) => handleDragStart(e, i)}
+                                    onDragOver={(e) => handleDragOver(e, i)}
+                                    onDragEnd={handleDragEnd}
+                                    onDrop={(e) => handleDrop(e, i)}
+                                >
                                     <div className="element-content">
                                         {el.type === 'key' ? (
                                             <div className={`key-preview ${getKeyClass(el.key)}`} onClick={() => {
@@ -152,10 +196,23 @@ interface MacrosDashboardProps {
     macros: Macro[];
     onSaveMacro: (macro: Macro) => void;
     onDeleteMacro: (id: number) => void;
+    onReload?: () => void;
 }
 
-export default function MacrosDashboard({ macros, onSaveMacro, onDeleteMacro }: MacrosDashboardProps) {
+export default function MacrosDashboard({ macros, onSaveMacro, onDeleteMacro, onReload }: MacrosDashboardProps) {
     const [editingMacro, setEditingMacro] = useState<Macro | null>(null);
+    const [isMenuOpen, setIsMenuOpen] = useState(false);
+    const menuRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        function handleClickOutside(event: MouseEvent) {
+            if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+                setIsMenuOpen(false);
+            }
+        }
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
 
     const handleCreate = () => {
         setEditingMacro({ id: -1, name: '', elements: [] });
@@ -167,7 +224,27 @@ export default function MacrosDashboard({ macros, onSaveMacro, onDeleteMacro }: 
 
     return (
         <div className="macros-dashboard">
-            <div className="dashboard-header">
+            <div className="macros-header">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginBottom: '0.5rem' }}>
+                    <h2 className="section-title">Macros Editor</h2>
+                    <div className="menu-container" ref={menuRef}>
+                        <button className="btn-icon" onClick={() => setIsMenuOpen(!isMenuOpen)} title="Options">
+                            <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
+                                <path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z" />
+                            </svg>
+                        </button>
+                        {isMenuOpen && (
+                            <div className="dropdown-menu">
+                                <button className="dropdown-item" onClick={() => { onReload?.(); setIsMenuOpen(false); }}>
+                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                                        <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
+                                    </svg>
+                                    Refresh
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                </div>
                 <button className="btn btn-success" onClick={handleCreate}>
                     <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" /></svg>
                     Create Macro

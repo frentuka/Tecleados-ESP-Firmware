@@ -562,7 +562,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
     return (
         <div className="layout-editor">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                <h2 style={{ margin: 0 }}>Keyboard Layout</h2>
+                <h2 className="section-title">Keyboard Layout</h2>
                 <div className="menu-container" ref={menuRef}>
                     <button className="btn-icon" onClick={() => setIsMenuOpen(!isMenuOpen)} title="Options">
                         <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
@@ -571,6 +571,12 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                     </button>
                     {isMenuOpen && (
                         <div className="dropdown-menu">
+                            <button className="dropdown-item" onClick={() => { fetchLayer(activeLayer); setIsMenuOpen(false); }}>
+                                <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                                    <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
+                                </svg>
+                                Refresh
+                            </button>
                             <button className="dropdown-item" onClick={() => { exportLayout(); setIsMenuOpen(false); }}>
                                 <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
                                     <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
@@ -785,28 +791,16 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                 onSelect={(newValue: number) => {
                                     handleKeyChange(selectedKey.row, selectedKey.col, newValue);
                                     setIsModalOpen(false);
+                                    setSelectedKey(null);
                                 }}
-                                onClose={() => setIsModalOpen(false)}
+                                onClose={() => {
+                                    setIsModalOpen(false);
+                                    setSelectedKey(null);
+                                }}
                             />
                         )
                     }
 
-                    {/* Key editor panel - minimal now, just showing selection */}
-                    {
-                        selectedKey && (
-                            <div className="key-editor">
-                                <h4>
-                                    Key [{selectedKey.row}, {selectedKey.col}]
-                                    <span className="key-editor-current">
-                                        : {getKeyName(currentLayer[selectedKey.row][selectedKey.col], macros)}
-                                    </span>
-                                </h4>
-                                <button className="btn btn-accent" onClick={() => setIsModalOpen(true)}>
-                                    🔍 Change Key
-                                </button>
-                            </div>
-                        )
-                    }
 
                     {/* Action buttons */}
                     <div className="layout-actions">
@@ -818,17 +812,6 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                             onChange={importLayout}
                         />
 
-                        <button
-                            className="btn btn-apply-idle"
-                            disabled={layerStatus[activeLayer] === 'loading'}
-                            onClick={() => fetchLayer(activeLayer)}
-                            title="Reload layer from Device"
-                        >
-                            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-                                <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
-                            </svg>
-                            Reload
-                        </button>
 
                         {/* Universal Apply button */}
                         <div style={{ marginLeft: 'auto' }}>
