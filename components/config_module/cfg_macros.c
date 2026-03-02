@@ -47,7 +47,17 @@ bool macros_deserialize(cJSON *root, void *out_struct) {
         cJSON *type = cJSON_GetObjectItem(el, "type");
         if (cJSON_IsString(type)) {
             if (strcmp(type->valuestring, "key") == 0) {
-                m->events[m->event_count].type = MACRO_EVT_KEY_TAP;
+                m->events[m->event_count].type = MACRO_EVT_KEY_TAP; // Default
+                
+                cJSON *action = cJSON_GetObjectItem(el, "action");
+                if (cJSON_IsString(action)) {
+                    if (strcmp(action->valuestring, "press") == 0) {
+                        m->events[m->event_count].type = MACRO_EVT_KEY_PRESS;
+                    } else if (strcmp(action->valuestring, "release") == 0) {
+                        m->events[m->event_count].type = MACRO_EVT_KEY_RELEASE;
+                    }
+                }
+                
                 cJSON *key = cJSON_GetObjectItem(el, "key");
                 if (cJSON_IsNumber(key)) m->events[m->event_count].value = key->valueint;
                 m->event_count++;
@@ -86,6 +96,14 @@ cJSON *macros_serialize(const void *in_struct) {
       } else {
           cJSON_AddStringToObject(el, "type", "key");
           cJSON_AddNumberToObject(el, "key", m->events[j].value);
+          
+          if (m->events[j].type == MACRO_EVT_KEY_PRESS) {
+              cJSON_AddStringToObject(el, "action", "press");
+          } else if (m->events[j].type == MACRO_EVT_KEY_RELEASE) {
+              cJSON_AddStringToObject(el, "action", "release");
+          } else {
+              cJSON_AddStringToObject(el, "action", "tap");
+          }
       }
       cJSON_AddItemToArray(elements, el);
     }

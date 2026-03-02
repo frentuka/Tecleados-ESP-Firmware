@@ -58,16 +58,32 @@ uint8_t kb_macro_get_active_layer(void) { return s_active_layer; }
 esp_err_t kb_macro_send_report(void) {
   esp_err_t err = ESP_FAIL;
   if (xSemaphoreTake(s_v_nkro_mutex, portMAX_DELAY)) {
-    err = kb_send_report(s_v_nkro);
+    // Retry up to 10 times if reporting fails (endpoint busy)
+    for (int i = 0; i < 10; i++) {
+      err = kb_send_report(s_v_nkro);
+      if (err == ESP_OK) break;
+      vTaskDelay(pdMS_TO_TICKS(1)); 
+    }
     xSemaphoreGive(s_v_nkro_mutex);
   }
   return err;
 }
 
-static void execute_macro(uint16_t macro_id) {
+void kb_macro_force_clear(void) {
+  if (xSemaphoreTake(s_v_nkro_mutex, portMAX_DELAY)) {
+    memset(s_v_nkro, 0, sizeof(s_v_nkro));
+    xSemaphoreGive(s_v_nkro_mutex);
+    kb_macro_send_report();
+  }
+}
+
+static void execute_macro_internal(uint16_t macro_id, uint8_t depth) {
+  if (depth > 5) {
+    ESP_LOGW(TAG, "Macro recursion depth exceeded (limit 5)");
+    return;
+  }
+
   const cfg_macro_t *m = NULL;
-  
-  // Find macro by id
   for (size_t i = 0; i < s_macros.count; i++) {
     if (s_macros.macros[i].id == macro_id) {
       m = &s_macros.macros[i];
@@ -80,27 +96,41 @@ static void execute_macro(uint16_t macro_id) {
     return;
   }
 
-  ESP_LOGI(TAG, "Executing macro %d: %s (%d events)", m->id, m->name, (int)m->event_count);
+  ESP_LOGD(TAG, "Executing macro %d (depth %d): %s", m->id, (int)depth, m->name);
 
   for (size_t i = 0; i < m->event_count; i++) {
+    uint16_t val = m->events[i].value;
     switch (m->events[i].type) {
     case MACRO_EVT_KEY_PRESS:
-      kb_macro_virtual_press((uint8_t)m->events[i].value);
-      kb_macro_send_report();
+      if (val >= ACTION_CODE_MACRO_MIN && val <= ACTION_CODE_MACRO_MAX) {
+        execute_macro_internal(val - ACTION_CODE_MACRO_MIN, depth + 1);
+      } else {
+        kb_macro_process_action(val, true);
+        kb_macro_send_report();
+      }
       break;
     case MACRO_EVT_KEY_RELEASE:
-      kb_macro_virtual_release((uint8_t)m->events[i].value);
-      kb_macro_send_report();
+      if (val >= ACTION_CODE_MACRO_MIN && val <= ACTION_CODE_MACRO_MAX) {
+        // Nested macros are treated as taps if triggered as "Press", 
+        // "Release" on a nested macro ID is ignored to prevent double calls.
+      } else {
+        kb_macro_process_action(val, false);
+        kb_macro_send_report();
+      }
       break;
     case MACRO_EVT_DELAY_MS:
-      vTaskDelay(pdMS_TO_TICKS(m->events[i].value));
+      vTaskDelay(pdMS_TO_TICKS(val));
       break;
     case MACRO_EVT_KEY_TAP:
-      kb_macro_virtual_press((uint8_t)m->events[i].value);
-      kb_macro_send_report();
-      vTaskDelay(pdMS_TO_TICKS(10));
-      kb_macro_virtual_release((uint8_t)m->events[i].value);
-      kb_macro_send_report();
+      if (val >= ACTION_CODE_MACRO_MIN && val <= ACTION_CODE_MACRO_MAX) {
+        execute_macro_internal(val - ACTION_CODE_MACRO_MIN, depth + 1);
+      } else {
+        kb_macro_process_action(val, true);
+        kb_macro_send_report();
+        vTaskDelay(pdMS_TO_TICKS(10));
+        kb_macro_process_action(val, false);
+        kb_macro_send_report();
+      }
       break;
     default:
       break;
@@ -113,8 +143,7 @@ static void macro_task(void *arg) {
   while (1) {
     if (xQueueReceive(s_macro_queue, &item, portMAX_DELAY)) {
       if (item.is_pressed) {
-        // Execute the full macro sequence on press
-        execute_macro(item.macro_id);
+        execute_macro_internal(item.macro_id, 0);
       }
     }
   }
@@ -132,7 +161,7 @@ void kb_macro_init(void) {
   memset(s_v_nkro, 0, sizeof(s_v_nkro));
   s_active_layer = KB_LAYER_BASE;
   s_v_nkro_mutex = xSemaphoreCreateMutex();
-  s_macro_queue = xQueueCreate(10, sizeof(macro_queue_item_t));
+  s_macro_queue = xQueueCreate(32, sizeof(macro_queue_item_t)); // Reverted to 32 to prevent massive "trailing" execution 
   
   // Re-register macro handler with our update callback
   cfgmod_register_kind(CFGMOD_KIND_MACRO, macros_default, macros_deserialize,
@@ -258,6 +287,8 @@ void kb_macro_process_action(uint16_t action_code, bool is_pressed) {
     // Multi-step custom macro
     macro_queue_item_t item = {.macro_id = action_code - ACTION_CODE_MACRO_MIN,
                                .is_pressed = is_pressed};
-    xQueueSend(s_macro_queue, &item, 0); // non-blocking push
+    if (xQueueSend(s_macro_queue, &item, 0) != pdTRUE) {
+      ESP_LOGW(TAG, "Macro queue full, skipping trigger %d", (int)item.macro_id);
+    }
   }
 }

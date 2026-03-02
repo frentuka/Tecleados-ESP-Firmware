@@ -26,8 +26,10 @@ import KeyboardLayoutEditor from './KeyboardLayoutEditor';
 import MacrosDashboard from './MacrosDashboard';
 import './index.css';
 
+export type MacroAction = 'tap' | 'press' | 'release';
+
 export type MacroElement =
-  | { type: 'key'; key: number }
+  | { type: 'key'; key: number; action?: MacroAction; inlineSleep?: number }
   | { type: 'sleep'; duration: number };
 
 export interface Macro {
