@@ -1,7 +1,6 @@
 dependencies:
   espressif/button:
-    component_hash: 
-      fccb18c37f1cfe0797b74a53a44d3f400f5fd01f4993b40052dfb7f401915089
+    component_hash: fccb18c37f1cfe0797b74a53a44d3f400f5fd01f4993b40052dfb7f401915089
     dependencies:
     - name: espressif/cmake_utilities
       registry_url: https://components.espressif.com
@@ -15,8 +14,7 @@ dependencies:
       type: service
     version: 4.1.5
   espressif/cmake_utilities:
-    component_hash: 
-      05165f30922b422b4b90c08845e6d449329b97370fbd06309803d8cb539d79e3
+    component_hash: 05165f30922b422b4b90c08845e6d449329b97370fbd06309803d8cb539d79e3
     dependencies:
     - name: idf
       require: private
@@ -26,8 +24,7 @@ dependencies:
       type: service
     version: 1.1.1
   espressif/esp32_s3_usb_otg:
-    component_hash: 
-      ae993844d03f2e73aa8e52e2d773704afa31f38e8d9d09df1d2c76416db8462d
+    component_hash: ae993844d03f2e73aa8e52e2d773704afa31f38e8d9d09df1d2c76416db8462d
     dependencies:
     - name: espressif/button
       registry_url: https://components.espressif.com
@@ -53,8 +50,7 @@ dependencies:
     - esp32s3
     version: 2.0.4
   espressif/esp_lvgl_port:
-    component_hash: 
-      f872401524cb645ee6ff1c9242d44fb4ddcfd4d37d7be8b9ed3f4e85a404efcd
+    component_hash: f872401524cb645ee6ff1c9242d44fb4ddcfd4d37d7be8b9ed3f4e85a404efcd
     dependencies:
     - name: idf
       require: private
@@ -68,8 +64,7 @@ dependencies:
       type: service
     version: 2.7.0
   espressif/esp_tinyusb:
-    component_hash: 
-      6f1f0c140990bf27a86611e3c1f47f9fa8468bffc3bf1eb6d551cb09f31f8908
+    component_hash: 6f1f0c140990bf27a86611e3c1f47f9fa8468bffc3bf1eb6d551cb09f31f8908
     dependencies:
     - name: idf
       require: private
@@ -88,8 +83,7 @@ dependencies:
     - esp32h4
     version: 2.0.1~1
   espressif/led_strip:
-    component_hash: 
-      28c6509a727ef74925b372ed404772aeedf11cce10b78c3f69b3c66799095e2d
+    component_hash: 28c6509a727ef74925b372ed404772aeedf11cce10b78c3f69b3c66799095e2d
     dependencies:
     - name: idf
       require: private
@@ -99,8 +93,7 @@ dependencies:
       type: service
     version: 2.5.5
   espressif/tinyusb:
-    component_hash: 
-      5ea9d3b6d6b0734a0a0b3491967aa0e1bece2974132294dbda5dd2839b247bfa
+    component_hash: 5ea9d3b6d6b0734a0a0b3491967aa0e1bece2974132294dbda5dd2839b247bfa
     dependencies:
     - name: idf
       require: private
@@ -117,10 +110,9 @@ dependencies:
   idf:
     source:
       type: idf
-    version: 5.5.2
+    version: 5.5.3
   lvgl/lvgl:
-    component_hash: 
-      17e68bfd21f0edf4c3ee838e2273da840bf3930e5dbc3bfa6c1190c3aed41f9f
+    component_hash: 17e68bfd21f0edf4c3ee838e2273da840bf3930e5dbc3bfa6c1190c3aed41f9f
     dependencies: []
     source:
       registry_url: https://components.espressif.com

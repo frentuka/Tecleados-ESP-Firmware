@@ -18,22 +18,21 @@
 */
 
 /**
- * 5 ROWS [0..=4]
+ * 6 ROWS [0..=5]
  */
-#define KB_MATRIX_ROW_COUNT 5
+#define KB_MATRIX_ROW_COUNT 6
 #define GPIO_ROWS \
 { 0, GPIO_NUM_1 }, \
 { 1, GPIO_NUM_2 }, \
 { 2, GPIO_NUM_3 }, \
 { 3, GPIO_NUM_4 }, \
-{ 4, GPIO_NUM_5 }
-// { 5, GPIO_NUM_6 } (reserved for future layouts)
+{ 4, GPIO_NUM_5 }, \
+{ 5, GPIO_NUM_6 }
 
 /**
- * 15 COLS [0..=14]
+ * 18 COLS [0..=17]
  */
-#define KB_MATRIX_COL_COUNT 15
-
+#define KB_MATRIX_COL_COUNT 18
 #define GPIO_COLS \
 { 0,  GPIO_NUM_7 }, \
 { 1,  GPIO_NUM_8 }, \
@@ -49,12 +48,10 @@
 { 11, GPIO_NUM_18 }, \
 { 12, GPIO_NUM_21 }, \
 { 13, GPIO_NUM_26 }, \
-{ 14, GPIO_NUM_27 }
-// { 15, GPIO_NUM_28 }
-// { 16, GPIO_NUM_33 }
-// { 17, GPIO_NUM_34 }
-// { 18, GPIO_NUM_35 }
-// { 19, GPIO_NUM_36 }
+{ 14, GPIO_NUM_27 }, \
+{ 15, GPIO_NUM_28 }, \
+{ 16, GPIO_NUM_33 }, \
+{ 17, GPIO_NUM_34 }
 
 #define KB_MATRIX_KEYS (KB_MATRIX_ROW_COUNT * KB_MATRIX_COL_COUNT)
 #define KB_MATRIX_BITMAP_BYTES ((KB_MATRIX_KEYS + 7) / 8)

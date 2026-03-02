@@ -4,54 +4,99 @@
 #include <string.h>
 
 
-static void macros_default(void *out_struct) {
-  cfg_macro_t *m = (cfg_macro_t *)out_struct;
-  m->event_count = 0;
-  memset(m->events, 0, sizeof(m->events));
+void macros_default(void *out_struct) {
+  cfg_macro_list_t *list = (cfg_macro_list_t *)out_struct;
+  list->count = 0;
+  memset(list->macros, 0, sizeof(list->macros));
 }
 
-static bool macros_deserialize(cJSON *root, void *out_struct) {
-  cfg_macro_t *m = (cfg_macro_t *)out_struct;
-  cJSON *events = cJSON_GetObjectItem(root, "events");
-  if (!cJSON_IsArray(events))
-    return false;
+bool macros_deserialize(cJSON *root, void *out_struct) {
+  cfg_macro_list_t *list = (cfg_macro_list_t *)out_struct;
+  
+  // The web UI sends { "macros": [ ... ] }
+  cJSON *macros_arr = cJSON_GetObjectItem(root, "macros");
+  if (!cJSON_IsArray(macros_arr)) {
+      // Fallback: maybe it's just the array itself
+      if (cJSON_IsArray(root)) {
+          macros_arr = root;
+      } else {
+          return false;
+      }
+  }
 
-  m->event_count = 0;
-  cJSON *item;
-  cJSON_ArrayForEach(item, events) {
-    if (m->event_count >= CFG_MACRO_MAX_EVENTS)
-      break;
-    cJSON *t = cJSON_GetObjectItem(item, "t");
-    cJSON *v = cJSON_GetObjectItem(item, "v");
-    if (cJSON_IsNumber(t) && cJSON_IsNumber(v)) {
-      m->events[m->event_count].type = (cfg_macro_event_type_t)t->valueint;
-      m->events[m->event_count].value = (uint32_t)v->valueint;
-      m->event_count++;
+  list->count = 0;
+  cJSON *macro_item;
+  cJSON_ArrayForEach(macro_item, macros_arr) {
+    if (list->count >= CFG_MACROS_MAX_COUNT) break;
+    
+    cfg_macro_t *m = &list->macros[list->count];
+    memset(m, 0, sizeof(cfg_macro_t));
+    
+    cJSON *id = cJSON_GetObjectItem(macro_item, "id");
+    cJSON *name = cJSON_GetObjectItem(macro_item, "name");
+    cJSON *elements = cJSON_GetObjectItem(macro_item, "elements");
+    
+    if (cJSON_IsNumber(id)) m->id = (uint16_t)id->valueint;
+    if (cJSON_IsString(name)) strncpy(m->name, name->valuestring, sizeof(m->name) - 1);
+    
+    if (cJSON_IsArray(elements)) {
+      cJSON *el;
+      cJSON_ArrayForEach(el, elements) {
+        if (m->event_count >= CFG_MACRO_MAX_EVENTS) break;
+        
+        cJSON *type = cJSON_GetObjectItem(el, "type");
+        if (cJSON_IsString(type)) {
+            if (strcmp(type->valuestring, "key") == 0) {
+                m->events[m->event_count].type = MACRO_EVT_KEY_TAP;
+                cJSON *key = cJSON_GetObjectItem(el, "key");
+                if (cJSON_IsNumber(key)) m->events[m->event_count].value = key->valueint;
+                m->event_count++;
+            } else if (strcmp(type->valuestring, "sleep") == 0) {
+                m->events[m->event_count].type = MACRO_EVT_DELAY_MS;
+                cJSON *dur = cJSON_GetObjectItem(el, "duration");
+                if (cJSON_IsNumber(dur)) m->events[m->event_count].value = dur->valueint;
+                m->event_count++;
+            }
+        }
+      }
     }
+    list->count++;
   }
   return true;
 }
 
-static cJSON *macros_serialize(const void *in_struct) {
-  const cfg_macro_t *m = (const cfg_macro_t *)in_struct;
+cJSON *macros_serialize(const void *in_struct) {
+  const cfg_macro_list_t *list = (const cfg_macro_list_t *)in_struct;
   cJSON *root = cJSON_CreateObject();
-  if (!root)
-    return NULL;
+  if (!root) return NULL;
 
-  cJSON *events = cJSON_CreateArray();
-  if (events) {
-    for (size_t i = 0; i < m->event_count; i++) {
-      cJSON *item = cJSON_CreateObject();
-      cJSON_AddNumberToObject(item, "t", (double)m->events[i].type);
-      cJSON_AddNumberToObject(item, "v", (double)m->events[i].value);
-      cJSON_AddItemToArray(events, item);
+  cJSON *macros_arr = cJSON_CreateArray();
+  for (size_t i = 0; i < list->count; i++) {
+    const cfg_macro_t *m = &list->macros[i];
+    cJSON *macro_item = cJSON_CreateObject();
+    cJSON_AddNumberToObject(macro_item, "id", m->id);
+    cJSON_AddStringToObject(macro_item, "name", m->name);
+    
+    cJSON *elements = cJSON_CreateArray();
+    for (size_t j = 0; j < m->event_count; j++) {
+      cJSON *el = cJSON_CreateObject();
+      if (m->events[j].type == MACRO_EVT_DELAY_MS) {
+          cJSON_AddStringToObject(el, "type", "sleep");
+          cJSON_AddNumberToObject(el, "duration", m->events[j].value);
+      } else {
+          cJSON_AddStringToObject(el, "type", "key");
+          cJSON_AddNumberToObject(el, "key", m->events[j].value);
+      }
+      cJSON_AddItemToArray(elements, el);
     }
-    cJSON_AddItemToObject(root, "events", events);
+    cJSON_AddItemToObject(macro_item, "elements", elements);
+    cJSON_AddItemToArray(macros_arr, macro_item);
   }
+  cJSON_AddItemToObject(root, "macros", macros_arr);
   return root;
 }
 
 void cfg_macros_register(void) {
   cfgmod_register_kind(CFGMOD_KIND_MACRO, macros_default, macros_deserialize,
-                       macros_serialize, NULL, sizeof(cfg_macro_t));
+                       macros_serialize, NULL, sizeof(cfg_macro_list_t));
 }

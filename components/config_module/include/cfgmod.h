@@ -16,12 +16,19 @@ typedef enum cfgmod_kind : uint8_t {
   CFGMOD_KIND_MACRO,
   CFGMOD_KIND_CONNECTION,
   CFGMOD_KIND_SYSTEM,
+  CFGMOD_KIND_PHYSICAL,  // Raw blob kind — not registered, uses direct NVS read/write
   CFGMOD_KIND_MAX
 } cfgmod_kind_t;
 
 typedef enum cfgmod_key_id : uint8_t {
   CFG_KEY_TEST = 0,
   CFG_KEY_HELLO,
+  CFG_KEY_PHYSICAL_LAYOUT,
+  CFG_KEY_LAYER_0,
+  CFG_KEY_LAYER_1,
+  CFG_KEY_LAYER_2,
+  CFG_KEY_LAYER_3,
+  CFG_KEY_MACROS,
   CFG_KEY_MAX
 } cfgmod_key_id_t;
 
@@ -33,7 +40,6 @@ typedef enum cfgmod_cmd : uint8_t {
 typedef struct __attribute__((packed)) cfgmod_wire_header {
   uint8_t cmd;         // cfgmod_cmd_t (GET/SET)
   uint8_t key_id;      // cfgmod_key_id_t
-  uint8_t payload_len; // Content length
 } cfgmod_wire_header_t;
 
 // Handle one COMM report and optionally build a response.

@@ -15,6 +15,8 @@
 #include "kb_report.h"
 #include "kb_state.h"
 
+#include "cfg_layouts.h"
+
 #include "class/hid/hid.h" // HID_KEY_* defines
 #include "tusb.h"          // for HID protocol enums if needed
 #include "usb_descriptors.h"
@@ -221,6 +223,7 @@ void kb_manager_start(void) {
   ESP_LOGI(TAG, "Starting keyboard manager...");
   kb_state_init();
   kb_macro_init();
+  cfg_layout_load_all();
   kb_matrix_gpio_init();
   vTaskDelay(pdMS_TO_TICKS(500));
   xTaskCreatePinnedToCore(kb_manager_task, "kb_mgr", 4096, NULL, 5, NULL, 1);

@@ -153,7 +153,7 @@ static uint8_t const desc_configuration[] = {
                              EPNUM_HID_COMM_OUT, // bEndpointAddress (OUT)
                              EPNUM_HID_COMM_IN,  // bEndpointAddress (IN)
                              COMM_REPORT_SIZE,   // wMaxPacketSize
-                             5                   // bInterval (milliseconds)
+                             1                   // bInterval (milliseconds)
                              )};
 
 // ------------ String Descriptors ------------

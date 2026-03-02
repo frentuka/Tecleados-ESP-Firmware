@@ -43,8 +43,8 @@ void process_tx_response(const usb_packet_msg_t msg)
 
     if (msg.flags & PAYLOAD_FLAG_ACK) {
         handled = true;
-        ESP_LOGI(TAG, "Received ACK:");
-        print_bytes_as_chars(TAG, msg.payload, msg.payload_len);
+        // ESP_LOGI(TAG, "Received ACK:");
+        // print_bytes_as_chars(TAG, msg.payload, msg.payload_len);
 
         // send next packet, if any
         if (tx_buf_idx < tx_buf_len) {
@@ -91,7 +91,7 @@ void process_tx_response(const usb_packet_msg_t msg)
 
     if (msg.flags & PAYLOAD_FLAG_OK) {
         handled = true;
-        ESP_LOGI(TAG, "Received OK response");
+        // ESP_LOGI(TAG, "Received OK response");
         erase_tx_buffer();
     }
 
@@ -125,7 +125,7 @@ void erase_tx_buffer()
     tx_last_packet_timestamp_us = 0;
     tx_awaiting_response = false;
     tx_nak_resend_attempts = 0;
-    ESP_LOGI(TAG, "TX buffer erased");
+    // ESP_LOGI(TAG, "TX buffer erased");
 }
 
 uint64_t tx_get_last_packet_timestamp_us()
@@ -144,7 +144,7 @@ static bool append_payload_to_tx_buffer(const uint8_t *data, uint8_t data_len)
     memcpy(tx_buf + tx_buf_len, data, data_len);
     tx_buf_len+= data_len;
 
-    ESP_LOGI(TAG, "Appended data to TX buf. Data length: %d. Buffer length: %d sizeof(tx_buf): %ull", data_len, tx_buf_len, sizeof(tx_buf));
+    // ESP_LOGI(TAG, "Appended data to TX buf. Data length: %d. Buffer length: %d sizeof(tx_buf): %ull", data_len, tx_buf_len, sizeof(tx_buf));
 
     return true;
 }
@@ -153,7 +153,7 @@ static bool append_payload_to_tx_buffer(const uint8_t *data, uint8_t data_len)
 // If payload extraction is valid, msg.flags will be 0xFF. Otherwise, 0x00
 static void tx_buf_extract_next_msg(usb_packet_msg_t *msg)
 {
-    memset(msg, 0, sizeof(msg)); // msg.flags == 0x00 -> error
+    memset(msg, 0, sizeof(*msg)); // msg.flags == 0x00 -> error
     if (!tx_buf_len) {
         ESP_LOGE(TAG, "Couldn't extract next msg from tx_buf. len == 0");
         return;

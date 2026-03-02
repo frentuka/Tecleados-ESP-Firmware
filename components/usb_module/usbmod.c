@@ -5,6 +5,8 @@
 
 
 #include "usb_callbacks.h"
+#include "usb_callbacks_rx.h"
+#include "usb_callbacks_tx.h"
 #include "usb_descriptors.h"
 #include "usbmod.h"
 
@@ -20,6 +22,23 @@
 #include "tusb.h"
 
 #define TAG "USBModule"
+
+// ============ USB STATE CALLBACKS ============
+
+static void usb_event_cb(tinyusb_event_t *event, void *arg) {
+  switch (event->id) {
+  case TINYUSB_EVENT_ATTACHED:
+    ESP_LOGI(TAG, "USB mounted (host connected)");
+    break;
+  case TINYUSB_EVENT_DETACHED:
+    ESP_LOGI(TAG, "USB unmounted (host disconnected)");
+    erase_tx_buffer();
+    erase_rx_buffer();
+    break;
+  default:
+    break;
+  }
+}
 
 /*
     handle callbacks to usb_callbacks
@@ -52,7 +71,7 @@ bool usb_send_keyboard_6kro(uint8_t modifier, const uint8_t keycodes[6]) {
 }
 
 bool usb_send_keyboard_nkro(uint8_t modifier, const uint8_t *bitmap,
-                            uint16_t len) {
+                             uint16_t len) {
   uint8_t buf[len + 1];
   buf[0] = modifier;
   memcpy(buf + 1, bitmap, len);
@@ -111,7 +130,7 @@ void usb_send_keystroke(uint8_t hid_keycode) {
 // ======== Callbacks ========
 
 void usbmod_register_callback(usb_msg_module_t callback_module,
-                              usb_data_callback_t callback) {
+                               usb_data_callback_t callback) {
   register_callback(callback_module, callback);
 }
 
@@ -139,6 +158,7 @@ void usb_init() {
   tusb_cfg.descriptor.string = (const char **)string_desc_arr;
   tusb_cfg.descriptor.string_count =
       sizeof(string_desc_arr) / sizeof(string_desc_arr[0]);
+  tusb_cfg.event_cb = usb_event_cb;
 
   ESP_ERROR_CHECK(tinyusb_driver_install(&tusb_cfg));
 

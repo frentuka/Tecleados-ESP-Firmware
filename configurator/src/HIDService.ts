@@ -23,11 +23,29 @@ export const MODULE_SYSTEM = 0x01;
 export const CFG_CMD_GET = 0x00;
 export const CFG_CMD_SET = 0x01;
 
-// Config Key IDs
+// Config Key IDs (must match cfgmod_key_id_t in cfgmod.h)
 export const CFG_KEY_TEST = 0x00;
 export const CFG_KEY_HELLO = 0x01;
+export const CFG_KEY_PHYSICAL_LAYOUT = 0x02;
+export const CFG_KEY_LAYER_0 = 0x03;
+export const CFG_KEY_LAYER_1 = 0x04;
+export const CFG_KEY_LAYER_2 = 0x05;
+export const CFG_KEY_LAYER_3 = 0x06;
+export const CFG_KEY_MACROS = 0x07;
+
+export const MACRO_CODE_BASE = 0x4000;
 
 export type LogCallback = (logData: Uint8Array) => void;
+export type RawPacketCallback = (data: Uint8Array, direction: 'rx' | 'tx') => void;
+
+// Response from a completed sendCommand call
+export interface CommandResponse {
+    module: number;
+    cmd: number;
+    keyId: number;
+    status: number;     // esp_err_t (0 = ESP_OK)
+    jsonText: string;    // fully reassembled JSON payload
+}
 
 // Define simple interface mocks in case the dom.hid lib is missing
 interface HIDDeviceMock {
@@ -68,12 +86,37 @@ export function computeCrc8(data: Uint8Array): number {
     return crc;
 }
 
+export type ConnectionCallback = (connected: boolean) => void;
+
 class HIDService {
     private device: HIDDeviceMock | null = null;
     private logCallbacks: Set<LogCallback> = new Set();
+    private rawPacketCallbacks: Set<RawPacketCallback> = new Set();
+    private connectionCallbacks: Set<ConnectionCallback> = new Set();
+    private reconnectTimer: ReturnType<typeof setInterval> | null = null;
+    private wantConnection = false; // true after user clicks Connect
+
+    // ── Multi-packet reassembly state ──
+    private pendingResponse: {
+        module: number;
+        cmd: number;
+        keyId: number;
+        status: number;
+        jsonText: string;
+    } | null = null;
+    private pendingResolve: ((resp: CommandResponse | null) => void) | null = null;
 
     constructor() {
         this.handleInputReport = this.handleInputReport.bind(this);
+        this.handleDisconnect = this.handleDisconnect.bind(this);
+        this.handleGlobalConnect = this.handleGlobalConnect.bind(this);
+
+        // Listen for global HID connect/disconnect events
+        const nav = navigator as any;
+        if ('hid' in nav) {
+            nav.hid.addEventListener('disconnect', this.handleDisconnect);
+            nav.hid.addEventListener('connect', this.handleGlobalConnect);
+        }
     }
 
     public async requestDevice(): Promise<boolean> {
@@ -89,11 +132,8 @@ class HIDService {
             });
 
             if (devices.length > 0) {
-                this.device = devices[0];
-                await this.device?.open();
-                this.device?.addEventListener('inputreport', this.handleInputReport as EventListener);
-                console.log(`Connected to HID device: ${this.device?.productName}`);
-                return true;
+                this.wantConnection = true;
+                return await this.openDevice(devices[0]);
             }
             return false;
         } catch (error) {
@@ -102,18 +142,136 @@ class HIDService {
         }
     }
 
+    private async openDevice(dev: HIDDeviceMock): Promise<boolean> {
+        try {
+            this.device = dev;
+            if (!dev.opened) {
+                await dev.open();
+            }
+            dev.addEventListener('inputreport', this.handleInputReport as EventListener);
+            console.log(`Connected to HID device: ${dev.productName}`);
+            this.notifyConnectionChange(true);
+            this.stopReconnectPolling();
+            return true;
+        } catch (error) {
+            console.error('Error opening HID device:', error);
+            this.device = null;
+            return false;
+        }
+    }
+
     public async disconnect(): Promise<void> {
+        this.wantConnection = false;
+        this.stopReconnectPolling();
         if (this.device) {
             this.device.removeEventListener('inputreport', this.handleInputReport as EventListener);
-            await this.device.close();
+            try { await this.device.close(); } catch { /* device may already be gone */ }
             console.log('Disconnected from HID device.');
             this.device = null;
         }
+        this.notifyConnectionChange(false);
     }
 
     public isConnected(): boolean {
         return this.device !== null && this.device.opened;
     }
+
+    public getDeviceName(): string {
+        return this.device?.productName || 'DF-ONE Full Layout';
+    }
+
+    // ── Connection state observers ──
+    public onConnectionChange(callback: ConnectionCallback): void {
+        this.connectionCallbacks.add(callback);
+    }
+
+    public offConnectionChange(callback: ConnectionCallback): void {
+        this.connectionCallbacks.delete(callback);
+    }
+
+    private notifyConnectionChange(connected: boolean): void {
+        this.connectionCallbacks.forEach(cb => cb(connected));
+    }
+
+    // ── Disconnect handler ──
+    private handleDisconnect(event: any): void {
+        const disconnectedDevice = event.device;
+        if (this.device && disconnectedDevice === this.device) {
+            console.log('HID device disconnected (flash/reset?)');
+            this.device.removeEventListener('inputreport', this.handleInputReport as EventListener);
+            this.device = null;
+            this.notifyConnectionChange(false);
+
+            // Reject any pending command
+            if (this.pendingResolve) {
+                this.pendingResolve(null);
+                this.pendingResolve = null;
+                this.pendingResponse = null;
+            }
+
+            // Flush command queue
+            while (this.commandQueue.length > 0) {
+                const cmd = this.commandQueue.shift()!;
+                cmd.resolve(null);
+            }
+            this.isProcessingQueue = false;
+
+            // Start polling for reconnection if user hasn't explicitly disconnected
+            if (this.wantConnection) {
+                this.startReconnectPolling();
+            }
+        }
+    }
+
+    // ── Auto-reconnect via global connect event + polling ──
+    private handleGlobalConnect(event: any): void {
+        if (!this.wantConnection || this.device) return;
+        const dev = event.device;
+        if (dev.vendorId === VENDOR_ID && dev.productId === PRODUCT_ID) {
+            console.log('Device reappeared, reconnecting...');
+            // Small delay to let the device fully initialize
+            setTimeout(() => this.tryReconnect(), 500);
+        }
+    }
+
+    private startReconnectPolling(): void {
+        if (this.reconnectTimer) return;
+        console.log('Starting auto-reconnect polling...');
+        this.reconnectTimer = setInterval(() => this.tryReconnect(), 2000);
+    }
+
+    private stopReconnectPolling(): void {
+        if (this.reconnectTimer) {
+            clearInterval(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
+    }
+
+    private async tryReconnect(): Promise<void> {
+        if (this.device || !this.wantConnection) {
+            this.stopReconnectPolling();
+            return;
+        }
+
+        try {
+            const nav = navigator as any;
+            // getDevices() returns previously authorized devices without user prompt
+            const devices = await nav.hid.getDevices();
+            const target = devices.find(
+                (d: any) => d.vendorId === VENDOR_ID && d.productId === PRODUCT_ID
+            );
+            if (target) {
+                console.log('Found previously authorized device, reopening...');
+                await this.openDevice(target);
+            }
+        } catch (error) {
+            // Silently retry
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // ── Packet building ──
+    // ══════════════════════════════════════════════════════════
 
     public buildCommPacket(flags: number, remaining: number, data: Uint8Array): Uint8Array {
         const packet = new Uint8Array(COMM_REPORT_SIZE);
@@ -137,12 +295,12 @@ class HIDService {
         return packet;
     }
 
-    public async sendResponse(flags: number, data?: Uint8Array): Promise<boolean> {
-        if (!this.isConnected()) {
-            console.error('Device is not connected.');
-            return false;
-        }
+    // ══════════════════════════════════════════════════════════
+    // ── Low-level send helpers ──
+    // ══════════════════════════════════════════════════════════
 
+    public async sendResponse(flags: number, data?: Uint8Array): Promise<boolean> {
+        if (!this.isConnected()) return false;
         try {
             const reportData = this.buildCommPacket(flags, 0, data || new Uint8Array(0));
             await this.device!.sendReport(COMM_REPORT_ID, reportData);
@@ -153,19 +311,15 @@ class HIDService {
         }
     }
 
+    /** Send a raw multi-packet payload (splits into 43-byte chunks with FIRST/MID/LAST flags) */
     public async sendCustomCommReport(data: Uint8Array): Promise<boolean> {
-        if (!this.isConnected()) {
-            console.error('Device is not connected.');
-            return false;
-        }
-
+        if (!this.isConnected()) return false;
         try {
             const maxPayloadSize = 43;
             const totalPackets = Math.ceil(data.length / maxPayloadSize) || 1;
 
             for (let i = 0; i < totalPackets; i++) {
                 let flags = 0;
-
                 if (i === 0) flags |= PAYLOAD_FLAG_FIRST;
                 if (i === totalPackets - 1) flags |= PAYLOAD_FLAG_LAST;
                 if (i > 0 && i < totalPackets - 1) flags |= PAYLOAD_FLAG_MID;
@@ -176,7 +330,6 @@ class HIDService {
                 const reportData = this.buildCommPacket(flags, remaining, chunk);
                 await this.device!.sendReport(COMM_REPORT_ID, reportData);
 
-                // Small delay to prevent overwhelming the device's processing queue (size=4)
                 if (remaining > 0) {
                     await new Promise(resolve => setTimeout(resolve, 20));
                 }
@@ -188,11 +341,175 @@ class HIDService {
         }
     }
 
-    // Original send function for backward compatibility
-    public async sendCommReport(data: Uint8Array): Promise<boolean> {
-        return this.sendCustomCommReport(data);
+    // ══════════════════════════════════════════════════════════
+    // ── High-level API: sendCommand (serial queue) ──
+    // ══════════════════════════════════════════════════════════
+
+    // Command queue to prevent concurrent sendCommand calls from interfering
+    private commandQueue: Array<{ payload: Uint8Array; timeoutMs: number; resolve: (resp: CommandResponse | null) => void }> = [];
+    private isProcessingQueue = false;
+
+    /**
+     * Send a command and wait for the complete response.
+     * Commands are queued and processed serially to avoid response mismatches.
+     * @param payload Full payload bytes: [MODULE_ID, CMD, KEY_ID, PAYLOAD_LEN, ...data]
+     * @param timeoutMs Timeout in milliseconds (default 5000)
+     * @returns CommandResponse or null on timeout/error
+     */
+    public sendCommand(payload: Uint8Array, timeoutMs = 5000): Promise<CommandResponse | null> {
+        if (!this.isConnected()) return Promise.resolve(null);
+
+        return new Promise<CommandResponse | null>((resolve) => {
+            this.commandQueue.push({ payload, timeoutMs, resolve });
+            this.processNextCommand();
+        });
     }
 
+    private async processNextCommand(): Promise<void> {
+        if (this.isProcessingQueue) return; // already processing
+        if (this.commandQueue.length === 0) return;
+
+        this.isProcessingQueue = true;
+        const { payload, timeoutMs, resolve } = this.commandQueue.shift()!;
+
+        // Log the command being processed
+        const cmdHex = Array.from(payload.slice(0, Math.min(4, payload.length))).map(b => b.toString(16).padStart(2, '0')).join(' ');
+        console.log(`[HID Queue] Processing command: ${cmdHex} (${payload.length} bytes, queue remaining: ${this.commandQueue.length})`);
+
+        if (!this.isConnected()) {
+            console.warn('[HID Queue] Not connected, skipping command');
+            resolve(null);
+            this.isProcessingQueue = false;
+            this.processNextCommand();
+            return;
+        }
+
+        // Set up response handler
+        const result = await new Promise<CommandResponse | null>(async (innerResolve) => {
+            this.pendingResolve = innerResolve;
+
+            const timeout = setTimeout(() => {
+                if (this.pendingResolve === innerResolve) {
+                    console.warn(`[HID Queue] Command timed out after ${timeoutMs}ms: ${cmdHex}`);
+                    this.pendingResolve = null;
+                    this.pendingResponse = null;
+                    innerResolve(null);
+                }
+            }, timeoutMs);
+
+            // Wrap to clear timeout on success
+            this.pendingResolve = (resp) => {
+                clearTimeout(timeout);
+                innerResolve(resp);
+            };
+
+            await this.sendCustomCommReport(payload);
+        });
+
+        console.log(`[HID Queue] Command ${cmdHex} completed:`, result ? `status=${result.status}, keyId=${result.keyId}, jsonLen=${result.jsonText.length}` : 'NULL');
+        resolve(result);
+
+        // Small delay between commands to let firmware settle
+        await new Promise(r => setTimeout(r, 50));
+
+        this.isProcessingQueue = false;
+        this.processNextCommand(); // process next in queue
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // ── Incoming packet handler (auto-ACK + reassembly) ──
+    // ══════════════════════════════════════════════════════════
+
+    private handleInputReport(event: any): void {
+        if (event.reportId !== COMM_REPORT_ID) return;
+        const data = new Uint8Array(event.data.buffer);
+
+        // Broadcast raw data to legacy log callbacks
+        this.logCallbacks.forEach(cb => cb(data));
+        this.rawPacketCallbacks.forEach(cb => cb(data, 'rx'));
+
+        if (data.length < 48) return;
+
+        const flags = data[0];
+        const safeLen = Math.min(data[3], 43);
+        const payloadBytes = data.slice(4, 4 + safeLen);
+
+        // Skip ACK/NAK/OK/ERR/ABORT response packets (those are protocol handshakes)
+        const isResponsePacket = (flags & PAYLOAD_FLAG_ACK) || (flags & PAYLOAD_FLAG_NAK) ||
+            (flags & PAYLOAD_FLAG_OK) || (flags & PAYLOAD_FLAG_ERR) || (flags & PAYLOAD_FLAG_ABORT);
+        if (isResponsePacket) return;
+
+        // ── Multi-packet reassembly ──
+        // Response wire format: [module(1), cmd(1), keyId(1), status(4), json...]
+        // No payload_len field — transport provides total length
+        if ((flags & PAYLOAD_FLAG_FIRST) && safeLen >= 7) {
+            // First packet: parse header
+            const module = payloadBytes[0];
+            const cmd = payloadBytes[1];
+            const keyId = payloadBytes[2];
+            // payloadBytes[3..6] = esp_err_t status (4 bytes, little-endian)
+            const status = (payloadBytes[3] | (payloadBytes[4] << 8) | (payloadBytes[5] << 16) | (payloadBytes[6] << 24));
+            const jsonText = new TextDecoder().decode(payloadBytes.slice(7)).replace(/\0/g, '');
+
+            this.pendingResponse = { module, cmd, keyId, status, jsonText };
+
+            if (flags & PAYLOAD_FLAG_LAST) {
+                // Single-packet response: send ACK|OK then resolve
+                this.sendAckAndFinish(true);
+            } else {
+                // More packets coming: send ACK
+                this.sendResponse(PAYLOAD_FLAG_ACK);
+            }
+        } else if (this.pendingResponse && !(flags & PAYLOAD_FLAG_FIRST)) {
+            // Continuation packet: append text
+            const jsonText = new TextDecoder().decode(payloadBytes).replace(/\0/g, '');
+            this.pendingResponse.jsonText += jsonText;
+
+            if (flags & PAYLOAD_FLAG_LAST) {
+                // Last packet: send ACK|OK then resolve
+                this.sendAckAndFinish(true);
+            } else {
+                // More packets coming: send ACK
+                this.sendResponse(PAYLOAD_FLAG_ACK);
+            }
+        }
+    }
+
+    /**
+     * Send ACK (with optional OK) and THEN resolve the pending command.
+     * This ensures the firmware receives the ACK|OK before we send the next command.
+     */
+    private async sendAckAndFinish(isLast: boolean): Promise<void> {
+        if (isLast) {
+            await this.sendResponse(PAYLOAD_FLAG_ACK | PAYLOAD_FLAG_OK);
+        } else {
+            await this.sendResponse(PAYLOAD_FLAG_ACK);
+        }
+
+        // Small delay so firmware can process the ACK|OK and clear tx_awaiting_response
+        await new Promise(r => setTimeout(r, 30));
+
+        this.finishResponse();
+    }
+
+    private finishResponse(): void {
+        if (!this.pendingResponse) return;
+
+        const response: CommandResponse = { ...this.pendingResponse };
+
+        if (this.pendingResolve) {
+            this.pendingResolve(response);
+            this.pendingResolve = null;
+        }
+
+        this.pendingResponse = null;
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // ── Callback registration ──
+    // ══════════════════════════════════════════════════════════
+
+    /** Register for raw packet data (legacy — prefer sendCommand) */
     public onLogReceived(callback: LogCallback): void {
         this.logCallbacks.add(callback);
     }
@@ -201,12 +518,15 @@ class HIDService {
         this.logCallbacks.delete(callback);
     }
 
-    private handleInputReport(event: any): void {
-        if (event.reportId === COMM_REPORT_ID) {
-            const data = new Uint8Array(event.data.buffer);
-            this.logCallbacks.forEach(cb => cb(data));
-        }
+    /** Register for raw packet events with direction info (for debug UI) */
+    public onRawPacket(callback: RawPacketCallback): void {
+        this.rawPacketCallbacks.add(callback);
+    }
+
+    public offRawPacket(callback: RawPacketCallback): void {
+        this.rawPacketCallbacks.delete(callback);
     }
 }
 
 export const hidService = new HIDService();
+

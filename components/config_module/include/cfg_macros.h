@@ -1,18 +1,22 @@
 #pragma once
 
+#include "cJSON.h"
 #include "esp_err.h"
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
 
 #define CFG_MACRO_MAX_EVENTS 32
+#define CFG_MACROS_MAX_COUNT 64
 
 // Types of macro events (e.g. key press, delay)
 typedef enum {
   MACRO_EVT_NONE = 0,
   MACRO_EVT_KEY_PRESS,
   MACRO_EVT_KEY_RELEASE,
-  MACRO_EVT_DELAY_MS
+  MACRO_EVT_DELAY_MS,
+  MACRO_EVT_KEY_TAP
 } cfg_macro_event_type_t;
 
 typedef struct {
@@ -21,9 +25,21 @@ typedef struct {
 } cfg_macro_event_t;
 
 typedef struct {
+  uint16_t id;
+  char name[32];
   cfg_macro_event_t events[CFG_MACRO_MAX_EVENTS];
   size_t event_count;
 } cfg_macro_t;
 
+typedef struct {
+  cfg_macro_t macros[CFG_MACROS_MAX_COUNT];
+  size_t count;
+} cfg_macro_list_t;
+
 // Registers the macro serializer with cfgmod
 void cfg_macros_register(void);
+
+// Handler functions for external use (e.g. by kb_macro.c re-registration)
+void macros_default(void *out_struct);
+bool macros_deserialize(cJSON *root, void *out_struct);
+cJSON *macros_serialize(const void *in_struct);

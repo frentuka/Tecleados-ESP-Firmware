@@ -240,5 +240,5 @@ void usb_callbacks_init(void) {
               NULL);
   xTaskCreate(tx_processing_task, "usb_tx_processing_task", 8192, NULL, 5,
               NULL);
-  xTaskCreate(timeouts_task, "usb_cb_timeouts_task", 2048, NULL, 5, NULL);
+  xTaskCreate(timeouts_task, "usb_cb_timeouts_task", 3072, NULL, 5, NULL);
 }

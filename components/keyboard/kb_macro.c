@@ -7,6 +7,8 @@
 #include "freertos/task.h"
 #include <string.h>
 
+#include "cfgmod.h"
+#include "cJSON.h"
 #include "cfg_macros.h"
 #include "class/hid/hid.h"
 #include "kb_layout.h"
@@ -27,15 +29,7 @@ typedef struct {
 } macro_queue_item_t;
 
 // A hardcoded macro for testing since JSON loading isn't fully required yet
-static cfg_macro_t test_macro = {
-    .event_count = 5,
-    .events = {
-        {MACRO_EVT_KEY_PRESS, HID_KEY_A},
-        {MACRO_EVT_DELAY_MS, 5},
-        {MACRO_EVT_KEY_PRESS, HID_KEY_B},
-        {MACRO_EVT_DELAY_MS, 10},
-        {MACRO_EVT_KEY_RELEASE, HID_KEY_A} // simplified off for test
-    }};
+static cfg_macro_list_t s_macros;
 
 static inline void set_bit(uint8_t *bitmap, size_t bit_index) {
   bitmap[bit_index >> 3] |= (uint8_t)(1U << (bit_index & 7U));
@@ -71,8 +65,22 @@ esp_err_t kb_macro_send_report(void) {
 }
 
 static void execute_macro(uint16_t macro_id) {
-  // In the future this retrieves from custom config
-  cfg_macro_t *m = &test_macro;
+  const cfg_macro_t *m = NULL;
+  
+  // Find macro by id
+  for (size_t i = 0; i < s_macros.count; i++) {
+    if (s_macros.macros[i].id == macro_id) {
+      m = &s_macros.macros[i];
+      break;
+    }
+  }
+
+  if (!m) {
+    ESP_LOGW(TAG, "Macro ID %d not found in storage", macro_id);
+    return;
+  }
+
+  ESP_LOGI(TAG, "Executing macro %d: %s (%d events)", m->id, m->name, (int)m->event_count);
 
   for (size_t i = 0; i < m->event_count; i++) {
     switch (m->events[i].type) {
@@ -86,6 +94,13 @@ static void execute_macro(uint16_t macro_id) {
       break;
     case MACRO_EVT_DELAY_MS:
       vTaskDelay(pdMS_TO_TICKS(m->events[i].value));
+      break;
+    case MACRO_EVT_KEY_TAP:
+      kb_macro_virtual_press((uint8_t)m->events[i].value);
+      kb_macro_send_report();
+      vTaskDelay(pdMS_TO_TICKS(10));
+      kb_macro_virtual_release((uint8_t)m->events[i].value);
+      kb_macro_send_report();
       break;
     default:
       break;
@@ -101,17 +116,32 @@ static void macro_task(void *arg) {
         // Execute the full macro sequence on press
         execute_macro(item.macro_id);
       }
-      // For now, release of a macro key does nothing,
-      // but we could implement holding repeats or aborts here.
     }
   }
 }
+
+// Reload macros from storage
+static void on_macros_updated(const char *key) {
+    ESP_LOGI(TAG, "Reloading macros from storage...");
+    cfgmod_get_config(CFGMOD_KIND_MACRO, "macros", &s_macros);
+}
+
+// Forward definitions from cfg_macros.c are now in cfg_macros.h
 
 void kb_macro_init(void) {
   memset(s_v_nkro, 0, sizeof(s_v_nkro));
   s_active_layer = KB_LAYER_BASE;
   s_v_nkro_mutex = xSemaphoreCreateMutex();
   s_macro_queue = xQueueCreate(10, sizeof(macro_queue_item_t));
+  
+  // Re-register macro handler with our update callback
+  cfgmod_register_kind(CFGMOD_KIND_MACRO, macros_default, macros_deserialize,
+                       macros_serialize, on_macros_updated, sizeof(cfg_macro_list_t));
+
+  // Load initial macros
+  cfgmod_get_config(CFGMOD_KIND_MACRO, "macros", &s_macros);
+  ESP_LOGI(TAG, "Loaded %d macros from storage", (int)s_macros.count);
+
   xTaskCreate(macro_task, "kb_macro", 4096, NULL, 4, NULL);
   ESP_LOGI(TAG, "Macro engine initialized");
 }

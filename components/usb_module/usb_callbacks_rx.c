@@ -31,7 +31,7 @@ void process_rx_request(const usb_packet_msg_t msg)
     bool result = false;
 
     if (msg.flags & PAYLOAD_FLAG_FIRST) {
-        ESP_LOGI(TAG, "Identified FIRST flag");
+        // ESP_LOGI(TAG, "Identified FIRST flag");
         erase_rx_buffer();
     }
 
@@ -46,7 +46,7 @@ void process_rx_request(const usb_packet_msg_t msg)
     }
 
     if ((msg.flags & PAYLOAD_FLAG_LAST) && result) {
-        ESP_LOGI(TAG, "Identified LAST flag, processing buffer.");
+        // ESP_LOGI(TAG, "Identified LAST flag, processing buffer.");
         result = process_rx_buffer();
         if (!result) {
             ESP_LOGE(TAG, "Error when processing rx buffer. Responding with ERR.");
@@ -74,7 +74,7 @@ void erase_rx_buffer()
     memset(rx_buf, 0, sizeof(rx_buf));
     rx_buf_len = 0;
     rx_last_packet_timestamp_us = 0;
-    ESP_LOGI(TAG, "RX buffer erased");
+    // ESP_LOGI(TAG, "RX buffer erased");
 }
 
 uint64_t rx_get_last_packet_timestamp_us()
@@ -93,7 +93,7 @@ static bool append_payload_to_rx_buffer(const uint8_t *data, uint8_t data_len)
     memcpy(rx_buf + rx_buf_len, data, data_len);
     rx_buf_len+= data_len;
 
-    ESP_LOGI(TAG, "Appended data to RX buf. Data length: %d. Buffer length: %d sizeof(rx_buf): %ull", data_len, rx_buf_len, sizeof(rx_buf));
+    // ESP_LOGI(TAG, "Appended data to RX buf. Data length: %d. Buffer length: %d sizeof(rx_buf): %ull", data_len, rx_buf_len, sizeof(rx_buf));
 
     return true;
 }
@@ -106,7 +106,7 @@ static bool process_rx_buffer()
         return false;
     }
 
-    ESP_LOGI(TAG, "Processing RX buffer. rx_buf_len: %u", rx_buf_len);
+    // ESP_LOGI(TAG, "Processing RX buffer. rx_buf_len: %u", rx_buf_len);
 
     usb_msg_module_t module = (usb_msg_module_t)rx_buf[0];
     if (module >= USB_MODULE_COUNT) {
