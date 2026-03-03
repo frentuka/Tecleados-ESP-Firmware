@@ -6,6 +6,7 @@
 #include "cJSON.h"
 #include "nvs.h"
 #include "nvs_flash.h"
+#include "cfg_macros.h"
 
 // module initializers
 extern void cfg_layouts_register(void);
@@ -90,6 +91,8 @@ static const cfgmod_key_map_t s_key_map[CFG_KEY_MAX] = {
    [CFG_KEY_LAYER_2] = { CFGMOD_KIND_LAYOUT, "ly2" },
    [CFG_KEY_LAYER_3] = { CFGMOD_KIND_LAYOUT, "ly3" },
    [CFG_KEY_MACROS]  = { CFGMOD_KIND_MACRO, "macros" },
+   [CFG_KEY_MACRO_LIMITS] = { CFGMOD_KIND_MACRO, "macros" },
+   [CFG_KEY_MACRO_SINGLE] = { CFGMOD_KIND_MACRO, "macros" },
 };
 
 esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
@@ -142,8 +145,186 @@ esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
   // ESP_LOGI(TAG, "RX COMM");
   // log_hex("RX", data, len);
 
-  // message is get
-  if (hdr.cmd == CFG_CMD_GET) {
+  // ---- Custom macro key handling ----
+  if (hdr.key_id == CFG_KEY_MACRO_LIMITS && hdr.cmd == CFG_CMD_GET) {
+    // Return compile-time limits as JSON
+    cJSON *root = macros_serialize_limits();
+    if (root) {
+      char *json_str = cJSON_PrintUnformatted(root);
+      cJSON_Delete(root);
+      if (json_str) {
+        size_t json_len = strlen(json_str) + 1;
+        if (json_len <= out_payload_max - status_size) {
+          memcpy(out_payload + status_size, json_str, json_len);
+          actual_payload_len = status_size + json_len;
+          status = ESP_OK;
+        } else {
+          status = ESP_ERR_NO_MEM;
+          actual_payload_len = status_size;
+        }
+        free(json_str);
+      } else {
+        status = ESP_ERR_NO_MEM;
+        actual_payload_len = status_size;
+      }
+    } else {
+      status = ESP_ERR_NO_MEM;
+      actual_payload_len = status_size;
+    }
+    memcpy(out_payload, &status, status_size);
+
+  } else if (hdr.key_id == CFG_KEY_MACRO_SINGLE && hdr.cmd == CFG_CMD_SET) {
+    // Parse incoming JSON (single macro or { "delete": id })
+    char *temp_json = malloc(data_in_len + 1);
+    cJSON *root = NULL;
+    if (temp_json) {
+      memcpy(temp_json, data_in, data_in_len);
+      temp_json[data_in_len] = '\0';
+      root = cJSON_Parse(temp_json);
+      free(temp_json);
+    }
+
+    if (root) {
+      // Load existing macro list from NVS
+      cfg_macro_list_t *list = malloc(sizeof(cfg_macro_list_t));
+      if (list) {
+        cfgmod_get_config(kind, key, list);
+
+        cJSON *del = cJSON_GetObjectItem(root, "delete");
+        if (cJSON_IsNumber(del)) {
+          // Delete mode
+          macros_delete_single((uint16_t)del->valueint, list);
+        } else {
+          // Upsert mode
+          macros_upsert_single(root, list);
+        }
+
+        // Serialize full list back and write to NVS
+        cJSON *serialized = s_registry[kind].ser_fn(list);
+        free(list);
+
+        if (serialized) {
+          char *json_str = cJSON_PrintUnformatted(serialized);
+          cJSON_Delete(serialized);
+          if (json_str) {
+            status = cfgmod_write_storage(kind, key, json_str, strlen(json_str) + 1);
+            free(json_str);
+            if (status == ESP_OK && s_registry[kind].update_fn) {
+              s_registry[kind].update_fn(key);
+            }
+          } else {
+            status = ESP_ERR_NO_MEM;
+          }
+        } else {
+          status = ESP_ERR_NO_MEM;
+        }
+      } else {
+        status = ESP_ERR_NO_MEM;
+      }
+      cJSON_Delete(root);
+    } else {
+      status = ESP_ERR_INVALID_ARG;
+    }
+
+    memcpy(out_payload, &status, status_size);
+    actual_payload_len = status_size;
+
+  } else if (hdr.key_id == CFG_KEY_MACRO_SINGLE && hdr.cmd == CFG_CMD_GET) {
+    // Expect incoming JSON: { "id": 123 }
+    char *temp_json = malloc(data_in_len + 1);
+    cJSON *root = NULL;
+    uint16_t requested_id = 0xFFFF;
+    if (temp_json) {
+      memcpy(temp_json, data_in, data_in_len);
+      temp_json[data_in_len] = '\0';
+      root = cJSON_Parse(temp_json);
+      free(temp_json);
+      if (root) {
+        cJSON *id_item = cJSON_GetObjectItem(root, "id");
+        if (cJSON_IsNumber(id_item)) {
+          requested_id = (uint16_t)id_item->valueint;
+        }
+        cJSON_Delete(root);
+      }
+    }
+
+    if (requested_id != 0xFFFF) {
+      cfg_macro_list_t *list = malloc(sizeof(cfg_macro_list_t));
+      if (list) {
+        cfgmod_get_config(kind, key, list);
+        cJSON *single_macro = macros_serialize_single(requested_id, list);
+        free(list);
+
+        if (single_macro) {
+          char *json_str = cJSON_PrintUnformatted(single_macro);
+          cJSON_Delete(single_macro);
+          if (json_str) {
+            size_t json_len = strlen(json_str) + 1;
+            if (json_len <= out_payload_max - status_size) {
+              memcpy(out_payload + status_size, json_str, json_len);
+              actual_payload_len = status_size + json_len;
+              status = ESP_OK;
+            } else {
+              status = ESP_ERR_NO_MEM;
+              actual_payload_len = status_size;
+            }
+            free(json_str);
+          } else {
+             status = ESP_ERR_NO_MEM;
+             actual_payload_len = status_size;
+          }
+        } else {
+          status = ESP_ERR_NO_MEM;
+          actual_payload_len = status_size;
+        }
+      } else {
+        status = ESP_ERR_NO_MEM;
+        actual_payload_len = status_size;
+      }
+    } else {
+      status = ESP_ERR_INVALID_ARG;
+      actual_payload_len = status_size;
+    }
+    memcpy(out_payload, &status, status_size);
+
+  } else if (hdr.key_id == CFG_KEY_MACROS && hdr.cmd == CFG_CMD_GET) {
+    // Return only the macro outline (IDs and names, without elements)
+    cfg_macro_list_t *list = malloc(sizeof(cfg_macro_list_t));
+    if (list) {
+      cfgmod_get_config(kind, key, list);
+      cJSON *outline = macros_serialize_outline(list);
+      free(list);
+
+      if (outline) {
+        char *json_str = cJSON_PrintUnformatted(outline);
+        cJSON_Delete(outline);
+        if (json_str) {
+          size_t json_len = strlen(json_str) + 1;
+          if (json_len <= out_payload_max - status_size) {
+            memcpy(out_payload + status_size, json_str, json_len);
+            actual_payload_len = status_size + json_len;
+            status = ESP_OK;
+          } else {
+            status = ESP_ERR_NO_MEM;
+            actual_payload_len = status_size;
+          }
+          free(json_str);
+        } else {
+           status = ESP_ERR_NO_MEM;
+           actual_payload_len = status_size;
+        }
+      } else {
+        status = ESP_ERR_NO_MEM;
+        actual_payload_len = status_size;
+      }
+    } else {
+      status = ESP_ERR_NO_MEM;
+      actual_payload_len = status_size;
+    }
+    memcpy(out_payload, &status, status_size);
+
+  // ---- Generic GET/SET handlers ----
+  } else if (hdr.cmd == CFG_CMD_GET) {
     ESP_LOGI(TAG, "Received GET message for %s (kind=%d, key_id=%d)", key, kind, (int)hdr.key_id);
 
     if (kind < CFGMOD_KIND_MAX && s_registry[kind].registered) {
@@ -268,18 +449,25 @@ bool is_init(void) { return s_init; }
 #include "usb_send.h"
 
 bool cfg_usb_callback(uint8_t *data, uint16_t data_len) {
-    uint8_t out_buf[4096];
+    size_t buf_size = 20000;
+    uint8_t *out_buf = malloc(buf_size);
+    if (!out_buf) {
+        ESP_LOGE(TAG, "cfg_usb_callback failed to allocate memory");
+        return false;
+    }
+    
     size_t out_len = 0;
     
     // Add module ID back as the first byte of response so the web UI knows it's from Config
     out_buf[0] = MODULE_CONFIG;
     
-    esp_err_t err = cfgmod_handle_usb_comm(data, data_len, out_buf + 1, &out_len, sizeof(out_buf) - 1);
+    esp_err_t err = cfgmod_handle_usb_comm(data, data_len, out_buf + 1, &out_len, buf_size - 1);
     
     if (err == ESP_OK && out_len > 0) {
         send_payload(out_buf, out_len + 1);
     }
     
+    free(out_buf);
     return err == ESP_OK;
 }
 

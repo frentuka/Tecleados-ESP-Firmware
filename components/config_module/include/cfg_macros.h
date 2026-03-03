@@ -7,8 +7,8 @@
 #include <stdint.h>
 
 
-#define CFG_MACRO_MAX_EVENTS 32
-#define CFG_MACROS_MAX_COUNT 64
+#define CFG_MACRO_MAX_EVENTS 128
+#define CFG_MACROS_MAX_COUNT 16
 
 // Types of macro events (e.g. key press, delay)
 typedef enum {
@@ -43,3 +43,18 @@ void cfg_macros_register(void);
 void macros_default(void *out_struct);
 bool macros_deserialize(cJSON *root, void *out_struct);
 cJSON *macros_serialize(const void *in_struct);
+
+// Serialize an outline of all macros (IDs and Names only)
+cJSON *macros_serialize_outline(const cfg_macro_list_t *list);
+
+// Serialize a specific macro by its ID
+cJSON *macros_serialize_single(uint16_t id, const cfg_macro_list_t *list);
+
+// Serialize compile-time limits as JSON: { "maxEvents": N, "maxMacros": M }
+cJSON *macros_serialize_limits(void);
+
+// Insert or replace a single macro (by ID) in the list
+void macros_upsert_single(cJSON *macro_json, cfg_macro_list_t *list);
+
+// Remove a macro by ID from the list
+void macros_delete_single(uint16_t id, cfg_macro_list_t *list);

@@ -58,8 +58,8 @@ uint8_t kb_macro_get_active_layer(void) { return s_active_layer; }
 esp_err_t kb_macro_send_report(void) {
   esp_err_t err = ESP_FAIL;
   if (xSemaphoreTake(s_v_nkro_mutex, portMAX_DELAY)) {
-    // Retry up to 10 times if reporting fails (endpoint busy)
-    for (int i = 0; i < 10; i++) {
+    // Retry up to 100 times if reporting fails (endpoint busy)
+    for (int i = 0; i < 100; i++) {
       err = kb_send_report(s_v_nkro);
       if (err == ESP_OK) break;
       vTaskDelay(pdMS_TO_TICKS(1)); 

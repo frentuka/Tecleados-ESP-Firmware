@@ -32,6 +32,8 @@ export const CFG_KEY_LAYER_1 = 0x04;
 export const CFG_KEY_LAYER_2 = 0x05;
 export const CFG_KEY_LAYER_3 = 0x06;
 export const CFG_KEY_MACROS = 0x07;
+export const CFG_KEY_MACRO_LIMITS = 0x08;
+export const CFG_KEY_MACRO_SINGLE = 0x09;
 
 export const MACRO_CODE_BASE = 0x4000;
 

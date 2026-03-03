@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import type { Macro, MacroElement, MacroAction } from './App';
-import { getKeyName, getKeyClass, MACRO_BASE } from './KeyDefinitions';
+import { getKeyName, getKeyClass, MACRO_BASE, BROWSER_CODE_TO_HID } from './KeyDefinitions';
 import SearchableKeyModal from './SearchableKeyModal';
 
 interface MacroEditorModalProps {
@@ -9,6 +9,7 @@ interface MacroEditorModalProps {
     onSave: (macro: Macro) => void;
     onClose: () => void;
     macros: Macro[]; // For name validation/defaulting
+    maxEvents?: number; // Max events allowed per macro (from firmware)
 }
 
 const ActionTapIcon = () => (
@@ -38,24 +39,22 @@ const MoonIcon = () => (
     </svg>
 );
 
-const KeyboardIcon = () => (
-    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M20 5H4c-1.1 0-1.99.9-1.99 2L2 17c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm-9 3h2v2h-2V8zm0 3h2v2h-2v-2zM8 8h2v2H8V8zm0 3h2v2H8v-2zM5 8h2v2H5V8zm0 3h2v2H5v-2zm9 7H8v-2h6v2zm0-5h2v2h-2v-2zm0-3h2v2h-2V8zm3 3h2v2h-2v-2zm0-3h2v2h-2V8z" /></svg>
-);
+const MacroNameInput = ({ initialName, onChange }: { initialName: string, onChange: (val: string) => void }) => {
+    const [localName, setLocalName] = useState(initialName);
+    return (
+        <input
+            type="text"
+            value={localName}
+            onChange={e => setLocalName(e.target.value)}
+            onBlur={() => onChange(localName)}
+            onKeyDown={e => { if (e.key === 'Enter') { e.currentTarget.blur(); } }}
+            placeholder="Macro Name..."
+            className="macro-name-input-compact"
+        />
+    );
+};
 
-const TextIcon = () => (
-    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
-    </svg>
-);
-
-const CodeIcon = () => (
-    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <polyline points="16 18 22 12 16 6" />
-        <polyline points="8 6 2 12 8 18" />
-    </svg>
-);
-
-function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros }: MacroEditorModalProps) {
+function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEvents }: MacroEditorModalProps) {
     const implodeElements = (els: MacroElement[]): MacroElement[] => {
         const result: MacroElement[] = [];
         for (let i = 0; i < els.length; i++) {
@@ -87,23 +86,141 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros }: Macr
     const [editingElementIndex, setEditingElementIndex] = useState<number | null>(null);
     const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
     const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
-    const [showAddMenu, setShowAddMenu] = useState(false);
-    const addMenuRef = useRef<HTMLDivElement>(null);
+
+    // Config and Recording State
+    const [isRecording, setIsRecording] = useState(false);
+    const [recordDelay, setRecordDelay] = useState(true);
+    const [defaultDelay, setDefaultDelay] = useState(100);
+    const [showConfigMenu, setShowConfigMenu] = useState(false);
+    const configMenuRef = useRef<HTMLDivElement>(null);
+
+    // Compute real event count (exploded = inline sleeps become separate events)
+    const explodedCount = explodeElements(elements).length;
+    const isAtEventLimit = maxEvents !== undefined && explodedCount >= maxEvents;
+
+    const listEndRef = useRef<HTMLDivElement>(null);
+    const prevLenRef = useRef(elements.length);
+
+    useEffect(() => {
+        if (listEndRef.current && elements.length > prevLenRef.current) {
+            listEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+        }
+        prevLenRef.current = elements.length;
+    }, [elements.length]);
 
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
-            if (addMenuRef.current && !addMenuRef.current.contains(event.target as Node)) {
-                setShowAddMenu(false);
+            if (configMenuRef.current && !configMenuRef.current.contains(event.target as Node)) {
+                setShowConfigMenu(false);
             }
         };
 
-        if (showAddMenu) {
+        if (showConfigMenu) {
             document.addEventListener('mousedown', handleClickOutside);
         }
         return () => {
             document.removeEventListener('mousedown', handleClickOutside);
         };
-    }, [showAddMenu]);
+    }, [showConfigMenu]);
+
+    const recordingStateRef = useRef({
+        isRecording: false,
+        lastEventTime: 0,
+        activeKeys: new Set<string>(),
+    });
+
+    useEffect(() => {
+        recordingStateRef.current.isRecording = isRecording;
+        if (isRecording) {
+            recordingStateRef.current.lastEventTime = 0;
+            recordingStateRef.current.activeKeys.clear();
+        }
+    }, [isRecording]);
+
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (!recordingStateRef.current.isRecording) return;
+
+            const hidCode = BROWSER_CODE_TO_HID[e.code];
+            if (hidCode !== undefined) {
+                e.preventDefault();
+                e.stopPropagation();
+
+                if (recordingStateRef.current.activeKeys.has(e.code)) return;
+                recordingStateRef.current.activeKeys.add(e.code);
+
+                const now = Date.now();
+                const diff = recordingStateRef.current.lastEventTime > 0 ? now - recordingStateRef.current.lastEventTime : 0;
+
+                setElements(prev => {
+                    const exploded = explodeElements(prev);
+                    if (maxEvents !== undefined && exploded.length >= maxEvents) {
+                        return prev; // At limit, don't add more
+                    }
+                    const newEls = [...prev];
+                    if (recordDelay && diff > 0) {
+                        const lastEl = newEls.length > 0 ? newEls[newEls.length - 1] : null;
+                        if (lastEl && lastEl.type === 'key') {
+                            newEls[newEls.length - 1] = { ...lastEl, inlineSleep: (lastEl.inlineSleep || 0) + diff };
+                        } else if (lastEl && lastEl.type === 'sleep') {
+                            newEls[newEls.length - 1] = { ...lastEl, duration: lastEl.duration + diff };
+                        } else {
+                            newEls.push({ type: 'sleep', duration: diff });
+                        }
+                    }
+                    newEls.push({ type: 'key', key: hidCode, action: 'press' });
+                    return newEls;
+                });
+                recordingStateRef.current.lastEventTime = now;
+            }
+        };
+
+        const handleKeyUp = (e: KeyboardEvent) => {
+            if (!recordingStateRef.current.isRecording) return;
+
+            const hidCode = BROWSER_CODE_TO_HID[e.code];
+            if (hidCode !== undefined) {
+                e.preventDefault();
+                e.stopPropagation();
+
+                recordingStateRef.current.activeKeys.delete(e.code);
+
+                const now = Date.now();
+                const diff = recordingStateRef.current.lastEventTime > 0 ? now - recordingStateRef.current.lastEventTime : 0;
+
+                setElements(prev => {
+                    const exploded = explodeElements(prev);
+                    if (maxEvents !== undefined && exploded.length >= maxEvents) {
+                        return prev; // At limit, don't add more
+                    }
+                    const newEls = [...prev];
+                    if (recordDelay && diff > 0) {
+                        const lastEl = newEls.length > 0 ? newEls[newEls.length - 1] : null;
+                        if (lastEl && lastEl.type === 'key') {
+                            newEls[newEls.length - 1] = { ...lastEl, inlineSleep: (lastEl.inlineSleep || 0) + diff };
+                        } else if (lastEl && lastEl.type === 'sleep') {
+                            newEls[newEls.length - 1] = { ...lastEl, duration: lastEl.duration + diff };
+                        } else {
+                            newEls.push({ type: 'sleep', duration: diff });
+                        }
+                    }
+                    newEls.push({ type: 'key', key: hidCode, action: 'release' });
+                    return newEls;
+                });
+                recordingStateRef.current.lastEventTime = now;
+            }
+        };
+
+        if (isRecording) {
+            window.addEventListener('keydown', handleKeyDown, { capture: true });
+            window.addEventListener('keyup', handleKeyUp, { capture: true });
+        }
+
+        return () => {
+            window.removeEventListener('keydown', handleKeyDown, { capture: true });
+            window.removeEventListener('keyup', handleKeyUp, { capture: true });
+        };
+    }, [isRecording, recordDelay]);
 
     const addKey = () => {
         setEditingElementIndex(null);
@@ -158,7 +275,7 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros }: Macr
         if (el.inlineSleep !== undefined) {
             delete el.inlineSleep;
         } else {
-            el.inlineSleep = 100;
+            el.inlineSleep = defaultDelay;
         }
         setElements(newElements);
     };
@@ -253,19 +370,18 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros }: Macr
             <div className="modal-content macro-editor-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '600px' }}>
                 <div className="modal-header macro-modal-header">
                     <div className="macro-name-container">
-                        <input
-                            type="text"
-                            value={name}
-                            onChange={e => setName(e.target.value)}
-                            placeholder="Macro Name..."
-                            className="macro-name-input-compact"
+                        <MacroNameInput
+                            initialName={name}
+                            onChange={setName}
                         />
                     </div>
                     <div className="macro-editor-actions-header">
-                        <div className="add-action-dropdown" ref={addMenuRef}>
+                        <div style={{ display: 'flex', gap: '8px' }}>
                             <button
-                                className={`btn btn-secondary btn-sm ${showAddMenu ? 'active' : ''}`}
-                                onClick={() => setShowAddMenu(!showAddMenu)}
+                                className="btn btn-secondary btn-sm"
+                                onClick={addKey}
+                                disabled={isAtEventLimit}
+                                title={isAtEventLimit ? `Maximum actions reached (${maxEvents})` : undefined}
                             >
                                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '4px' }}>
                                     <line x1="12" y1="5" x2="12" y2="19" />
@@ -273,25 +389,70 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros }: Macr
                                 </svg>
                                 Add
                             </button>
-                            {showAddMenu && (
-                                <div className="dropdown-menu">
-                                    <div className="dropdown-item" onClick={() => { addKey(); setShowAddMenu(false); }}>
-                                        <KeyboardIcon />
-                                        <span>System Action</span>
+
+                            <button
+                                className="btn btn-sm"
+                                onClick={() => setIsRecording(!isRecording)}
+                                style={{ backgroundColor: 'var(--danger-color)', color: 'white', border: '1px solid var(--danger-color)' }}
+                            >
+                                {isRecording ? (
+                                    <>
+                                        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '4px', verticalAlign: 'text-bottom' }}>
+                                            <rect x="6" y="6" width="12" height="12" rx="2" ry="2"></rect>
+                                        </svg>
+                                        Stop
+                                    </>
+                                ) : (
+                                    <>
+                                        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '4px', verticalAlign: 'text-bottom' }}>
+                                            <circle cx="12" cy="12" r="6" fill="currentColor"></circle>
+                                        </svg>
+                                        Record
+                                    </>
+                                )}
+                            </button>
+
+                            <div className="add-action-dropdown" ref={configMenuRef} style={{ position: 'relative' }}>
+                                <button
+                                    className={`btn-icon btn-icon-ghost ${showConfigMenu ? 'active' : ''}`}
+                                    onClick={() => setShowConfigMenu(!showConfigMenu)}
+                                    title="Config"
+                                    style={{ width: '38px', height: '38px' }}
+                                >
+                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: 'middle' }}>
+                                        <circle cx="12" cy="12" r="3"></circle>
+                                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                                    </svg>
+                                </button>
+                                {showConfigMenu && (
+                                    <div className="dropdown-menu" style={{ width: '220px', padding: '12px', right: '0', top: '100%' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                                            <span style={{ fontSize: '14px', color: 'var(--text-primary)' }}>Record delay</span>
+                                            <input
+                                                type="checkbox"
+                                                checked={recordDelay}
+                                                onChange={(e) => setRecordDelay(e.target.checked)}
+                                                style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                                            />
+                                        </div>
+                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                            <span style={{ fontSize: '14px', color: 'var(--text-primary)' }}>Default delay</span>
+                                            <div style={{ display: 'flex', alignItems: 'center' }}>
+                                                <input
+                                                    type="number"
+                                                    value={defaultDelay === 0 ? '' : defaultDelay}
+                                                    onChange={e => setDefaultDelay(e.target.value === '' ? 0 : parseInt(e.target.value) || 0)}
+                                                    min="0"
+                                                    style={{ width: '60px', padding: '4px', background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-primary)', borderRadius: '4px', textAlign: 'right' }}
+                                                />
+                                                <span style={{ fontSize: '12px', color: 'var(--text-secondary)', marginLeft: '6px' }}>ms</span>
+                                            </div>
+                                        </div>
                                     </div>
-                                    <div className="dropdown-item disabled" onClick={() => { console.log("Add Text (future)"); setShowAddMenu(false); }} title="Coming soon">
-                                        <TextIcon />
-                                        <span>Write Text</span>
-                                    </div>
-                                    <div className="dropdown-item disabled" onClick={() => { console.log("Add Code (future)"); setShowAddMenu(false); }} title="Coming soon">
-                                        <CodeIcon />
-                                        <span>Execute Code</span>
-                                    </div>
-                                </div>
-                            )}
+                                )}
+                            </div>
                         </div>
                     </div>
-                    <button className="btn-close" onClick={onClose}>&times;</button>
                 </div>
                 <div className="modal-body">
 
@@ -379,8 +540,14 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros }: Macr
                                 </div>
                             ))
                         )}
+                        <div ref={listEndRef} />
                     </div>
                 </div>
+                {isAtEventLimit && (
+                    <div style={{ padding: '8px 16px', background: 'rgba(255,160,0,0.12)', borderBottom: '1px solid rgba(255,160,0,0.3)', color: '#ffb74d', fontSize: '13px', textAlign: 'center' }}>
+                        Maximum actions reached ({maxEvents})
+                    </div>
+                )}
                 <div className="modal-footer">
                     <button className="btn" onClick={onClose}>Cancel</button>
                     <button className="btn btn-success" onClick={() => {
@@ -408,15 +575,19 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros }: Macr
 
 interface MacrosDashboardProps {
     macros: Macro[];
+    macroLimits?: { maxEvents: number; maxMacros: number } | null;
     onSaveMacro: (macro: Macro) => void;
     onDeleteMacro: (id: number) => void;
     onReload?: () => void;
+    onFetchSingleMacro?: (id: number) => Promise<Macro | null>;
 }
 
-export default function MacrosDashboard({ macros, onSaveMacro, onDeleteMacro, onReload }: MacrosDashboardProps) {
+export default function MacrosDashboard({ macros, macroLimits, onSaveMacro, onDeleteMacro, onReload, onFetchSingleMacro }: MacrosDashboardProps) {
     const [editingMacro, setEditingMacro] = useState<Macro | null>(null);
+    const [fetchingMacroId, setFetchingMacroId] = useState<number | null>(null);
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const menuRef = useRef<HTMLDivElement>(null);
+    const isAtMacroLimit = macroLimits != null && macros.length >= macroLimits.maxMacros;
 
     useEffect(() => {
         function handleClickOutside(event: MouseEvent) {
@@ -432,8 +603,19 @@ export default function MacrosDashboard({ macros, onSaveMacro, onDeleteMacro, on
         setEditingMacro({ id: -1, name: '', elements: [] });
     };
 
-    const handleEdit = (macro: Macro) => {
-        setEditingMacro(macro);
+    const handleEdit = async (macro: Macro) => {
+        if (onFetchSingleMacro) {
+            setFetchingMacroId(macro.id);
+            const fullMacro = await onFetchSingleMacro(macro.id);
+            setFetchingMacroId(null);
+            if (fullMacro) {
+                setEditingMacro(fullMacro);
+            } else {
+                alert("Failed to fetch full macro data.");
+            }
+        } else {
+            setEditingMacro(macro);
+        }
     };
 
     return (
@@ -459,7 +641,7 @@ export default function MacrosDashboard({ macros, onSaveMacro, onDeleteMacro, on
                         )}
                     </div>
                 </div>
-                <button className="btn btn-success" onClick={handleCreate}>
+                <button className="btn btn-success" onClick={handleCreate} disabled={isAtMacroLimit} title={isAtMacroLimit ? `Maximum macros reached (${macroLimits!.maxMacros})` : undefined}>
                     <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" /></svg>
                     Create Macro
                 </button>
@@ -478,16 +660,26 @@ export default function MacrosDashboard({ macros, onSaveMacro, onDeleteMacro, on
                                 </div>
                                 <div className="macro-card-body">
                                     <div className="macro-preview-sequence">
-                                        {m.elements.slice(0, 5).map((el, i) => (
-                                            <span key={i} className="preview-el">
-                                                {el.type === 'key' ? getKeyName(el.key, macros) : `⌛${el.duration}ms`}
+                                        {m.elements && m.elements.length > 0 ? (
+                                            <>
+                                                {m.elements.slice(0, 5).map((el, i) => (
+                                                    <span key={i} className="preview-el">
+                                                        {el.type === 'key' ? getKeyName(el.key, macros) : `⌛${el.duration}ms`}
+                                                    </span>
+                                                ))}
+                                                {m.elements.length > 5 && <span className="preview-more">...</span>}
+                                            </>
+                                        ) : (
+                                            <span className="preview-more" style={{ opacity: 0.5, fontStyle: 'italic' }}>
+                                                Elements hidden (Click Edit to view)
                                             </span>
-                                        ))}
-                                        {m.elements.length > 5 && <span className="preview-more">...</span>}
+                                        )}
                                     </div>
                                 </div>
                                 <div className="macro-card-actions">
-                                    <button className="btn btn-sm" onClick={() => handleEdit(m)}>Edit</button>
+                                    <button className="btn btn-sm" onClick={() => handleEdit(m)} disabled={fetchingMacroId !== null}>
+                                        {fetchingMacroId === m.id ? 'Loading...' : 'Edit'}
+                                    </button>
                                     <button className="btn btn-sm btn-danger" onClick={() => onDeleteMacro(m.id)}>Delete</button>
                                 </div>
                             </div>
@@ -500,6 +692,7 @@ export default function MacrosDashboard({ macros, onSaveMacro, onDeleteMacro, on
                 <MacroEditorModal
                     macro={editingMacro}
                     macros={macros}
+                    maxEvents={macroLimits?.maxEvents}
                     onSave={(m) => {
                         onSaveMacro(m);
                         setEditingMacro(null);

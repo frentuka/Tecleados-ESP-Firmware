@@ -29,6 +29,8 @@ typedef enum cfgmod_key_id : uint8_t {
   CFG_KEY_LAYER_2,
   CFG_KEY_LAYER_3,
   CFG_KEY_MACROS,
+  CFG_KEY_MACRO_LIMITS,
+  CFG_KEY_MACRO_SINGLE,
   CFG_KEY_MAX
 } cfgmod_key_id_t;
 

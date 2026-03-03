@@ -81,3 +81,16 @@
         transform: translateX(0);
     }
 }
+
+.btn-icon-ghost {
+    background: none !important;
+    border: 1px solid transparent !important;
+    box-shadow: none !important;
+}
+
+.btn-icon-ghost:hover,
+.btn-icon-ghost.active {
+    background: rgba(88, 166, 255, 0.1) !important;
+    border-color: var(--accent-color) !important;
+    transform: translateY(-2px);
+}

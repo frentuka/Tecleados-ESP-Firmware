@@ -21,6 +21,8 @@ import {
   CFG_KEY_LAYER_2,
   CFG_KEY_LAYER_3,
   CFG_KEY_MACROS,
+  CFG_KEY_MACRO_LIMITS,
+  CFG_KEY_MACRO_SINGLE,
 } from './HIDService';
 import KeyboardLayoutEditor from './KeyboardLayoutEditor';
 import MacrosDashboard from './MacrosDashboard';
@@ -66,6 +68,8 @@ function App() {
   });
   const [logs, setLogs] = useState<LogMessage[]>([]);
   const [macros, setMacros] = useState<Macro[]>([]);
+  const [macroLimits, setMacroLimits] = useState<{ maxEvents: number; maxMacros: number } | null>(null);
+  const macroCache = useRef<Record<number, Macro>>({});
 
   // Persist Developer Mode
   useEffect(() => {
@@ -122,6 +126,28 @@ function App() {
     setIsFetching(false);
   }, [isConnected]);
 
+  const fetchMacroLimits = useCallback(async () => {
+    if (!isConnected) return;
+
+    const buf = new Uint8Array(3);
+    buf[0] = MODULE_CONFIG;
+    buf[1] = CFG_CMD_GET;
+    buf[2] = CFG_KEY_MACRO_LIMITS;
+
+    const resp = await hidService.sendCommand(buf);
+    if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
+      try {
+        const parsed = JSON.parse(resp.jsonText);
+        if (parsed.maxEvents && parsed.maxMacros) {
+          setMacroLimits({ maxEvents: parsed.maxEvents, maxMacros: parsed.maxMacros });
+          console.log(`Macro limits: maxEvents=${parsed.maxEvents}, maxMacros=${parsed.maxMacros}`);
+        }
+      } catch (e) {
+        console.error('Macro Limits JSON Parse Error:', e);
+      }
+    }
+  }, [isConnected]);
+
   const fetchMacros = useCallback(async () => {
     if (!isConnected || !controlsEnabled) return;
 
@@ -140,6 +166,7 @@ function App() {
         } else if (parsed.macros && Array.isArray(parsed.macros)) {
           setMacros(parsed.macros);
         }
+        macroCache.current = {}; // Reset cache on full list fetch
       } catch (e) {
         console.error('Macros JSON Parse Error:', e);
       }
@@ -147,53 +174,91 @@ function App() {
     setIsFetching(false);
   }, [isConnected, controlsEnabled]);
 
+  const fetchSingleMacro = useCallback(async (id: number): Promise<Macro | null> => {
+    if (!isConnected) return null;
+    if (macroCache.current[id]) return macroCache.current[id];
+
+    const jsonStr = JSON.stringify({ id });
+    const jsonBytes = new TextEncoder().encode(jsonStr);
+    const buf = new Uint8Array(3 + jsonBytes.length);
+    buf[0] = MODULE_CONFIG;
+    buf[1] = CFG_CMD_GET;
+    buf[2] = CFG_KEY_MACRO_SINGLE;
+    buf.set(jsonBytes, 3);
+
+    const resp = await hidService.sendCommand(buf);
+    if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
+      try {
+        const parsed = JSON.parse(resp.jsonText) as Macro;
+        macroCache.current[id] = parsed; // Cache it
+        return parsed;
+      } catch (e) {
+        console.error('Single Macro JSON Parse Error:', e);
+      }
+    }
+    return null;
+  }, [isConnected]);
+
   const handleSaveMacro = async (newMacro: Macro) => {
-    let updatedMacros;
+    let macroToSave = newMacro;
+    let isNew = false;
     if (newMacro.id === -1) {
-      // Find the smallest available ID for macros (0-255)
+      // Find the smallest available ID
       const existingIds = new Set(macros.map(m => m.id));
       let nextId = 0;
       while (existingIds.has(nextId)) nextId++;
-      updatedMacros = [...macros, { ...newMacro, id: nextId }];
-    } else {
-      updatedMacros = macros.map(m => m.id === newMacro.id ? newMacro : m);
+      macroToSave = { ...newMacro, id: nextId };
+      isNew = true;
     }
 
-    const jsonStr = JSON.stringify({ macros: updatedMacros });
+    // Send only the single macro via CFG_KEY_MACRO_SINGLE
+    const jsonStr = JSON.stringify(macroToSave);
     const jsonBytes = new TextEncoder().encode(jsonStr);
     const buf = new Uint8Array(3 + jsonBytes.length);
     buf[0] = MODULE_CONFIG;
     buf[1] = CFG_CMD_SET;
-    buf[2] = CFG_KEY_MACROS;
+    buf[2] = CFG_KEY_MACRO_SINGLE;
     buf.set(jsonBytes, 3);
 
     const resp = await hidService.sendCommand(buf);
     if (resp && resp.status === 0) {
-      setMacros(updatedMacros);
-      setLogs(prev => [...prev, { id: Date.now(), timestamp: new Date(), data: new Uint8Array(0), text: `Macros saved to device (${updatedMacros.length} total)` }]);
+      if (isNew) {
+        setMacros(prev => [...prev, macroToSave]);
+      } else {
+        setMacros(prev => prev.map(m => m.id === macroToSave.id ? macroToSave : m));
+      }
+      macroCache.current[macroToSave.id] = macroToSave; // Update cache gracefully
+      setLogs(prev => [...prev, { id: Date.now(), timestamp: new Date(), data: new Uint8Array(0), text: `Macro "${macroToSave.name}" saved to device` }]);
     } else {
-      setLogs(prev => [...prev, { id: Date.now(), timestamp: new Date(), data: new Uint8Array(0), text: `Failed to save macros (Status: ${resp?.status ?? 'timeout'})` }]);
+      setLogs(prev => [...prev, { id: Date.now(), timestamp: new Date(), data: new Uint8Array(0), text: `Failed to save macro (Status: ${resp?.status ?? 'timeout'})` }]);
     }
   };
 
   const handleDeleteMacro = async (id: number) => {
     if (!window.confirm('Are you sure you want to delete this macro? Any keys mapped to it will stop working.')) return;
 
-    const updatedMacros = macros.filter(m => m.id !== id);
-    const jsonStr = JSON.stringify({ macros: updatedMacros });
+    // Send delete command via CFG_KEY_MACRO_SINGLE
+    const jsonStr = JSON.stringify({ delete: id });
     const jsonBytes = new TextEncoder().encode(jsonStr);
     const buf = new Uint8Array(3 + jsonBytes.length);
     buf[0] = MODULE_CONFIG;
     buf[1] = CFG_CMD_SET;
-    buf[2] = CFG_KEY_MACROS;
+    buf[2] = CFG_KEY_MACRO_SINGLE;
     buf.set(jsonBytes, 3);
 
     const resp = await hidService.sendCommand(buf);
     if (resp && resp.status === 0) {
-      setMacros(updatedMacros);
-      setLogs(prev => [...prev, { id: Date.now(), timestamp: new Date(), data: new Uint8Array(0), text: `Macro deleted. ${updatedMacros.length} remaining.` }]);
+      setMacros(prev => prev.filter(m => m.id !== id));
+      delete macroCache.current[id]; // Remove from cache
+      setLogs(prev => [...prev, { id: Date.now(), timestamp: new Date(), data: new Uint8Array(0), text: `Macro deleted. ${macros.length - 1} remaining.` }]);
     }
   };
+
+  useEffect(() => {
+    if (isConnected) {
+      fetchMacroLimits();
+    }
+  }, [isConnected, fetchMacroLimits]);
 
   useEffect(() => {
     if (isConnected && controlsEnabled) {
@@ -430,9 +495,11 @@ function App() {
           <div className="glass-panel">
             <MacrosDashboard
               macros={macros}
+              macroLimits={macroLimits}
               onSaveMacro={handleSaveMacro}
               onDeleteMacro={handleDeleteMacro}
               onReload={fetchMacros}
+              onFetchSingleMacro={fetchSingleMacro}
             />
           </div>
 
