@@ -19,6 +19,19 @@ typedef enum {
   MACRO_EVT_KEY_TAP
 } cfg_macro_event_type_t;
 
+// Macro execution modes
+typedef enum {
+  MACRO_EXEC_ONCE_STACK_ONCE = 0,   // Default: queue at most 1 extra execution
+  MACRO_EXEC_ONCE_NO_STACK,         // Ignore presses while running
+  MACRO_EXEC_ONCE_STACK_N,          // Queue up to stack_max extra executions
+  MACRO_EXEC_HOLD_REPEAT,           // Repeat while held, finish current on release
+  MACRO_EXEC_HOLD_REPEAT_CANCEL,    // Repeat while held, abort on release
+  MACRO_EXEC_TOGGLE_REPEAT,         // Toggle repeat, finish current on stop
+  MACRO_EXEC_TOGGLE_REPEAT_CANCEL,  // Toggle repeat, abort on stop
+  MACRO_EXEC_BURST_N,               // Single press fires repeat_count times
+  MACRO_EXEC_MODE_COUNT             // Sentinel
+} cfg_macro_exec_mode_t;
+
 typedef struct {
   cfg_macro_event_type_t type;
   uint32_t value; // Keycode or delay in ms
@@ -29,6 +42,9 @@ typedef struct {
   char name[32];
   cfg_macro_event_t events[CFG_MACRO_MAX_EVENTS];
   size_t event_count;
+  uint8_t exec_mode;     // cfg_macro_exec_mode_t value
+  uint8_t stack_max;     // For MACRO_EXEC_ONCE_STACK_N (default 1)
+  uint8_t repeat_count;  // For MACRO_EXEC_BURST_N (default 1)
 } cfg_macro_t;
 
 typedef struct {

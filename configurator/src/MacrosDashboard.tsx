@@ -4,6 +4,22 @@ import type { Macro, MacroElement, MacroAction } from './App';
 import { getKeyName, getKeyClass, MACRO_BASE, BROWSER_CODE_TO_HID } from './KeyDefinitions';
 import SearchableKeyModal from './SearchableKeyModal';
 
+// ── Execution Mode Helpers ──────────────────────────────────────────────
+type ModeCategory = 'once' | 'repeat' | 'burst';
+
+function getModeCategory(execMode: number): ModeCategory {
+    if (execMode >= 3 && execMode <= 6) return 'repeat';
+    if (execMode === 7) return 'burst';
+    return 'once';
+}
+
+function getModeBadgeLabel(execMode: number): string {
+    const cat = getModeCategory(execMode);
+    if (cat === 'once') return '1×';
+    if (cat === 'repeat') return '⟳';
+    return 'N×';
+}
+
 interface MacroEditorModalProps {
     macro: Macro;
     onSave: (macro: Macro) => void;
@@ -54,6 +70,189 @@ const MacroNameInput = ({ initialName, onChange }: { initialName: string, onChan
     );
 };
 
+// ── Macro Mode Selection Modal ──────────────────────────────────────────
+interface MacroModeModalProps {
+    macro: Macro;
+    onSave: (macro: Macro) => void;
+    onClose: () => void;
+}
+
+function MacroModeModal({ macro, onSave, onClose }: MacroModeModalProps) {
+    // Derive initial state from the flat execMode
+    const initCat = getModeCategory(macro.execMode ?? 0);
+    const initOnce = (macro.execMode !== undefined && macro.execMode <= 2) ? macro.execMode : 0;
+    const initRepeatTrigger: 'hold' | 'toggle' = (macro.execMode === 5 || macro.execMode === 6) ? 'toggle' : 'hold';
+    const initRepeatCancel = (macro.execMode === 4 || macro.execMode === 6);
+
+    const [category, setCategory] = useState<ModeCategory>(initCat);
+    const [onceMode, setOnceMode] = useState<number>(initOnce); // 0=stack-once, 1=no-stack, 2=stack-N
+    const [stackMax, setStackMax] = useState(macro.stackMax ?? 2);
+    const [repeatTrigger, setRepeatTrigger] = useState<'hold' | 'toggle'>(initRepeatTrigger);
+    const [repeatCancel, setRepeatCancel] = useState(initRepeatCancel);
+    const [repeatCount, setRepeatCount] = useState(macro.repeatCount ?? 2);
+    const [mouseDownOnOverlay, setMouseDownOnOverlay] = useState(false);
+
+    // Compute the flat execMode from the UI state
+    const computeExecMode = (): number => {
+        if (category === 'once') return onceMode; // 0, 1, or 2
+        if (category === 'repeat') {
+            if (repeatTrigger === 'hold') return repeatCancel ? 4 : 3;
+            return repeatCancel ? 6 : 5;
+        }
+        return 7; // burst
+    };
+
+    const handleSave = () => {
+        const mode = computeExecMode();
+        const updated: Macro = {
+            ...macro,
+            execMode: mode,
+            stackMax: mode === 2 ? Math.max(1, stackMax) : undefined,
+            repeatCount: mode === 7 ? Math.max(1, repeatCount) : undefined,
+        };
+        onSave(updated);
+        onClose();
+    };
+
+    const categoryButtons: { id: ModeCategory; icon: string; label: string; tagline: string }[] = [
+        { id: 'once', icon: '1×', label: 'Once', tagline: 'Runs the macro a single time per press' },
+        { id: 'repeat', icon: '⟳', label: 'Repeat', tagline: 'Loops the macro continuously' },
+        { id: 'burst', icon: 'N×', label: 'Burst', tagline: 'Fires the macro multiple times per press' },
+    ];
+
+    return createPortal(
+        <div
+            className="modal-overlay"
+            onMouseDown={e => { if (e.target === e.currentTarget) setMouseDownOnOverlay(true); else setMouseDownOnOverlay(false); }}
+            onMouseUp={e => { if (mouseDownOnOverlay && e.target === e.currentTarget) onClose(); setMouseDownOnOverlay(false); }}
+        >
+            <div className="modal-content macro-mode-modal" onClick={e => e.stopPropagation()}>
+                <div className="modal-header">
+                    <h3>Execution Mode — {macro.name || `Macro #${macro.id}`}</h3>
+                </div>
+                <div className="modal-body" style={{ padding: '1.25rem 1.5rem' }}>
+                    <p className="macro-mode-intro">Choose how this macro behaves when its key is pressed.</p>
+
+                    <div className="macro-mode-categories">
+                        {categoryButtons.map(cat => (
+                            <div key={cat.id} className="macro-mode-cat-block">
+                                <button
+                                    className={`macro-mode-cat-btn ${category === cat.id ? 'active' : ''}`}
+                                    onClick={() => setCategory(cat.id)}
+                                >
+                                    <span className="macro-mode-cat-icon">{cat.icon}</span>
+                                    <div className="macro-mode-cat-text">
+                                        <span className="macro-mode-cat-label">{cat.label}</span>
+                                        <span className="macro-mode-cat-tagline">{cat.tagline}</span>
+                                    </div>
+                                </button>
+
+                                {/* ── Once sub-options ── */}
+                                {category === 'once' && cat.id === 'once' && (
+                                    <div className="macro-mode-suboptions">
+                                        <div className="macro-mode-sub-title">If pressed again while still running:</div>
+                                        <label className={`macro-mode-radio ${onceMode === 0 ? 'active' : ''}`} onClick={() => setOnceMode(0)}>
+                                            <input type="radio" name="once" checked={onceMode === 0} readOnly />
+                                            <div>
+                                                <div className="macro-mode-radio-label">Queue once</div>
+                                                <div className="macro-mode-radio-desc">Runs one more time after the current execution finishes. Additional presses are ignored.</div>
+                                            </div>
+                                        </label>
+                                        <label className={`macro-mode-radio ${onceMode === 1 ? 'active' : ''}`} onClick={() => setOnceMode(1)}>
+                                            <input type="radio" name="once" checked={onceMode === 1} readOnly />
+                                            <div>
+                                                <div className="macro-mode-radio-label">Ignore</div>
+                                                <div className="macro-mode-radio-desc">Extra presses are completely ignored until the macro finishes running.</div>
+                                            </div>
+                                        </label>
+                                        <label className={`macro-mode-radio ${onceMode === 2 ? 'active' : ''}`} onClick={() => setOnceMode(2)}>
+                                            <input type="radio" name="once" checked={onceMode === 2} readOnly />
+                                            <div>
+                                                <div className="macro-mode-radio-label">Queue up to N times</div>
+                                                <div className="macro-mode-radio-desc">Each press while running adds another queued execution, up to a maximum of N.</div>
+                                            </div>
+                                        </label>
+                                        {onceMode === 2 && (
+                                            <div className="macro-mode-input-row" onClick={e => e.stopPropagation()}>
+                                                <span>Max queued runs:</span>
+                                                <input
+                                                    type="number" min="1" max="255"
+                                                    value={stackMax === 0 ? '' : stackMax}
+                                                    onChange={e => setStackMax(e.target.value === '' ? 0 : parseInt(e.target.value) || 1)}
+                                                    className="macro-mode-input"
+                                                />
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                {/* ── Repeat sub-options ── */}
+                                {category === 'repeat' && cat.id === 'repeat' && (
+                                    <div className="macro-mode-suboptions">
+                                        <div className="macro-mode-sub-title">How to start and stop:</div>
+                                        <label className={`macro-mode-radio ${repeatTrigger === 'hold' ? 'active' : ''}`} onClick={() => setRepeatTrigger('hold')}>
+                                            <input type="radio" name="trigger" checked={repeatTrigger === 'hold'} readOnly />
+                                            <div>
+                                                <div className="macro-mode-radio-label">Hold to repeat</div>
+                                                <div className="macro-mode-radio-desc">The macro loops as long as the key is physically held down. Releasing the key stops it.</div>
+                                            </div>
+                                        </label>
+                                        <label className={`macro-mode-radio ${repeatTrigger === 'toggle' ? 'active' : ''}`} onClick={() => setRepeatTrigger('toggle')}>
+                                            <input type="radio" name="trigger" checked={repeatTrigger === 'toggle'} readOnly />
+                                            <div>
+                                                <div className="macro-mode-radio-label">Toggle</div>
+                                                <div className="macro-mode-radio-desc">Press once to start looping, press again to stop. No need to hold the key.</div>
+                                            </div>
+                                        </label>
+
+                                        <div className="macro-mode-sub-title" style={{ marginTop: '0.75rem' }}>When stopped:</div>
+                                        <label className={`macro-mode-radio ${!repeatCancel ? 'active' : ''}`} onClick={() => setRepeatCancel(false)}>
+                                            <input type="radio" name="cancel" checked={!repeatCancel} readOnly />
+                                            <div>
+                                                <div className="macro-mode-radio-label">Finish current run</div>
+                                                <div className="macro-mode-radio-desc">Completes the macro iteration that's currently executing before stopping. All keystrokes finish cleanly.</div>
+                                            </div>
+                                        </label>
+                                        <label className={`macro-mode-radio ${repeatCancel ? 'active' : ''}`} onClick={() => setRepeatCancel(true)}>
+                                            <input type="radio" name="cancel" checked={repeatCancel} readOnly />
+                                            <div>
+                                                <div className="macro-mode-radio-label">Cancel immediately</div>
+                                                <div className="macro-mode-radio-desc">Stops the macro mid-execution. Any keys currently held by the macro will be released instantly.</div>
+                                            </div>
+                                        </label>
+                                    </div>
+                                )}
+
+                                {/* ── Burst sub-options ── */}
+                                {category === 'burst' && cat.id === 'burst' && (
+                                    <div className="macro-mode-suboptions">
+                                        <div className="macro-mode-sub-title">A single key press will fire the macro this many times in a row:</div>
+                                        <div className="macro-mode-input-row" onClick={e => e.stopPropagation()}>
+                                            <span>Repeat count:</span>
+                                            <input
+                                                type="number" min="1" max="255"
+                                                value={repeatCount === 0 ? '' : repeatCount}
+                                                onChange={e => setRepeatCount(e.target.value === '' ? 0 : parseInt(e.target.value) || 1)}
+                                                className="macro-mode-input"
+                                            />
+                                            <span className="macro-mode-input-suffix">times</span>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+                <div className="modal-footer">
+                    <button className="btn" onClick={onClose}>Cancel</button>
+                    <button className="btn btn-success" onClick={handleSave}>Apply</button>
+                </div>
+            </div>
+        </div>,
+        document.body
+    );
+}
+
 function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEvents }: MacroEditorModalProps) {
     const implodeElements = (els: MacroElement[]): MacroElement[] => {
         const result: MacroElement[] = [];
@@ -81,6 +280,12 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEve
     };
 
     const [name, setName] = useState(initialMacro.name || `Custom Macro #${macros.length + 1}`);
+    const [macroConfig, setMacroConfig] = useState({
+        execMode: initialMacro.execMode,
+        stackMax: initialMacro.stackMax,
+        repeatCount: initialMacro.repeatCount
+    });
+    const [isModeModalOpen, setIsModeModalOpen] = useState(false);
     const [elements, setElements] = useState<MacroElement[]>(implodeElements(initialMacro.elements || []));
     const [isKeyModalOpen, setIsKeyModalOpen] = useState(false);
     const [editingElementIndex, setEditingElementIndex] = useState<number | null>(null);
@@ -90,6 +295,7 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEve
     // Config and Recording State
     const [isRecording, setIsRecording] = useState(false);
     const [recordDelay, setRecordDelay] = useState(true);
+    const [clearOnRecord, setClearOnRecord] = useState(false);
     const [defaultDelay, setDefaultDelay] = useState(100);
     const [showConfigMenu, setShowConfigMenu] = useState(false);
     const configMenuRef = useRef<HTMLDivElement>(null);
@@ -222,12 +428,37 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEve
         };
     }, [isRecording, recordDelay]);
 
+    // Escape key handling
+    useEffect(() => {
+        const handleGlobalKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') {
+                if (isRecording) return;
+
+                if (isKeyModalOpen) {
+                    setIsKeyModalOpen(false);
+                    return;
+                }
+
+                if (isModeModalOpen) {
+                    setIsModeModalOpen(false);
+                    return;
+                }
+
+                onClose();
+            }
+        };
+        window.addEventListener('keydown', handleGlobalKeyDown);
+        return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+    }, [isRecording, isKeyModalOpen, isModeModalOpen, onClose]);
+
     const addKey = () => {
+        if (isRecording) setIsRecording(false);
         setEditingElementIndex(null);
         setIsKeyModalOpen(true);
     };
 
     const handleSelectKey = (key: number) => {
+        if (isRecording) setIsRecording(false);
         if (editingElementIndex !== null) {
             const newElements = [...elements];
             newElements[editingElementIndex] = { type: 'key', key };
@@ -239,16 +470,19 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEve
     };
 
     const removeElement = (index: number) => {
+        if (isRecording) setIsRecording(false);
         setElements(elements.filter((_, i) => i !== index));
     };
 
     const updateSleep = (index: number, duration: number) => {
+        if (isRecording) setIsRecording(false);
         const newElements = [...elements];
         newElements[index] = { type: 'sleep', duration: Math.max(0, duration) };
         setElements(newElements);
     };
 
     const toggleAction = (index: number) => {
+        if (isRecording) setIsRecording(false);
         const el = elements[index];
         if (el.type !== 'key') return;
 
@@ -268,6 +502,7 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEve
     };
 
     const toggleInlineSleep = (index: number) => {
+        if (isRecording) setIsRecording(false);
         const newElements = [...elements];
         const el = newElements[index];
         if (el.type !== 'key') return;
@@ -281,6 +516,7 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEve
     };
 
     const updateInlineSleep = (index: number, duration: number) => {
+        if (isRecording) setIsRecording(false);
         const newElements = [...elements];
         const el = newElements[index];
         if (el.type !== 'key') return;
@@ -289,6 +525,7 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEve
     };
 
     const handleDragStart = (e: React.DragEvent, index: number) => {
+        if (isRecording) setIsRecording(false);
         setDraggedIndex(index);
         e.dataTransfer.effectAllowed = 'move';
         // Required for Firefox
@@ -301,6 +538,7 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEve
     };
 
     const handleDrop = (e: React.DragEvent, targetIndex: number) => {
+        if (isRecording) setIsRecording(false);
         e.preventDefault();
         if (draggedIndex === null || draggedIndex === targetIndex) {
             setDraggedIndex(null);
@@ -332,6 +570,7 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEve
     };
 
     const duplicateElement = (index: number) => {
+        if (isRecording) setIsRecording(false);
         const newElements = [...elements];
         const elementToDuplicate = JSON.parse(JSON.stringify(newElements[index]));
         newElements.splice(index + 1, 0, elementToDuplicate);
@@ -376,7 +615,7 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEve
                         />
                     </div>
                     <div className="macro-editor-actions-header">
-                        <div style={{ display: 'flex', gap: '8px' }}>
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                             <button
                                 className="btn btn-secondary btn-sm"
                                 onClick={addKey}
@@ -392,8 +631,13 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEve
 
                             <button
                                 className="btn btn-sm"
-                                onClick={() => setIsRecording(!isRecording)}
-                                style={{ backgroundColor: 'var(--danger-color)', color: 'white', border: '1px solid var(--danger-color)' }}
+                                onClick={() => {
+                                    if (!isRecording && clearOnRecord) {
+                                        setElements([]);
+                                    }
+                                    setIsRecording(!isRecording);
+                                }}
+                                style={{ backgroundColor: 'var(--danger-color)', color: 'white' }}
                             >
                                 {isRecording ? (
                                     <>
@@ -425,28 +669,75 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEve
                                     </svg>
                                 </button>
                                 {showConfigMenu && (
-                                    <div className="dropdown-menu" style={{ width: '220px', padding: '12px', right: '0', top: '100%' }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-                                            <span style={{ fontSize: '14px', color: 'var(--text-primary)' }}>Record delay</span>
-                                            <input
-                                                type="checkbox"
-                                                checked={recordDelay}
-                                                onChange={(e) => setRecordDelay(e.target.checked)}
-                                                style={{ width: '16px', height: '16px', cursor: 'pointer' }}
-                                            />
+                                    <div className="dropdown-menu config-dropdown">
+                                        <div
+                                            className="config-dropdown-row config-dropdown-toggle"
+                                            onClick={() => setIsModeModalOpen(true)}
+                                            style={{ cursor: 'pointer' }}
+                                        >
+                                            <span>Execution mode</span>
+                                            <span className="macro-mode-badge-icon">
+                                                {getModeBadgeLabel(macroConfig.execMode ?? 0)}
+                                            </span>
                                         </div>
-                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                            <span style={{ fontSize: '14px', color: 'var(--text-primary)' }}>Default delay</span>
-                                            <div style={{ display: 'flex', alignItems: 'center' }}>
+                                        <label className="config-dropdown-row config-dropdown-toggle">
+                                            <span>Record delay</span>
+                                            <div className="toggle-switch">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={recordDelay}
+                                                    onChange={(e) => {
+                                                        if (isRecording) setIsRecording(false);
+                                                        setRecordDelay(e.target.checked);
+                                                    }}
+                                                    className="sr-only"
+                                                />
+                                                <span className="toggle-slider"></span>
+                                            </div>
+                                        </label>
+                                        <label className="config-dropdown-row config-dropdown-toggle">
+                                            <span>Clear on record</span>
+                                            <div className="toggle-switch">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={clearOnRecord}
+                                                    onChange={(e) => {
+                                                        if (isRecording) setIsRecording(false);
+                                                        setClearOnRecord(e.target.checked);
+                                                    }}
+                                                    className="sr-only"
+                                                />
+                                                <span className="toggle-slider"></span>
+                                            </div>
+                                        </label>
+                                        <div className="config-dropdown-row">
+                                            <span>Default delay</span>
+                                            <div className="config-delay-input">
                                                 <input
                                                     type="number"
                                                     value={defaultDelay === 0 ? '' : defaultDelay}
-                                                    onChange={e => setDefaultDelay(e.target.value === '' ? 0 : parseInt(e.target.value) || 0)}
+                                                    onChange={e => {
+                                                        if (isRecording) setIsRecording(false);
+                                                        setDefaultDelay(e.target.value === '' ? 0 : parseInt(e.target.value) || 0);
+                                                    }}
                                                     min="0"
-                                                    style={{ width: '60px', padding: '4px', background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-primary)', borderRadius: '4px', textAlign: 'right' }}
                                                 />
-                                                <span style={{ fontSize: '12px', color: 'var(--text-secondary)', marginLeft: '6px' }}>ms</span>
+                                                <span className="config-delay-suffix">ms</span>
                                             </div>
+                                        </div>
+                                        <div className="config-dropdown-row" style={{ marginTop: '0.5rem' }}>
+                                            <button
+                                                className="btn btn-sm btn-danger"
+                                                style={{ width: '100%', padding: '0.4rem' }}
+                                                onClick={() => {
+                                                    if (window.confirm("Are you sure you want to clear all actions?")) {
+                                                        setElements([]);
+                                                        setShowConfigMenu(false);
+                                                    }
+                                                }}
+                                            >
+                                                Clear all actions
+                                            </button>
                                         </div>
                                     </div>
                                 )}
@@ -458,7 +749,7 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEve
 
                     <div className="macro-elements-list">
                         {elements.length === 0 ? (
-                            <div className="empty-state">No elements added yet.</div>
+                            <div className="empty-state">No actions added yet.</div>
                         ) : (
                             elements.map((el, i) => (
                                 <div
@@ -544,7 +835,7 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEve
                     </div>
                 </div>
                 {isAtEventLimit && (
-                    <div style={{ padding: '8px 16px', background: 'rgba(255,160,0,0.12)', borderBottom: '1px solid rgba(255,160,0,0.3)', color: '#ffb74d', fontSize: '13px', textAlign: 'center' }}>
+                    <div className="limit-warning">
                         Maximum actions reached ({maxEvents})
                     </div>
                 )}
@@ -553,11 +844,25 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEve
                     <button className="btn btn-success" onClick={() => {
                         const exploded = explodeElements(elements);
                         const filteredElements = exploded.filter(el => el.type !== 'sleep' || el.duration > 0);
-                        onSave({ ...initialMacro, name, elements: filteredElements });
+                        onSave({ ...initialMacro, ...macroConfig, name, elements: filteredElements });
                     }}>
                         Save
                     </button>
                 </div>
+
+                {isModeModalOpen && (
+                    <MacroModeModal
+                        macro={{ ...initialMacro, ...macroConfig }}
+                        onSave={(m) => {
+                            setMacroConfig({
+                                execMode: m.execMode,
+                                stackMax: m.stackMax,
+                                repeatCount: m.repeatCount
+                            });
+                        }}
+                        onClose={() => setIsModeModalOpen(false)}
+                    />
+                )}
 
                 {isKeyModalOpen && (
                     <SearchableKeyModal
@@ -575,15 +880,17 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEve
 
 interface MacrosDashboardProps {
     macros: Macro[];
-    macroLimits?: { maxEvents: number; maxMacros: number } | null;
-    onSaveMacro: (macro: Macro) => void;
-    onDeleteMacro: (id: number) => void;
-    onReload?: () => void;
-    onFetchSingleMacro?: (id: number) => Promise<Macro | null>;
+    macroLimits: { maxEvents: number; maxMacros: number } | null;
+    isDeveloperMode: boolean;
+    onSaveMacro: (newMacro: Macro) => Promise<void>;
+    onDeleteMacro: (id: number) => Promise<void>;
+    onReload: () => void;
+    onFetchSingleMacro: (id: number) => Promise<Macro | null>;
 }
 
-export default function MacrosDashboard({ macros, macroLimits, onSaveMacro, onDeleteMacro, onReload, onFetchSingleMacro }: MacrosDashboardProps) {
+export default function MacrosDashboard({ macros, macroLimits, isDeveloperMode, onSaveMacro, onDeleteMacro, onReload, onFetchSingleMacro }: MacrosDashboardProps) {
     const [editingMacro, setEditingMacro] = useState<Macro | null>(null);
+    const [modeMacro, setModeMacro] = useState<Macro | null>(null);
     const [fetchingMacroId, setFetchingMacroId] = useState<number | null>(null);
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const menuRef = useRef<HTMLDivElement>(null);
@@ -615,6 +922,12 @@ export default function MacrosDashboard({ macros, macroLimits, onSaveMacro, onDe
             }
         } else {
             setEditingMacro(macro);
+        }
+    };
+
+    const handleDelete = async (id: number) => {
+        if (window.confirm("Are you sure you want to delete this macro?")) {
+            await onDeleteMacro(id);
         }
     };
 
@@ -654,22 +967,65 @@ export default function MacrosDashboard({ macros, macroLimits, onSaveMacro, onDe
                     <div className="macro-cards-grid">
                         {macros.map(m => (
                             <div key={m.id} className="macro-card glass-panel">
+                                <button
+                                    className="macro-mode-badge-corner"
+                                    onClick={() => setModeMacro(m)}
+                                    title="Change execution mode"
+                                >
+                                    <span className="macro-mode-badge-icon">{getModeBadgeLabel(m.execMode ?? 0)}</span>
+                                </button>
+
                                 <div className="macro-card-header">
-                                    <span className="macro-id">0x{(MACRO_BASE + m.id).toString(16).toUpperCase()}</span>
                                     <h4>{m.name || `Macro #${m.id}`}</h4>
                                 </div>
                                 <div className="macro-card-body">
                                     <div className="macro-preview-sequence">
-                                        {m.elements && m.elements.length > 0 ? (
-                                            <>
-                                                {m.elements.slice(0, 5).map((el, i) => (
-                                                    <span key={i} className="preview-el">
-                                                        {el.type === 'key' ? getKeyName(el.key, macros) : `⌛${el.duration}ms`}
-                                                    </span>
-                                                ))}
-                                                {m.elements.length > 5 && <span className="preview-more">...</span>}
-                                            </>
-                                        ) : (
+                                        {m.elements && m.elements.length > 0 ? (() => {
+                                            // Pre-process: merge a sleep into the preceding key action
+                                            type PItem = { kind: 'key'; action: string; keyCode: number; sleepMs?: number }
+                                                | { kind: 'sleep'; duration: number };
+                                            const items: PItem[] = [];
+                                            for (let j = 0; j < m.elements.length; j++) {
+                                                const el = m.elements[j];
+                                                if (el.type === 'key') {
+                                                    const next = m.elements[j + 1];
+                                                    if (next && next.type === 'sleep') {
+                                                        items.push({ kind: 'key', action: el.action || 'tap', keyCode: el.key, sleepMs: next.duration });
+                                                        j++; // skip the sleep
+                                                    } else {
+                                                        items.push({ kind: 'key', action: el.action || 'tap', keyCode: el.key });
+                                                    }
+                                                } else {
+                                                    items.push({ kind: 'sleep', duration: el.duration });
+                                                }
+                                            }
+                                            const maxShow = 12;
+                                            return (
+                                                <>
+                                                    {items.slice(0, maxShow).map((it, i) => (
+                                                        it.kind === 'key' ? (
+                                                            <span key={i} className={`preview-el${it.action !== 'tap' ? ` preview-el-${it.action}` : ''}`}>
+                                                                <span className="preview-el-action">
+                                                                    {it.action === 'press' ? '↓' : it.action === 'release' ? '↑' : '↕'}
+                                                                </span>
+                                                                {getKeyName(it.keyCode, macros)}
+                                                                {it.sleepMs !== undefined && (
+                                                                    <span className="preview-el-sleep">· {it.sleepMs}</span>
+                                                                )}
+                                                            </span>
+                                                        ) : (
+                                                            <span key={i} className="preview-el preview-sleep">
+                                                                <span className="preview-sleep-icon">🌙</span>
+                                                                <span className="preview-sleep-val">{it.duration}</span>
+                                                            </span>
+                                                        )
+                                                    ))}
+                                                    {items.length > maxShow && (
+                                                        <span className="preview-more">+{items.length - maxShow}</span>
+                                                    )}
+                                                </>
+                                            );
+                                        })() : (
                                             <span className="preview-more" style={{ opacity: 0.5, fontStyle: 'italic' }}>
                                                 Elements hidden (Click Edit to view)
                                             </span>
@@ -680,13 +1036,29 @@ export default function MacrosDashboard({ macros, macroLimits, onSaveMacro, onDe
                                     <button className="btn btn-sm" onClick={() => handleEdit(m)} disabled={fetchingMacroId !== null}>
                                         {fetchingMacroId === m.id ? 'Loading...' : 'Edit'}
                                     </button>
-                                    <button className="btn btn-sm btn-danger" onClick={() => onDeleteMacro(m.id)}>Delete</button>
+                                    <button className="btn btn-sm btn-danger" onClick={() => handleDelete(m.id)}>Delete</button>
+
+                                    {isDeveloperMode && (
+                                        <span className="macro-id-dev">
+                                            ID: 0x{(MACRO_BASE + m.id).toString(16).toUpperCase()}
+                                        </span>
+                                    )}
                                 </div>
                             </div>
                         ))}
                     </div>
                 )}
             </div>
+
+            {modeMacro && (
+                <MacroModeModal
+                    macro={modeMacro}
+                    onSave={(m) => {
+                        onSaveMacro(m);
+                    }}
+                    onClose={() => setModeMacro(null)}
+                />
+            )}
 
             {editingMacro && (
                 <MacroEditorModal

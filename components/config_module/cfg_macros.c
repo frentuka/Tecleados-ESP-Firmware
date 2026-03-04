@@ -35,9 +35,15 @@ bool macros_deserialize(cJSON *root, void *out_struct) {
     cJSON *id = cJSON_GetObjectItem(macro_item, "id");
     cJSON *name = cJSON_GetObjectItem(macro_item, "name");
     cJSON *elements = cJSON_GetObjectItem(macro_item, "elements");
+    cJSON *exec_mode = cJSON_GetObjectItem(macro_item, "execMode");
+    cJSON *stack_max = cJSON_GetObjectItem(macro_item, "stackMax");
+    cJSON *repeat_count = cJSON_GetObjectItem(macro_item, "repeatCount");
     
     if (cJSON_IsNumber(id)) m->id = (uint16_t)id->valueint;
     if (cJSON_IsString(name)) strncpy(m->name, name->valuestring, sizeof(m->name) - 1);
+    m->exec_mode = cJSON_IsNumber(exec_mode) ? (uint8_t)exec_mode->valueint : 0;
+    m->stack_max = cJSON_IsNumber(stack_max) ? (uint8_t)stack_max->valueint : 1;
+    m->repeat_count = cJSON_IsNumber(repeat_count) ? (uint8_t)repeat_count->valueint : 1;
     
     if (cJSON_IsArray(elements)) {
       cJSON *el;
@@ -86,6 +92,13 @@ cJSON *macros_serialize(const void *in_struct) {
     cJSON *macro_item = cJSON_CreateObject();
     cJSON_AddNumberToObject(macro_item, "id", m->id);
     cJSON_AddStringToObject(macro_item, "name", m->name);
+    cJSON_AddNumberToObject(macro_item, "execMode", m->exec_mode);
+    if (m->exec_mode == MACRO_EXEC_ONCE_STACK_N) {
+      cJSON_AddNumberToObject(macro_item, "stackMax", m->stack_max);
+    }
+    if (m->exec_mode == MACRO_EXEC_BURST_N) {
+      cJSON_AddNumberToObject(macro_item, "repeatCount", m->repeat_count);
+    }
     
     cJSON *elements = cJSON_CreateArray();
     for (size_t j = 0; j < m->event_count; j++) {
@@ -124,6 +137,13 @@ cJSON *macros_serialize_outline(const cfg_macro_list_t *list) {
     cJSON *macro_item = cJSON_CreateObject();
     cJSON_AddNumberToObject(macro_item, "id", m->id);
     cJSON_AddStringToObject(macro_item, "name", m->name);
+    cJSON_AddNumberToObject(macro_item, "execMode", m->exec_mode);
+    if (m->exec_mode == MACRO_EXEC_ONCE_STACK_N) {
+      cJSON_AddNumberToObject(macro_item, "stackMax", m->stack_max);
+    }
+    if (m->exec_mode == MACRO_EXEC_BURST_N) {
+      cJSON_AddNumberToObject(macro_item, "repeatCount", m->repeat_count);
+    }
     // Note: No elements array is added here.
     cJSON_AddItemToArray(macros_arr, macro_item);
   }
@@ -138,6 +158,13 @@ cJSON *macros_serialize_single(uint16_t id, const cfg_macro_list_t *list) {
       cJSON *macro_item = cJSON_CreateObject();
       cJSON_AddNumberToObject(macro_item, "id", m->id);
       cJSON_AddStringToObject(macro_item, "name", m->name);
+      cJSON_AddNumberToObject(macro_item, "execMode", m->exec_mode);
+      if (m->exec_mode == MACRO_EXEC_ONCE_STACK_N) {
+        cJSON_AddNumberToObject(macro_item, "stackMax", m->stack_max);
+      }
+      if (m->exec_mode == MACRO_EXEC_BURST_N) {
+        cJSON_AddNumberToObject(macro_item, "repeatCount", m->repeat_count);
+      }
 
       cJSON *elements = cJSON_CreateArray();
       for (size_t j = 0; j < m->event_count; j++) {
@@ -186,10 +213,16 @@ static bool deserialize_single_macro(cJSON *macro_item, cfg_macro_t *m) {
   cJSON *id = cJSON_GetObjectItem(macro_item, "id");
   cJSON *name = cJSON_GetObjectItem(macro_item, "name");
   cJSON *elements = cJSON_GetObjectItem(macro_item, "elements");
+  cJSON *exec_mode = cJSON_GetObjectItem(macro_item, "execMode");
+  cJSON *stack_max = cJSON_GetObjectItem(macro_item, "stackMax");
+  cJSON *repeat_count = cJSON_GetObjectItem(macro_item, "repeatCount");
   
   if (!cJSON_IsNumber(id)) return false;
   m->id = (uint16_t)id->valueint;
   if (cJSON_IsString(name)) strncpy(m->name, name->valuestring, sizeof(m->name) - 1);
+  m->exec_mode = cJSON_IsNumber(exec_mode) ? (uint8_t)exec_mode->valueint : 0;
+  m->stack_max = cJSON_IsNumber(stack_max) ? (uint8_t)stack_max->valueint : 1;
+  m->repeat_count = cJSON_IsNumber(repeat_count) ? (uint8_t)repeat_count->valueint : 1;
   
   if (cJSON_IsArray(elements)) {
     cJSON *el;

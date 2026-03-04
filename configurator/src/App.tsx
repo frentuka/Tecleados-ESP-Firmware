@@ -38,6 +38,9 @@ export interface Macro {
   id: number;
   name: string;
   elements: MacroElement[];
+  execMode?: number;
+  stackMax?: number;
+  repeatCount?: number;
 }
 
 interface LogMessage {
@@ -496,6 +499,7 @@ function App() {
             <MacrosDashboard
               macros={macros}
               macroLimits={macroLimits}
+              isDeveloperMode={isDeveloperMode}
               onSaveMacro={handleSaveMacro}
               onDeleteMacro={handleDeleteMacro}
               onReload={fetchMacros}
