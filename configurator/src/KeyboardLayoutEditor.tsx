@@ -222,6 +222,9 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
     const [hasChanges, setHasChanges] = useState<boolean[]>([false, false, false, false]);
     const [pressedCodes, setPressedCodes] = useState<Set<number>>(new Set());
     const [isMenuOpen, setIsMenuOpen] = useState(false);
+    const [isKeyTestMode, setIsKeyTestMode] = useState(false);
+    // Track virtually held keys by string key `${row}-${col}`
+    const [heldTestKeys, setHeldTestKeys] = useState<Set<string>>(new Set());
     const menuRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -301,6 +304,29 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
         e.target.value = '';
     };
 
+    // ── Key Test Mode Cleanup ──
+    const exitKeyTestMode = useCallback(async () => {
+        setIsKeyTestMode(false);
+        setHeldTestKeys(new Set());
+        if (isConnected) {
+            await hidService.clearInjectedKeys();
+            onLogRef.current('Key Test Mode disabled. Cleared all injected keys.');
+        }
+    }, [isConnected]);
+
+    useEffect(() => {
+        // Clear injected keys on unmount or disconnect
+        if (!isConnected && isKeyTestMode) {
+            exitKeyTestMode();
+        }
+        return () => {
+            // We can't safely async await on unmount without hanging, but we do our best
+            if (isKeyTestMode) {
+                hidService.clearInjectedKeys().catch(() => { });
+            }
+        };
+    }, [isConnected, isKeyTestMode, exitKeyTestMode]);
+
 
     // ── Global Key Listeners ──
     useEffect(() => {
@@ -331,6 +357,14 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
         };
 
         const handleKeyDown = (e: KeyboardEvent) => {
+            if (isKeyTestMode) {
+                // Prevent the browser from scrolling when we are testing keys like Space and PageDown
+                const navKeys = ['Space', 'PageUp', 'PageDown', 'Home', 'End', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab', 'Enter'];
+                if (navKeys.includes(e.code)) {
+                    e.preventDefault();
+                }
+            }
+
             const hid = BROWSER_CODE_TO_HID[e.code];
             if (hid !== undefined) {
                 setPressedCodes(prev => {
@@ -344,6 +378,13 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
         };
 
         const handleKeyUp = (e: KeyboardEvent) => {
+            if (isKeyTestMode) {
+                const navKeys = ['Space', 'PageUp', 'PageDown', 'Home', 'End', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab', 'Enter'];
+                if (navKeys.includes(e.code)) {
+                    e.preventDefault();
+                }
+            }
+
             const hid = BROWSER_CODE_TO_HID[e.code];
             if (hid !== undefined) {
                 setPressedCodes(prev => {
@@ -373,22 +414,22 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
             syncModifiers(e as unknown as KeyboardEvent);
         };
 
-        window.addEventListener('keydown', handleKeyDown);
-        window.addEventListener('keyup', handleKeyUp);
+        window.addEventListener('keydown', handleKeyDown, { capture: true });
+        window.addEventListener('keyup', handleKeyUp, { capture: true });
         window.addEventListener('blur', handleBlur);
         window.addEventListener('focus', handleFocus);
         window.addEventListener('mousemove', handleMouseMove);
         document.addEventListener('visibilitychange', handleVisibilityChange);
 
         return () => {
-            window.removeEventListener('keydown', handleKeyDown);
-            window.removeEventListener('keyup', handleKeyUp);
+            window.removeEventListener('keydown', handleKeyDown, { capture: true });
+            window.removeEventListener('keyup', handleKeyUp, { capture: true });
             window.removeEventListener('blur', handleBlur);
             window.removeEventListener('focus', handleFocus);
             window.removeEventListener('mousemove', handleMouseMove);
             document.removeEventListener('visibilitychange', handleVisibilityChange);
         };
-    }, []);
+    }, [isKeyTestMode]);
 
     // ── Click outside menu to close ──
     useEffect(() => {
@@ -571,6 +612,25 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                     </button>
                     {isMenuOpen && (
                         <div className="dropdown-menu">
+                            {isDeveloperMode && (
+                                <button
+                                    className="dropdown-item"
+                                    onClick={() => {
+                                        setIsMenuOpen(false);
+                                        if (isKeyTestMode) {
+                                            exitKeyTestMode();
+                                        } else {
+                                            setIsKeyTestMode(true);
+                                            onLogRef.current('Key Test Mode enabled.');
+                                        }
+                                    }}
+                                >
+                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                                        <path d="M21 2H3c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-9 15H7v-2h5v2zm4-4H7v-2h9v2zm0-4H7V7h9v2z" />
+                                    </svg>
+                                    {isKeyTestMode ? 'Exit Key Test Mode' : 'Enter Key Test Mode'}
+                                </button>
+                            )}
                             <button className="dropdown-item" onClick={() => { fetchLayer(activeLayer); setIsMenuOpen(false); }}>
                                 <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
                                     <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
@@ -752,22 +812,74 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                                 // Robust access to layer data with fallback for large physical layouts
                                                 const rowData = currentLayer?.[pk.row];
                                                 const code = (rowData && pk.col < rowData.length) ? rowData[pk.col] : 0;
-                                                const isPressed = pressedCodes.has(code);
+                                                const physKeyId = `${pk.row}-${pk.col}`;
+                                                const isPressed = pressedCodes.has(code) || heldTestKeys.has(physKeyId);
 
                                                 return (
                                                     <button
-                                                        key={`${pk.row}-${pk.col}`}
+                                                        key={physKeyId}
                                                         className={`keyboard-key ${getKeyClass(code)} ${selectedKey?.row === pk.row && selectedKey?.col === pk.col ? 'key-selected' : ''} ${isPressed ? 'key-pressed' : ''}`}
                                                         style={{
                                                             left: `${pk.x * 3.2}rem`,
                                                             top: `${pk.y * 3.2}rem`,
                                                             width: `${pk.w * 3.2 - 0.25}rem`,
                                                             height: `${pk.h * 3.2 - 0.25}rem`,
-                                                            position: 'absolute'
+                                                            position: 'absolute',
+                                                            cursor: isKeyTestMode ? 'crosshair' : 'pointer'
+                                                        }}
+                                                        onMouseDown={(e) => {
+                                                            if (isKeyTestMode) {
+                                                                e.preventDefault();
+                                                                if (e.button === 0) { // Left click = tap 
+                                                                    hidService.sendInjectKey(pk.row, pk.col, true);
+                                                                    setHeldTestKeys(prev => new Set(prev).add(physKeyId));
+                                                                } else if (e.button === 2) { // Right click = toggle hold
+                                                                    setHeldTestKeys(prev => {
+                                                                        const next = new Set(prev);
+                                                                        if (next.has(physKeyId)) {
+                                                                            next.delete(physKeyId);
+                                                                            hidService.sendInjectKey(pk.row, pk.col, false);
+                                                                        } else {
+                                                                            next.add(physKeyId);
+                                                                            hidService.sendInjectKey(pk.row, pk.col, true);
+                                                                        }
+                                                                        return next;
+                                                                    });
+                                                                }
+                                                            }
+                                                        }}
+                                                        onMouseUp={(e) => {
+                                                            if (isKeyTestMode && e.button === 0) { // Release left click
+                                                                e.preventDefault();
+                                                                hidService.sendInjectKey(pk.row, pk.col, false);
+                                                                setHeldTestKeys(prev => {
+                                                                    const next = new Set(prev);
+                                                                    next.delete(physKeyId);
+                                                                    return next;
+                                                                });
+                                                            }
+                                                        }}
+                                                        onMouseLeave={(e) => {
+                                                            if (isKeyTestMode && e.buttons === 1) { // Left click held but dragged out
+                                                                e.preventDefault();
+                                                                hidService.sendInjectKey(pk.row, pk.col, false);
+                                                                setHeldTestKeys(prev => {
+                                                                    const next = new Set(prev);
+                                                                    next.delete(physKeyId);
+                                                                    return next;
+                                                                });
+                                                            }
+                                                        }}
+                                                        onContextMenu={(e) => {
+                                                            if (isKeyTestMode) {
+                                                                e.preventDefault(); // Prevent context menu during test mode right-clicks
+                                                            }
                                                         }}
                                                         onClick={() => {
-                                                            setSelectedKey({ row: pk.row, col: pk.col });
-                                                            setIsModalOpen(true);
+                                                            if (!isKeyTestMode) {
+                                                                setSelectedKey({ row: pk.row, col: pk.col });
+                                                                setIsModalOpen(true);
+                                                            }
                                                         }}
                                                         title={`[${pk.row},${pk.col}] = 0x${code.toString(16).toUpperCase().padStart(4, '0')}`}
                                                     >

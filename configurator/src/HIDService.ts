@@ -35,6 +35,10 @@ export const CFG_KEY_MACROS = 0x07;
 export const CFG_KEY_MACRO_LIMITS = 0x08;
 export const CFG_KEY_MACRO_SINGLE = 0x09;
 
+// System Commands
+export const SYS_CMD_INJECT_KEY = 0x01;
+export const SYS_CMD_CLEAR_INJECTED = 0x02;
+
 export const MACRO_CODE_BASE = 0x4000;
 
 export type LogCallback = (logData: Uint8Array) => void;
@@ -416,6 +420,26 @@ class HIDService {
 
         this.isProcessingQueue = false;
         this.processNextCommand(); // process next in queue
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // ── System API (Key Test Mode) ──
+    // ══════════════════════════════════════════════════════════
+
+    public async sendInjectKey(row: number, col: number, state: boolean): Promise<boolean> {
+        if (!this.isConnected()) return false;
+
+        // Payload: [CMD, row, col, state]
+        const payload = new Uint8Array([MODULE_SYSTEM, SYS_CMD_INJECT_KEY, row, col, state ? 1 : 0]);
+        return this.sendCustomCommReport(payload);
+    }
+
+    public async clearInjectedKeys(): Promise<boolean> {
+        if (!this.isConnected()) return false;
+
+        // Payload: [CMD]
+        const payload = new Uint8Array([MODULE_SYSTEM, SYS_CMD_CLEAR_INJECTED]);
+        return this.sendCustomCommReport(payload);
     }
 
     // ══════════════════════════════════════════════════════════
