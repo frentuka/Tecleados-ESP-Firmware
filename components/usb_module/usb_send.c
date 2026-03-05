@@ -35,12 +35,26 @@ bool build_send_single_msg_packet(uint8_t flags, uint16_t rem, uint8_t payload_l
 bool send_single_packet(uint8_t *packet, uint16_t packet_len)
 {
     usb_crc_prepare_packet(packet);
+
+    // Wait until HID endpoint is ready for a new report (max 100ms timeout)
+    // 1 tick delay = 1ms or 10ms depending on FreeRTOS config
+    uint32_t wait_timeout_ticks = pdMS_TO_TICKS(100);
+    if (wait_timeout_ticks == 0) wait_timeout_ticks = 1; // At least 1 tick
+    
+    TickType_t start_tick = xTaskGetTickCount();
+    
+    while (!tud_hid_n_ready(ITF_NUM_HID_COMM)) {
+        if (xTaskGetTickCount() - start_tick > wait_timeout_ticks) {
+            ESP_LOGE(TAG, "HID endpoint not ready for over 100ms (timeout).");
+            return false;
+        }
+        vTaskDelay(1); // Yield to other tasks for 1 tick
+    }
+
     bool result = tud_hid_n_report(ITF_NUM_HID_COMM, REPORT_ID_COMM, packet, packet_len);
 
-    for (uint8_t i = 1; !result && i < PACKET_SEND_MAX_ATTEMPTS; i++) {
-        ESP_LOGE(TAG, "Failed report send attempt...");
-        vTaskDelay(pdMS_TO_TICKS(PACKET_SEND_ATTEMPT_DELAY_MS));
-        result = tud_hid_n_report(ITF_NUM_HID_COMM, REPORT_ID_COMM, packet, packet_len);
+    if (!result) {
+        ESP_LOGE(TAG, "Failed report send attempt despite HID ready check.");
     }
 
     // if (result) ESP_LOGI(TAG, "Report sent successfully.");

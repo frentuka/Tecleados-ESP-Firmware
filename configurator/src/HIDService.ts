@@ -10,6 +10,10 @@ export const PAYLOAD_FLAG_LAST = 0x20;
 export const PAYLOAD_FLAG_ACK = 0x10;
 export const PAYLOAD_FLAG_NAK = 0x08;
 
+// Blast reconcile (combined flag values unused in normal flow)
+export const PAYLOAD_FLAG_STATUS_REQ = 0x50; // MID|ACK
+export const PAYLOAD_FLAG_BITMAP = 0x48;     // MID|NAK
+
 // Process flags
 export const PAYLOAD_FLAG_OK = 0x04;
 export const PAYLOAD_FLAG_ERR = 0x02;
@@ -111,6 +115,18 @@ class HIDService {
         jsonText: string;
     } | null = null;
     private pendingResolve: ((resp: CommandResponse | null) => void) | null = null;
+
+    // ── Generic flag-based response waiting ──
+    private flagWaiters: Map<number, (msg: { flags: number; remaining: number; payloadLen: number; payload: Uint8Array }) => void> = new Map();
+
+    // ── Blast receive state (for ESP→Website direction) ──
+    private blastRx = {
+        active: false,
+        totalPackets: 0,
+        buffer: null as Uint8Array | null,
+        bitmap: null as Uint8Array | null,
+        payloadLens: null as Uint8Array | null,
+    };
 
     constructor() {
         this.handleInputReport = this.handleInputReport.bind(this);
@@ -317,32 +333,203 @@ class HIDService {
         }
     }
 
-    /** Send a raw multi-packet payload (splits into 58-byte chunks with FIRST/MID/LAST flags) */
+    // ══════════════════════════════════════════════════════════
+    // ── Blast + Reconcile helpers ──
+    // ══════════════════════════════════════════════════════════
+
+    /** Wait for a packet with a specific flag value. Returns the parsed packet. */
+    private waitForFlag(flag: number, timeoutMs: number = 2000): Promise<{ flags: number; remaining: number; payloadLen: number; payload: Uint8Array } | null> {
+        return new Promise((resolve) => {
+            const timer = setTimeout(() => {
+                this.flagWaiters.delete(flag);
+                resolve(null);
+            }, timeoutMs);
+
+            this.flagWaiters.set(flag, (msg) => {
+                clearTimeout(timer);
+                this.flagWaiters.delete(flag);
+                resolve(msg);
+            });
+        });
+    }
+
+    /** Build and send a packet by index from a data buffer */
+    private async sendPacketByIndex(data: Uint8Array, index: number, totalPackets: number): Promise<boolean> {
+        const maxPayloadSize = 58;
+        const offset = index * maxPayloadSize;
+        const chunk = data.slice(offset, offset + maxPayloadSize);
+        const remaining = totalPackets - 1 - index;
+
+        let flags = 0;
+        if (index === 0) flags = PAYLOAD_FLAG_FIRST;
+        else if (index === totalPackets - 1) flags = PAYLOAD_FLAG_LAST;
+        else flags = PAYLOAD_FLAG_MID;
+
+        const reportData = this.buildCommPacket(flags, remaining, chunk);
+        try {
+            await this.device!.sendReport(COMM_REPORT_ID, reportData);
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    /** Parse a bitmap response to find missing packet indices */
+    private findMissingFromBitmap(bitmap: Uint8Array, totalPackets: number, skipFirst: boolean, skipLast: boolean): number[] {
+        const missing: number[] = [];
+        for (let i = 0; i < totalPackets; i++) {
+            if (skipFirst && i === 0) continue;
+            if (skipLast && i === totalPackets - 1) continue;
+            const byteIdx = Math.floor(i / 8);
+            const bitIdx = i % 8;
+            if (byteIdx >= bitmap.length || !((bitmap[byteIdx] >> bitIdx) & 1)) {
+                missing.push(i);
+            }
+        }
+        return missing;
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // ── Blast receive (ESP → Website) helpers ──
+    // ══════════════════════════════════════════════════════════
+
+    private blastRxReset(): void {
+        this.blastRx = {
+            active: false,
+            totalPackets: 0,
+            buffer: null,
+            bitmap: null,
+            payloadLens: null,
+        };
+    }
+
+    private blastRxReceivePacket(index: number, payload: Uint8Array, payloadLen: number): void {
+        if (!this.blastRx.active || !this.blastRx.buffer || !this.blastRx.bitmap || !this.blastRx.payloadLens) return;
+        const offset = index * 58;
+        this.blastRx.buffer.set(payload.slice(0, payloadLen), offset);
+        this.blastRx.payloadLens[index] = payloadLen;
+        // Set bitmap bit
+        const byteIdx = Math.floor(index / 8);
+        const bitIdx = index % 8;
+        this.blastRx.bitmap[byteIdx] |= (1 << bitIdx);
+    }
+
+    private blastRxBuildBitmapPacket(): Uint8Array {
+        const bitmapBytes = this.blastRx.bitmap || new Uint8Array(0);
+        return this.buildCommPacket(PAYLOAD_FLAG_BITMAP, 0, bitmapBytes);
+    }
+
+    private blastRxAssemblePayload(): Uint8Array {
+        if (!this.blastRx.buffer || !this.blastRx.payloadLens) return new Uint8Array(0);
+        let totalLen = 0;
+        for (let i = 0; i < this.blastRx.totalPackets; i++) {
+            totalLen += this.blastRx.payloadLens[i];
+        }
+        // Data is already at correct offsets in buffer, but need to compact
+        // since last packet may be shorter than 58
+        const result = new Uint8Array(totalLen);
+        let writePos = 0;
+        for (let i = 0; i < this.blastRx.totalPackets; i++) {
+            const len = this.blastRx.payloadLens[i];
+            const offset = i * 58;
+            result.set(this.blastRx.buffer.slice(offset, offset + len), writePos);
+            writePos += len;
+        }
+        return result;
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // ── Send payload (Website → ESP) with Blast + Reconcile ──
+    // ══════════════════════════════════════════════════════════
+
+    /** Send a raw multi-packet payload using blast + reconcile protocol */
     public async sendCustomCommReport(data: Uint8Array): Promise<boolean> {
         if (!this.isConnected()) return false;
         try {
             const maxPayloadSize = 58;
             const totalPackets = Math.ceil(data.length / maxPayloadSize) || 1;
 
-            const promises: Promise<void>[] = [];
-
-            for (let i = 0; i < totalPackets; i++) {
-                let flags = 0;
-                if (i === 0) flags |= PAYLOAD_FLAG_FIRST;
-                if (i === totalPackets - 1) flags |= PAYLOAD_FLAG_LAST;
-                if (i > 0 && i < totalPackets - 1) flags |= PAYLOAD_FLAG_MID;
-
-                const remaining = totalPackets - 1 - i;
-                const chunk = data.slice(i * maxPayloadSize, (i + 1) * maxPayloadSize);
-
-                const reportData = this.buildCommPacket(flags, remaining, chunk);
-                promises.push(this.device!.sendReport(COMM_REPORT_ID, reportData));
+            // Single packet: legacy path (FIRST|LAST)
+            if (totalPackets === 1) {
+                const flags = PAYLOAD_FLAG_FIRST | PAYLOAD_FLAG_LAST;
+                const reportData = this.buildCommPacket(flags, 0, data);
+                await this.device!.sendReport(COMM_REPORT_ID, reportData);
+                return true;
             }
 
-            await Promise.all(promises);
+            console.log(`[Blast TX] Starting: ${totalPackets} packets for ${data.length} bytes`);
+
+            // Phase 1: Handshake — send FIRST, wait for ACK
+            const ackPromise = this.waitForFlag(PAYLOAD_FLAG_ACK, 3000);
+            if (!await this.sendPacketByIndex(data, 0, totalPackets)) {
+                console.error('[Blast TX] Failed to send FIRST packet');
+                return false;
+            }
+
+            const ackResp = await ackPromise;
+            if (!ackResp) {
+                console.error('[Blast TX] Handshake ACK timeout');
+                return false;
+            }
+            console.log('[Blast TX] Handshake ACK received');
+
+            // Phase 2: Blast — send all MID packets (indices 1..N-2)
+            for (let i = 1; i < totalPackets - 1; i++) {
+                if (!await this.sendPacketByIndex(data, i, totalPackets)) {
+                    console.error(`[Blast TX] Failed to send MID packet ${i}`);
+                    return false;
+                }
+            }
+            console.log(`[Blast TX] Blasted ${totalPackets - 2} MID packets`);
+
+            // Phase 3: Reconcile — send STATUS_REQ, receive BITMAP, retransmit gaps
+            const MAX_RECONCILE_ROUNDS = 5;
+            for (let round = 0; round < MAX_RECONCILE_ROUNDS; round++) {
+                // Send STATUS_REQ
+                const bitmapPromise = this.waitForFlag(PAYLOAD_FLAG_BITMAP, 3000);
+                const statusPacket = this.buildCommPacket(PAYLOAD_FLAG_STATUS_REQ, 0, new Uint8Array(0));
+                await this.device!.sendReport(COMM_REPORT_ID, statusPacket);
+
+                const bitmapResp = await bitmapPromise;
+                if (!bitmapResp) {
+                    console.error(`[Blast TX] Bitmap response timeout (round ${round})`);
+                    if (round === MAX_RECONCILE_ROUNDS - 1) return false;
+                    continue;
+                }
+
+                // Check missing packets (skip index 0 = FIRST, skip last = LAST)
+                const missing = this.findMissingFromBitmap(bitmapResp.payload, totalPackets, true, true);
+
+                if (missing.length === 0) {
+                    console.log(`[Blast TX] All MID packets confirmed (round ${round})`);
+                    break;
+                }
+
+                console.log(`[Blast TX] Round ${round}: retransmitting ${missing.length} packets: [${missing.join(',')}]`);
+                for (const idx of missing) {
+                    if (!await this.sendPacketByIndex(data, idx, totalPackets)) {
+                        console.error(`[Blast TX] Failed to retransmit packet ${idx}`);
+                        return false;
+                    }
+                }
+
+                if (round === MAX_RECONCILE_ROUNDS - 1) {
+                    console.error('[Blast TX] Max reconcile rounds reached');
+                    return false;
+                }
+            }
+
+            // Phase 4: Commit — send LAST packet
+            console.log('[Blast TX] Sending LAST packet (commit)');
+            if (!await this.sendPacketByIndex(data, totalPackets - 1, totalPackets)) {
+                console.error('[Blast TX] Failed to send LAST packet');
+                return false;
+            }
+
+            console.log('[Blast TX] Complete');
             return true;
         } catch (error) {
-            console.error('Error sending custom COMM report:', error);
+            console.error('Error in blast send:', error);
             return false;
         }
     }
@@ -457,47 +644,94 @@ class HIDService {
         if (data.length < 63) return;
 
         const flags = data[0];
+        const remaining = data[1] | (data[2] << 8);
         const safeLen = Math.min(data[3], 58);
         const payloadBytes = data.slice(4, 4 + safeLen);
 
-        // Skip ACK/NAK/OK/ERR/ABORT response packets (those are protocol handshakes)
+        // ── Check flag waiters (blast protocol responses) ──
+        // Check exact flag match first (for BITMAP, STATUS_REQ)
+        if (this.flagWaiters.has(flags)) {
+            this.flagWaiters.get(flags)!({ flags, remaining, payloadLen: safeLen, payload: payloadBytes });
+            return;
+        }
+        // Check partial flag match for ACK (ACK may be combined with OK)
+        if ((flags & PAYLOAD_FLAG_ACK) && this.flagWaiters.has(PAYLOAD_FLAG_ACK)) {
+            this.flagWaiters.get(PAYLOAD_FLAG_ACK)!({ flags, remaining, payloadLen: safeLen, payload: payloadBytes });
+            return;
+        }
+
+        // ── Blast reconcile: STATUS_REQ from ESP (ESP asking for our bitmap) ──
+        if (flags === PAYLOAD_FLAG_STATUS_REQ && this.blastRx.active) {
+            console.log('[Blast RX] STATUS_REQ received, sending bitmap');
+            const bitmapPacket = this.blastRxBuildBitmapPacket();
+            this.device?.sendReport(COMM_REPORT_ID, bitmapPacket);
+            return;
+        }
+
+        // ── Skip pure ACK/NAK/OK/ERR/ABORT when not caught by flag waiters ──
         const isResponsePacket = (flags & PAYLOAD_FLAG_ACK) || (flags & PAYLOAD_FLAG_NAK) ||
             (flags & PAYLOAD_FLAG_OK) || (flags & PAYLOAD_FLAG_ERR) || (flags & PAYLOAD_FLAG_ABORT);
         if (isResponsePacket) return;
 
-        // ── Multi-packet reassembly ──
-        // Response wire format: [module(1), cmd(1), keyId(1), status(4), json...]
-        // No payload_len field — transport provides total length
-        if ((flags & PAYLOAD_FLAG_FIRST) && safeLen >= 7) {
-            // First packet: parse header
+        // ── Blast receive mode: ESP → Website multi-packet ──
+        if ((flags & PAYLOAD_FLAG_FIRST) && remaining > 0 && safeLen >= 7) {
+            // Enter blast receive mode 
+            const totalPackets = remaining + 1;
+            console.log(`[Blast RX] Entering blast mode: ${totalPackets} packets`);
+            this.blastRx.active = true;
+            this.blastRx.totalPackets = totalPackets;
+            this.blastRx.buffer = new Uint8Array(totalPackets * 58);
+            this.blastRx.bitmap = new Uint8Array(Math.ceil(totalPackets / 8));
+            this.blastRx.payloadLens = new Uint8Array(totalPackets);
+
+            // Store FIRST packet
+            this.blastRxReceivePacket(0, payloadBytes, safeLen);
+
+            // Send ACK (handshake)
+            this.sendResponse(PAYLOAD_FLAG_ACK);
+            return;
+        }
+
+        // Blast RX: MID packets (silent absorb)
+        if (this.blastRx.active && (flags & PAYLOAD_FLAG_MID)) {
+            const index = this.blastRx.totalPackets - 1 - remaining;
+            this.blastRxReceivePacket(index, payloadBytes, safeLen);
+            return;
+        }
+
+        // Blast RX: LAST packet (commit)
+        if (this.blastRx.active && (flags & PAYLOAD_FLAG_LAST)) {
+            const lastIndex = this.blastRx.totalPackets - 1;
+            this.blastRxReceivePacket(lastIndex, payloadBytes, safeLen);
+
+            // Assemble full payload and process
+            const fullPayload = this.blastRxAssemblePayload();
+            console.log(`[Blast RX] Committed: ${this.blastRx.totalPackets} packets, ${fullPayload.length} bytes`);
+
+            // Process assembled response (same as the original multi-packet handling)
+            if (fullPayload.length >= 7) {
+                const module = fullPayload[0];
+                const cmd = fullPayload[1];
+                const keyId = fullPayload[2];
+                const status = (fullPayload[3] | (fullPayload[4] << 8) | (fullPayload[5] << 16) | (fullPayload[6] << 24));
+                const jsonText = new TextDecoder().decode(fullPayload.slice(7)).replace(/\0/g, '');
+                this.pendingResponse = { module, cmd, keyId, status, jsonText };
+                this.sendAckAndFinish(true);
+            }
+
+            this.blastRxReset();
+            return;
+        }
+
+        // ── Legacy single-packet response (FIRST|LAST with remaining=0) ──
+        if ((flags & PAYLOAD_FLAG_FIRST) && (flags & PAYLOAD_FLAG_LAST) && safeLen >= 7) {
             const module = payloadBytes[0];
             const cmd = payloadBytes[1];
             const keyId = payloadBytes[2];
-            // payloadBytes[3..6] = esp_err_t status (4 bytes, little-endian)
             const status = (payloadBytes[3] | (payloadBytes[4] << 8) | (payloadBytes[5] << 16) | (payloadBytes[6] << 24));
             const jsonText = new TextDecoder().decode(payloadBytes.slice(7)).replace(/\0/g, '');
-
             this.pendingResponse = { module, cmd, keyId, status, jsonText };
-
-            if (flags & PAYLOAD_FLAG_LAST) {
-                // Single-packet response: send ACK|OK then resolve
-                this.sendAckAndFinish(true);
-            } else {
-                // More packets coming: send ACK
-                this.sendResponse(PAYLOAD_FLAG_ACK);
-            }
-        } else if (this.pendingResponse && !(flags & PAYLOAD_FLAG_FIRST)) {
-            // Continuation packet: append text
-            const jsonText = new TextDecoder().decode(payloadBytes).replace(/\0/g, '');
-            this.pendingResponse.jsonText += jsonText;
-
-            if (flags & PAYLOAD_FLAG_LAST) {
-                // Last packet: send ACK|OK then resolve
-                this.sendAckAndFinish(true);
-            } else {
-                // More packets coming: send ACK
-                this.sendResponse(PAYLOAD_FLAG_ACK);
-            }
+            this.sendAckAndFinish(true);
         }
     }
 

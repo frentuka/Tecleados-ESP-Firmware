@@ -254,6 +254,65 @@ function MacroModeModal({ macro, onSave, onClose }: MacroModeModalProps) {
     );
 }
 
+interface ExportModalProps {
+    macros: Macro[];
+    onClose: () => void;
+    onExport: (selectedMacros: Macro[]) => void;
+    isExporting: boolean;
+}
+
+function ExportModal({ macros, onClose, onExport, isExporting }: ExportModalProps) {
+    const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set(macros.map(m => m.id)));
+
+    const toggleSelection = (id: number) => {
+        const newSet = new Set(selectedIds);
+        if (newSet.has(id)) {
+            newSet.delete(id);
+        } else {
+            newSet.add(id);
+        }
+        setSelectedIds(newSet);
+    };
+
+    return createPortal(
+        <div className="modal-overlay" onClick={isExporting ? undefined : onClose}>
+            <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '400px' }}>
+                <div className="modal-header">
+                    <h3>Export Macros</h3>
+                </div>
+                <div className="modal-body">
+                    {macros.length === 0 ? (
+                        <div className="empty-state" style={{ padding: '2rem 0' }}>No macros to export.</div>
+                    ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '300px', overflowY: 'auto' }}>
+                            {macros.map(m => (
+                                <label key={m.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: isExporting ? 'default' : 'pointer', opacity: isExporting ? 0.5 : 1 }}>
+                                    <input
+                                        type="checkbox"
+                                        checked={selectedIds.has(m.id)}
+                                        onChange={() => !isExporting && toggleSelection(m.id)}
+                                        disabled={isExporting}
+                                    />
+                                    {m.name || `Macro #${m.id}`}
+                                </label>
+                            ))}
+                        </div>
+                    )}
+                </div>
+                <div className="modal-footer">
+                    <button className="btn" onClick={onClose} disabled={isExporting}>Cancel</button>
+                    <button className="btn btn-success" onClick={() => {
+                        onExport(macros.filter(m => selectedIds.has(m.id)));
+                    }} disabled={selectedIds.size === 0 || isExporting || macros.length === 0}>
+                        {isExporting ? 'Exporting...' : `Export (${selectedIds.size})`}
+                    </button>
+                </div>
+            </div>
+        </div>,
+        document.body
+    );
+}
+
 function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEvents }: MacroEditorModalProps) {
     const { confirm } = useConfirm();
 
@@ -1020,6 +1079,9 @@ export default function MacrosDashboard({ macros, macroLimits, isDeveloperMode, 
     const [busyMacroIds, setBusyMacroIds] = useState<Map<number, string>>(new Map());
     const [isCreating, setIsCreating] = useState(false);
     const [isMenuOpen, setIsMenuOpen] = useState(false);
+    const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+    const [isExporting, setIsExporting] = useState(false);
+    const fileInputRef = useRef<HTMLInputElement>(null);
     const menuRef = useRef<HTMLDivElement>(null);
     const isAtMacroLimit = macroLimits != null && macros.length >= macroLimits.maxMacros;
 
@@ -1071,8 +1133,72 @@ export default function MacrosDashboard({ macros, macroLimits, isDeveloperMode, 
         }
     };
 
+    const handleExportSubmit = async (selectedMacros: Macro[]) => {
+        setIsExporting(true);
+        try {
+            const fullMacros = [];
+            for (const sm of selectedMacros) {
+                if (onFetchSingleMacro) {
+                    const fm = await onFetchSingleMacro(sm.id);
+                    if (fm) fullMacros.push(fm);
+                } else {
+                    fullMacros.push(sm);
+                }
+            }
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(fullMacros, null, 2));
+            const downloadAnchorNode = document.createElement('a');
+            downloadAnchorNode.setAttribute("href", dataStr);
+            downloadAnchorNode.setAttribute("download", "macros_export.json");
+            document.body.appendChild(downloadAnchorNode);
+            downloadAnchorNode.click();
+            downloadAnchorNode.remove();
+        } catch (err) {
+            alert("Failed to export macros.");
+        } finally {
+            setIsExporting(false);
+            setIsExportModalOpen(false);
+        }
+    };
+
+    const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+            try {
+                const importedData = JSON.parse(e.target?.result as string);
+                const macrosToImport = Array.isArray(importedData) ? importedData : [importedData];
+
+                for (const m of macrosToImport) {
+                    const newMacro = { ...m, id: -1 };
+                    setIsCreating(true);
+                    try {
+                        await onSaveMacro(newMacro);
+                    } catch (err: any) {
+                        alert(`Failed to save imported macro "${newMacro.name}": ${err?.message || 'Unknown error'}`);
+                    } finally {
+                        setIsCreating(false);
+                    }
+                }
+            } catch (error) {
+                alert("Failed to parse JSON file.");
+            }
+        };
+        reader.readAsText(file);
+
+        event.target.value = ''; // Reset input
+    };
+
     return (
         <div className="macros-dashboard">
+            <input
+                type="file"
+                ref={fileInputRef}
+                style={{ display: 'none' }}
+                accept=".json"
+                onChange={handleImport}
+            />
             <div className="macros-header">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginBottom: '0.5rem' }}>
                     <h2 className="section-title">Macros Editor</h2>
@@ -1084,6 +1210,22 @@ export default function MacrosDashboard({ macros, macroLimits, isDeveloperMode, 
                         </button>
                         {isMenuOpen && (
                             <div className="dropdown-menu">
+                                <button className="dropdown-item" onClick={() => { setIsExportModalOpen(true); setIsMenuOpen(false); }}>
+                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                        <polyline points="7 10 12 15 17 10"></polyline>
+                                        <line x1="12" y1="15" x2="12" y2="3"></line>
+                                    </svg>
+                                    Export Macros
+                                </button>
+                                <button className="dropdown-item" onClick={() => { fileInputRef.current?.click(); setIsMenuOpen(false); }}>
+                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                        <polyline points="17 8 12 3 7 8"></polyline>
+                                        <line x1="12" y1="3" x2="12" y2="15"></line>
+                                    </svg>
+                                    Import Macros
+                                </button>
                                 <button className="dropdown-item" onClick={() => { onReload?.(); setIsMenuOpen(false); }}>
                                     <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
                                         <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
@@ -1209,6 +1351,15 @@ export default function MacrosDashboard({ macros, macroLimits, isDeveloperMode, 
                         }
                     }}
                     onClose={() => setEditingMacro(null)}
+                />
+            )}
+
+            {isExportModalOpen && (
+                <ExportModal
+                    macros={macros}
+                    onClose={() => setIsExportModalOpen(false)}
+                    onExport={handleExportSubmit}
+                    isExporting={isExporting}
                 />
             )}
         </div>

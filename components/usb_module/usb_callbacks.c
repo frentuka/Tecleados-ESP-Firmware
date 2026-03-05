@@ -24,7 +24,7 @@
 
 // ============ Packet processing queues ============
 
-#define PROCESS_QUEUE_LENGTH 16
+#define PROCESS_QUEUE_LENGTH 64
 static QueueHandle_t rx_processing_queue = NULL;
 static QueueHandle_t tx_processing_queue = NULL;
 
@@ -84,15 +84,24 @@ void usbmod_tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
 
   // Validate payload's CRT
   if (!usb_crc_verify_packet(payload)) {
-    ESP_LOGE(TAG, "Unable to validate payload. Responding with NAK.");
-    build_send_single_msg_packet(PAYLOAD_FLAG_NAK, msg.remaining_packets, 0,
-                                 NULL);
+    // During blast mode, silently drop CRC failures (bitmap will catch them)
+    if (!rx_blast_active()) {
+      ESP_LOGE(TAG, "Unable to validate payload. Responding with NAK.");
+      build_send_single_msg_packet(PAYLOAD_FLAG_NAK, msg.remaining_packets, 0,
+                                   NULL);
+    }
     return;
   }
 
-  // message payload is correct and can be acknowledged
-  build_send_single_msg_packet(PAYLOAD_FLAG_ACK, msg.remaining_packets, 0,
-                               NULL);
+  // During blast mode, suppress per-packet ACK (reconciliation handles it)
+  // Only ACK the FIRST packet (handshake) and non-blast packets
+  if (!rx_blast_active() || (msg.flags & PAYLOAD_FLAG_FIRST)) {
+    // For STATUS_REQ and BITMAP packets, don't send ACK (they have their own response)
+    if (msg.flags != PAYLOAD_FLAG_STATUS_REQ && msg.flags != PAYLOAD_FLAG_BITMAP) {
+      build_send_single_msg_packet(PAYLOAD_FLAG_ACK, msg.remaining_packets, 0,
+                                   NULL);
+    }
+  }
 
   // check process queue initialization
   if (rx_processing_queue == NULL) {
@@ -107,10 +116,37 @@ void usbmod_tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
 }
 
 static void process_incoming_packet(usb_packet_msg_t msg) {
-  ESP_LOGI(TAG, "Received payload. len: %u, flags: %u, remaining: %u",
-           msg.payload_len, msg.flags, msg.remaining_packets);
-  print_bytes_as_chars(TAG, msg.payload, msg.payload_len);
+  // ESP_LOGI(TAG, "Received payload. len: %u, flags: %02X, remaining: %u",
+  //          msg.payload_len, msg.flags, msg.remaining_packets);
+  // print_bytes_as_chars(TAG, msg.payload, msg.payload_len);
 
+  // --- Blast reconcile: STATUS_REQ (sender asking for our bitmap) ---
+  if (msg.flags == PAYLOAD_FLAG_STATUS_REQ) {
+    if (rx_blast_active()) {
+      ESP_LOGI(TAG, "STATUS_REQ: sending RX bitmap");
+      usb_packet_msg_t bitmap_msg = {0};
+      rx_blast_build_bitmap_response(&bitmap_msg);
+      send_single_packet((uint8_t *)&bitmap_msg, COMM_REPORT_SIZE);
+    } else {
+      ESP_LOGW(TAG, "STATUS_REQ received but not in blast mode");
+    }
+    return;
+  }
+
+  // --- Blast reconcile: BITMAP response (receiver telling us what it got) ---
+  if (msg.flags == PAYLOAD_FLAG_BITMAP) {
+    ESP_LOGI(TAG, "BITMAP: routing to TX blast handler");
+    if (tx_processing_queue == NULL) {
+      ESP_LOGE(TAG, "tx_processing_queue not initialized");
+      return;
+    }
+    if (xQueueSend(tx_processing_queue, &msg, 0) != pdTRUE) {
+      ESP_LOGE(TAG, "TX Process queue full, dropping BITMAP");
+    }
+    return;
+  }
+
+  // --- Normal routing ---
   bool is_rx = msg.flags & PAYLOAD_FLAG_FIRST || msg.flags & PAYLOAD_FLAG_MID ||
                msg.flags & PAYLOAD_FLAG_LAST;
   bool is_tx =
@@ -125,13 +161,25 @@ static void process_incoming_packet(usb_packet_msg_t msg) {
   }
 
   if (is_rx) {
-    ESP_LOGI(TAG, "process_incoming_packet: Processing RX-wise packet");
+    // During blast mode, check if LAST packet -> commit and respond
+    if (rx_blast_active() && (msg.flags & PAYLOAD_FLAG_LAST)) {
+      ESP_LOGI(TAG, "Blast RX: LAST packet received, committing");
+      bool result = rx_blast_commit(&msg);
+      if (result) {
+        build_send_single_msg_packet(PAYLOAD_FLAG_ACK | PAYLOAD_FLAG_OK, 0, 0, NULL);
+      } else {
+        build_send_single_msg_packet(PAYLOAD_FLAG_ACK | PAYLOAD_FLAG_ERR, 0, 0, NULL);
+      }
+      return;
+    }
+
+    // ESP_LOGI(TAG, "process_incoming_packet: Processing RX-wise packet");
     process_rx_request(msg);
     return;
   }
 
   if (is_tx) {
-    ESP_LOGI(TAG, "process_incoming_packet: Queuing TX-wise packet");
+    // ESP_LOGI(TAG, "process_incoming_packet: Queuing TX-wise packet");
     if (tx_processing_queue == NULL) {
       ESP_LOGE(TAG, "tx_processing_queue not initialized");
       return;
