@@ -26,6 +26,7 @@ import {
 } from './HIDService';
 import KeyboardLayoutEditor from './KeyboardLayoutEditor';
 import MacrosDashboard from './MacrosDashboard';
+import { useConfirm } from './hooks/useConfirm';
 import './index.css';
 
 export type MacroAction = 'tap' | 'press' | 'release';
@@ -73,6 +74,8 @@ function App() {
   const [macros, setMacros] = useState<Macro[]>([]);
   const [macroLimits, setMacroLimits] = useState<{ maxEvents: number; maxMacros: number } | null>(null);
   const macroCache = useRef<Record<number, Macro>>({});
+
+  const { confirm } = useConfirm();
 
   // Persist Developer Mode
   useEffect(() => {
@@ -150,36 +153,13 @@ function App() {
       }
     }
   }, [isConnected]);
-
-  const fetchMacros = useCallback(async () => {
-    if (!isConnected || !controlsEnabled) return;
-
-    setIsFetching(true);
-    const buf = new Uint8Array(3);
-    buf[0] = MODULE_CONFIG;
-    buf[1] = CFG_CMD_GET;
-    buf[2] = CFG_KEY_MACROS;
-
-    const resp = await hidService.sendCommand(buf);
-    if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
-      try {
-        const parsed = JSON.parse(resp.jsonText);
-        if (Array.isArray(parsed)) {
-          setMacros(parsed);
-        } else if (parsed.macros && Array.isArray(parsed.macros)) {
-          setMacros(parsed.macros);
-        }
-        macroCache.current = {}; // Reset cache on full list fetch
-      } catch (e) {
-        console.error('Macros JSON Parse Error:', e);
-      }
-    }
-    setIsFetching(false);
-  }, [isConnected, controlsEnabled]);
-
   const fetchSingleMacro = useCallback(async (id: number): Promise<Macro | null> => {
     if (!isConnected) return null;
-    if (macroCache.current[id]) return macroCache.current[id];
+    if (macroCache.current[id]) {
+      // Hydrate from cache if we somehow have it
+      setMacros(prev => prev.map(m => m.id === id ? macroCache.current[id] : m));
+      return macroCache.current[id];
+    }
 
     const jsonStr = JSON.stringify({ id });
     const jsonBytes = new TextEncoder().encode(jsonStr);
@@ -194,6 +174,10 @@ function App() {
       try {
         const parsed = JSON.parse(resp.jsonText) as Macro;
         macroCache.current[id] = parsed; // Cache it
+
+        // Update state to hydrate UI elements
+        setMacros(prev => prev.map(m => m.id === id ? parsed : m));
+
         return parsed;
       } catch (e) {
         console.error('Single Macro JSON Parse Error:', e);
@@ -201,6 +185,41 @@ function App() {
     }
     return null;
   }, [isConnected]);
+
+  const fetchMacros = useCallback(async () => {
+    if (!isConnected) return;
+
+    setIsFetching(true);
+    const buf = new Uint8Array(3);
+    buf[0] = MODULE_CONFIG;
+    buf[1] = CFG_CMD_GET;
+    buf[2] = CFG_KEY_MACROS;
+
+    const resp = await hidService.sendCommand(buf);
+    if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
+      try {
+        const parsed = JSON.parse(resp.jsonText);
+        let list: Macro[] = [];
+        if (Array.isArray(parsed)) {
+          list = parsed;
+        } else if (parsed.macros && Array.isArray(parsed.macros)) {
+          list = parsed.macros;
+        }
+
+        setMacros(list);
+        macroCache.current = {}; // Reset cache on full list fetch
+
+        // Sequentially fetch elements for each macro to respect USB limitations
+        for (const m of list) {
+          await fetchSingleMacro(m.id);
+        }
+
+      } catch (e) {
+        console.error('Macros JSON Parse Error:', e);
+      }
+    }
+    setIsFetching(false);
+  }, [isConnected, fetchSingleMacro]);
 
   const handleSaveMacro = async (newMacro: Macro) => {
     let macroToSave = newMacro;
@@ -233,12 +252,18 @@ function App() {
       macroCache.current[macroToSave.id] = macroToSave; // Update cache gracefully
       setLogs(prev => [...prev, { id: Date.now(), timestamp: new Date(), data: new Uint8Array(0), text: `Macro "${macroToSave.name}" saved to device` }]);
     } else {
-      setLogs(prev => [...prev, { id: Date.now(), timestamp: new Date(), data: new Uint8Array(0), text: `Failed to save macro (Status: ${resp?.status ?? 'timeout'})` }]);
+      const errMsg = resp ? `Device error (0x${resp.status.toString(16).toUpperCase()})` : 'Device timeout';
+      setLogs(prev => [...prev, { id: Date.now(), timestamp: new Date(), data: new Uint8Array(0), text: `Failed to save macro: ${errMsg}` }]);
+      throw new Error(errMsg);
     }
   };
 
   const handleDeleteMacro = async (id: number) => {
-    if (!window.confirm('Are you sure you want to delete this macro? Any keys mapped to it will stop working.')) return;
+    const isConfirmed = await confirm(
+      'Delete Macro',
+      'Are you sure you want to delete this macro? Any keys mapped to it will stop working.'
+    );
+    if (!isConfirmed) return;
 
     // Send delete command via CFG_KEY_MACRO_SINGLE
     const jsonStr = JSON.stringify({ delete: id });
@@ -254,6 +279,10 @@ function App() {
       setMacros(prev => prev.filter(m => m.id !== id));
       delete macroCache.current[id]; // Remove from cache
       setLogs(prev => [...prev, { id: Date.now(), timestamp: new Date(), data: new Uint8Array(0), text: `Macro deleted. ${macros.length - 1} remaining.` }]);
+    } else {
+      const errMsg = resp ? `Device error (0x${resp.status.toString(16).toUpperCase()})` : 'Device timeout';
+      setLogs(prev => [...prev, { id: Date.now(), timestamp: new Date(), data: new Uint8Array(0), text: `Failed to delete macro: ${errMsg}` }]);
+      throw new Error(errMsg);
     }
   };
 
@@ -266,9 +295,14 @@ function App() {
   useEffect(() => {
     if (isConnected && controlsEnabled) {
       fetchConfigData(selectedModule, selectedKey);
+    }
+  }, [isConnected, controlsEnabled, selectedModule, selectedKey, fetchConfigData]);
+
+  useEffect(() => {
+    if (isConnected) {
       fetchMacros();
     }
-  }, [isConnected, controlsEnabled, selectedModule, selectedKey, fetchConfigData, fetchMacros]);
+  }, [isConnected, fetchMacros]);
 
   // Raw packet logging (display only — ACKs and reassembly are handled by HIDService)
   const handleLogReceived = useCallback((data: Uint8Array) => {

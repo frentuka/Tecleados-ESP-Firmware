@@ -7,8 +7,8 @@
 #include <stdint.h>
 
 
-#define CFG_MACRO_MAX_EVENTS 128
-#define CFG_MACROS_MAX_COUNT 16
+#define CFG_MACRO_MAX_EVENTS 256
+#define CFG_MACROS_MAX_COUNT 32
 
 // Types of macro events (e.g. key press, delay)
 typedef enum {
@@ -35,6 +35,7 @@ typedef enum {
 typedef struct {
   cfg_macro_event_type_t type;
   uint32_t value; // Keycode or delay in ms
+  uint32_t delay_ms; // Optional inline sleep after this event
 } cfg_macro_event_t;
 
 typedef struct {

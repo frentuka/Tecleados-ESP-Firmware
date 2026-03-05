@@ -32,7 +32,7 @@ static tusb_desc_device_t const desc_device = {
 #define NKRO_BYTES ((NKRO_KEYS + 7) / 8)
 
 #define NKRO_REPORT_SIZE 64
-#define COMM_REPORT_SIZE 48
+#define COMM_REPORT_SIZE 63
 
 // Keyboard report descriptor (6KRO + NKRO)
 static uint8_t const desc_hid_report_kbd[] = {
@@ -152,7 +152,7 @@ static uint8_t const desc_configuration[] = {
                              sizeof(desc_hid_report_comm), // wDescriptorLength
                              EPNUM_HID_COMM_OUT, // bEndpointAddress (OUT)
                              EPNUM_HID_COMM_IN,  // bEndpointAddress (IN)
-                             COMM_REPORT_SIZE,   // wMaxPacketSize
+                             64,                 // wMaxPacketSize
                              1                   // bInterval (milliseconds)
                              )};
 

@@ -1,7 +1,7 @@
 export const VENDOR_ID = 0x303A;
 export const PRODUCT_ID = 0x1324;
 export const COMM_REPORT_ID = 3;
-export const COMM_REPORT_SIZE = 48;
+export const COMM_REPORT_SIZE = 63;
 
 // Transport flags
 export const PAYLOAD_FLAG_FIRST = 0x80;
@@ -282,8 +282,8 @@ class HIDService {
     public buildCommPacket(flags: number, remaining: number, data: Uint8Array): Uint8Array {
         const packet = new Uint8Array(COMM_REPORT_SIZE);
 
-        // Ensure data doesn't exceed 43 bytes max payload length
-        const payloadLen = Math.min(data.length, 43);
+        // Ensure data doesn't exceed 58 bytes max payload length
+        const payloadLen = Math.min(data.length, 58);
 
         // Map to usb_packet_msg_t byte layout
         packet[0] = flags;                   // flags
@@ -291,12 +291,12 @@ class HIDService {
         packet[2] = (remaining >> 8) & 0xFF; // remaining_packets (MSB)
         packet[3] = payloadLen;              // payload_len
 
-        // Copy payload into bytes 4-46
+        // Copy payload into bytes 4-61
         packet.set(data.slice(0, payloadLen), 4);
 
-        // Compute CRC-8 over the first 47 bytes and set as the 48th byte
-        const crcValue = computeCrc8(packet.slice(0, 47));
-        packet[47] = crcValue;
+        // Compute CRC-8 over the first 62 bytes and set as the 63rd byte
+        const crcValue = computeCrc8(packet.slice(0, 62));
+        packet[62] = crcValue;
 
         return packet;
     }
@@ -317,12 +317,14 @@ class HIDService {
         }
     }
 
-    /** Send a raw multi-packet payload (splits into 43-byte chunks with FIRST/MID/LAST flags) */
+    /** Send a raw multi-packet payload (splits into 58-byte chunks with FIRST/MID/LAST flags) */
     public async sendCustomCommReport(data: Uint8Array): Promise<boolean> {
         if (!this.isConnected()) return false;
         try {
-            const maxPayloadSize = 43;
+            const maxPayloadSize = 58;
             const totalPackets = Math.ceil(data.length / maxPayloadSize) || 1;
+
+            const promises: Promise<void>[] = [];
 
             for (let i = 0; i < totalPackets; i++) {
                 let flags = 0;
@@ -334,12 +336,10 @@ class HIDService {
                 const chunk = data.slice(i * maxPayloadSize, (i + 1) * maxPayloadSize);
 
                 const reportData = this.buildCommPacket(flags, remaining, chunk);
-                await this.device!.sendReport(COMM_REPORT_ID, reportData);
-
-                if (remaining > 0) {
-                    await new Promise(resolve => setTimeout(resolve, 20));
-                }
+                promises.push(this.device!.sendReport(COMM_REPORT_ID, reportData));
             }
+
+            await Promise.all(promises);
             return true;
         } catch (error) {
             console.error('Error sending custom COMM report:', error);
@@ -362,11 +362,14 @@ class HIDService {
      * @param timeoutMs Timeout in milliseconds (default 5000)
      * @returns CommandResponse or null on timeout/error
      */
-    public sendCommand(payload: Uint8Array, timeoutMs = 5000): Promise<CommandResponse | null> {
+    public sendCommand(payload: Uint8Array, timeoutMs?: number): Promise<CommandResponse | null> {
         if (!this.isConnected()) return Promise.resolve(null);
 
+        // Scale timeout based on payload size: base 5s + 5ms per byte for large payloads
+        const effectiveTimeout = timeoutMs ?? Math.max(5000, 5000 + payload.length * 5);
+
         return new Promise<CommandResponse | null>((resolve) => {
-            this.commandQueue.push({ payload, timeoutMs, resolve });
+            this.commandQueue.push({ payload, timeoutMs: effectiveTimeout, resolve });
             this.processNextCommand();
         });
     }
@@ -415,9 +418,6 @@ class HIDService {
         console.log(`[HID Queue] Command ${cmdHex} completed:`, result ? `status=${result.status}, keyId=${result.keyId}, jsonLen=${result.jsonText.length}` : 'NULL');
         resolve(result);
 
-        // Small delay between commands to let firmware settle
-        await new Promise(r => setTimeout(r, 50));
-
         this.isProcessingQueue = false;
         this.processNextCommand(); // process next in queue
     }
@@ -454,10 +454,10 @@ class HIDService {
         this.logCallbacks.forEach(cb => cb(data));
         this.rawPacketCallbacks.forEach(cb => cb(data, 'rx'));
 
-        if (data.length < 48) return;
+        if (data.length < 63) return;
 
         const flags = data[0];
-        const safeLen = Math.min(data[3], 43);
+        const safeLen = Math.min(data[3], 58);
         const payloadBytes = data.slice(4, 4 + safeLen);
 
         // Skip ACK/NAK/OK/ERR/ABORT response packets (those are protocol handshakes)
@@ -502,18 +502,15 @@ class HIDService {
     }
 
     /**
-     * Send ACK (with optional OK) and THEN resolve the pending command.
-     * This ensures the firmware receives the ACK|OK before we send the next command.
+     * Send ACK (with optional OK) and resolve the pending command immediately.
+     * Fire-and-forget: don't await the sendReport — let the OS queue it.
      */
-    private async sendAckAndFinish(isLast: boolean): Promise<void> {
+    private sendAckAndFinish(isLast: boolean): void {
         if (isLast) {
-            await this.sendResponse(PAYLOAD_FLAG_ACK | PAYLOAD_FLAG_OK);
+            this.sendResponse(PAYLOAD_FLAG_ACK | PAYLOAD_FLAG_OK);
         } else {
-            await this.sendResponse(PAYLOAD_FLAG_ACK);
+            this.sendResponse(PAYLOAD_FLAG_ACK);
         }
-
-        // Small delay so firmware can process the ACK|OK and clear tx_awaiting_response
-        await new Promise(r => setTimeout(r, 30));
 
         this.finishResponse();
     }

@@ -30,7 +30,7 @@ typedef enum usb_msg_module: uint8_t {
 
 // ======== single packet struct ========
 
-#define MAX_PAYLOAD_LENGTH 43
+#define MAX_PAYLOAD_LENGTH 58
 
 typedef struct __attribute__ ((packed)) {
     uint8_t flags;

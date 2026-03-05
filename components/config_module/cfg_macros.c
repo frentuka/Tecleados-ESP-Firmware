@@ -66,6 +66,10 @@ bool macros_deserialize(cJSON *root, void *out_struct) {
                 
                 cJSON *key = cJSON_GetObjectItem(el, "key");
                 if (cJSON_IsNumber(key)) m->events[m->event_count].value = key->valueint;
+                
+                cJSON *inline_sleep = cJSON_GetObjectItem(el, "inlineSleep");
+                if (cJSON_IsNumber(inline_sleep)) m->events[m->event_count].delay_ms = inline_sleep->valueint;
+                
                 m->event_count++;
             } else if (strcmp(type->valuestring, "sleep") == 0) {
                 m->events[m->event_count].type = MACRO_EVT_DELAY_MS;
@@ -116,6 +120,9 @@ cJSON *macros_serialize(const void *in_struct) {
               cJSON_AddStringToObject(el, "action", "release");
           } else {
               cJSON_AddStringToObject(el, "action", "tap");
+          }
+          if (m->events[j].delay_ms > 0) {
+              cJSON_AddNumberToObject(el, "inlineSleep", m->events[j].delay_ms);
           }
       }
       cJSON_AddItemToArray(elements, el);
@@ -183,6 +190,9 @@ cJSON *macros_serialize_single(uint16_t id, const cfg_macro_list_t *list) {
             } else {
                 cJSON_AddStringToObject(el, "action", "tap");
             }
+            if (m->events[j].delay_ms > 0) {
+                cJSON_AddNumberToObject(el, "inlineSleep", m->events[j].delay_ms);
+            }
         }
         cJSON_AddItemToArray(elements, el);
       }
@@ -245,6 +255,10 @@ static bool deserialize_single_macro(cJSON *macro_item, cfg_macro_t *m) {
           
           cJSON *key = cJSON_GetObjectItem(el, "key");
           if (cJSON_IsNumber(key)) m->events[m->event_count].value = key->valueint;
+          
+          cJSON *inline_sleep = cJSON_GetObjectItem(el, "inlineSleep");
+          if (cJSON_IsNumber(inline_sleep)) m->events[m->event_count].delay_ms = inline_sleep->valueint;
+          
           m->event_count++;
         } else if (strcmp(type->valuestring, "sleep") == 0) {
           m->events[m->event_count].type = MACRO_EVT_DELAY_MS;

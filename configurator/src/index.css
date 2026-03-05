@@ -627,6 +627,77 @@ h3 {
   border: 1px dashed var(--border-color);
 }
 
+/* Row/Col Edit Panel */
+.rowcol-edit-panel {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  margin-top: 0.75rem;
+  padding: 0.75rem 1.25rem;
+  background: rgba(22, 27, 34, 0.7);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  animation: fadeIn 0.2s ease-out;
+}
+
+.rowcol-edit-label {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.rowcol-edit-field {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.rowcol-edit-field label {
+  font-size: 0.8rem;
+  color: var(--accent-color);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.rowcol-edit-field input {
+  width: 60px;
+  padding: 0.35rem 0.5rem;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  font-family: monospace;
+  text-align: center;
+}
+
+/* Hide number spinners */
+.rowcol-edit-field input::-webkit-outer-spin-button,
+.rowcol-edit-field input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.rowcol-edit-field input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.rowcol-edit-field input:focus {
+  outline: none;
+  border-color: var(--accent-color);
+  box-shadow: 0 0 8px rgba(88, 166, 255, 0.2);
+}
+
+.rowcol-edit-field input::placeholder {
+  color: var(--text-secondary);
+  opacity: 0.5;
+  font-style: italic;
+}
+
 /* Dropdown Menu */
 .menu-container {
   position: relative;
@@ -653,6 +724,12 @@ h3 {
   color: var(--accent-color);
   border-color: var(--accent-color);
   transform: translateY(-2px);
+}
+
+.btn-icon.btn-danger:hover {
+  background: rgba(248, 81, 73, 0.15);
+  color: #ff7b72;
+  border-color: rgba(248, 81, 73, 0.5);
 }
 
 .dropdown-menu {
@@ -892,9 +969,53 @@ h3 {
   display: flex;
   gap: 0.5rem;
   margin-top: auto;
-  padding-top: 0.6rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.04);
   flex-shrink: 0;
+}
+
+/* ── Card loading overlay ── */
+.macro-card-busy>*:not(.macro-card-loading-overlay) {
+  opacity: 0.3;
+  pointer-events: none;
+  filter: blur(1px);
+  transition: all 0.2s;
+}
+
+.macro-card-loading-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  background: rgba(13, 17, 23, 0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  border-radius: 12px;
+  animation: fadeIn 0.15s ease-out;
+}
+
+.macro-card-loading-overlay span {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--accent-color);
+  letter-spacing: 0.03em;
+}
+
+.macro-card-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2.5px solid rgba(88, 166, 255, 0.15);
+  border-top-color: var(--accent-color);
+  border-radius: 50%;
+  animation: macroSpin 0.7s linear infinite;
+}
+
+@keyframes macroSpin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .layout-actions {

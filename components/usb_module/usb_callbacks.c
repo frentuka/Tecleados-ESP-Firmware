@@ -24,7 +24,7 @@
 
 // ============ Packet processing queues ============
 
-#define PROCESS_QUEUE_LENGTH 4
+#define PROCESS_QUEUE_LENGTH 16
 static QueueHandle_t rx_processing_queue = NULL;
 static QueueHandle_t tx_processing_queue = NULL;
 

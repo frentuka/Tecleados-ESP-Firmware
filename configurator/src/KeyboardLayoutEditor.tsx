@@ -179,7 +179,7 @@ function parseKleJson(kleText: string): PhysKey[][] | null {
                         y: currentY
                     });
                     currentX += currentW;
-                    matrixCol++;
+                    matrixCol += Math.ceil(currentW);
                     // Reset per-key properties
                     currentW = 1;
                     currentH = 1;
@@ -187,7 +187,7 @@ function parseKleJson(kleText: string): PhysKey[][] | null {
                     // Property object — applies to next key(s)
                     if (item.w !== undefined) currentW = item.w;
                     if (item.h !== undefined) currentH = item.h;
-                    if (item.x !== undefined) currentX += item.x;
+                    if (item.x !== undefined) { currentX += item.x; matrixCol += Math.round(item.x); }
                     if (item.y !== undefined) currentY += item.y;
                 }
             }
@@ -216,17 +216,40 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
     const [showKleImport, setShowKleImport] = useState(false);
     const [kleInput, setKleInput] = useState('');
     const [kleError, setKleError] = useState<string | null>(null);
-    const [selectedKey, setSelectedKey] = useState<{ row: number; col: number } | null>(null);
+    const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [hasChanges, setHasChanges] = useState<boolean[]>([false, false, false, false]);
     const [pressedCodes, setPressedCodes] = useState<Set<number>>(new Set());
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const [isKeyTestMode, setIsKeyTestMode] = useState(false);
+    const [isRowColEditMode, setIsRowColEditMode] = useState(false);
+    const [hasPhysLayoutChanges, setHasPhysLayoutChanges] = useState(false);
+    const [rowInput, setRowInput] = useState('');
+    const [colInput, setColInput] = useState('');
     // Track virtually held keys by string key `${row}-${col}`
     const [heldTestKeys, setHeldTestKeys] = useState<Set<string>>(new Set());
     const menuRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const lastClickedKeyRef = useRef<string | null>(null);
+    const isDraggingRef = useRef(false);
+
+    // Sync rowInput/colInput when selection changes
+    useEffect(() => {
+        if (selectedKeys.size === 1 && isRowColEditMode) {
+            const layout = physicalLayout || DEFAULT_PHYSICAL_LAYOUT;
+            const selId = Array.from(selectedKeys)[0];
+            for (const row of layout) {
+                for (const pk of row) {
+                    if (`${pk.row}-${pk.col}` === selId) {
+                        setRowInput(String(pk.row));
+                        setColInput(String(pk.col));
+                        return;
+                    }
+                }
+            }
+        }
+    }, [selectedKeys, isRowColEditMode, physicalLayout]);
 
     // ── Export/Import ──
     const exportLayout = async () => {
@@ -536,13 +559,10 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                 onLogRef.current('Physical layout fetch failed - using default');
             }
 
-            await new Promise(r => setTimeout(r, 100));
-
             // Then fetch all layers
             for (let i = 0; i < LAYER_COUNT; i++) {
                 console.log(`[LayoutEditor] Fetching layer ${i}...`);
                 await fetchLayer(i);
-                await new Promise(r => setTimeout(r, 100));
             }
         })();
     }, [isConnected, fetchLayer]);
@@ -574,20 +594,21 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
             } else {
                 onLogRef.current(`Layer ${layerIdx} save failed`);
             }
-            // Small delay between commands
-            await new Promise(r => setTimeout(r, 50));
         }
 
         setIsSaving(false);
     };
 
-    // ── Key edit handler ──
-    const handleKeyChange = (row: number, col: number, newValue: number) => {
+    // ── Key edit handler (supports multi-key) ──
+    const handleMultiKeyChange = (newValue: number) => {
         setLayers(prev => {
             const next = [...prev];
             if (!next[activeLayer]) return next;
             const layerCopy = next[activeLayer]!.map(r => [...r]);
-            layerCopy[row][col] = newValue;
+            selectedKeys.forEach(kid => {
+                const [r, c] = kid.split('-').map(Number);
+                if (layerCopy[r] && c < layerCopy[r].length) layerCopy[r][c] = newValue;
+            });
             next[activeLayer] = layerCopy;
             return next;
         });
@@ -597,6 +618,12 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
             return next;
         });
     };
+
+    // ── Flatten layout for shift-click range ──
+    const getFlatKeyOrder = useCallback((): string[] => {
+        const layout = physicalLayout || DEFAULT_PHYSICAL_LAYOUT;
+        return layout.flatMap(row => row.map(pk => `${pk.row}-${pk.col}`));
+    }, [physicalLayout]);
 
     const currentLayer = layers[activeLayer];
 
@@ -629,6 +656,20 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                         <path d="M21 2H3c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-9 15H7v-2h5v2zm4-4H7v-2h9v2zm0-4H7V7h9v2z" />
                                     </svg>
                                     {isKeyTestMode ? 'Exit Key Test Mode' : 'Enter Key Test Mode'}
+                                </button>
+                            )}
+                            {isDeveloperMode && (
+                                <button
+                                    className="dropdown-item"
+                                    onClick={() => {
+                                        setIsRowColEditMode(prev => !prev);
+                                        setIsMenuOpen(false);
+                                    }}
+                                >
+                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                                        <path d="M3 3v18h18V3H3zm16 16H5V5h14v14zM7 7h2v2H7V7zm0 4h2v2H7v-2zm0 4h2v2H7v-2zm4-8h2v2h-2V7zm0 4h2v2h-2v-2zm0 4h2v2h-2v-2zm4-8h2v2h-2V7zm0 4h2v2h-2v-2zm0 4h2v2h-2v-2z" />
+                                    </svg>
+                                    {isRowColEditMode ? 'Exit Row/Col Edit' : 'Row/Col Edit Mode'}
                                 </button>
                             )}
                             <button className="dropdown-item" onClick={() => { fetchLayer(activeLayer); setIsMenuOpen(false); }}>
@@ -748,7 +789,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                     <button
                         key={i}
                         className={`layer-tab ${activeLayer === i ? 'layer-tab-active' : ''} ${hasChanges[i] ? 'layer-tab-changed' : ''}`}
-                        onClick={() => { setActiveLayer(i); setSelectedKey(null); }}
+                        onClick={() => { setActiveLayer(i); setSelectedKeys(new Set()); }}
                     >
                         {name}
                         {hasChanges[i] && (
@@ -809,31 +850,32 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                     {layout.map((physRow: PhysKey[], ri: number) => (
                                         <div key={ri} className="keyboard-row">
                                             {physRow.map((pk: PhysKey) => {
-                                                // Robust access to layer data with fallback for large physical layouts
                                                 const rowData = currentLayer?.[pk.row];
                                                 const code = (rowData && pk.col < rowData.length) ? rowData[pk.col] : 0;
                                                 const physKeyId = `${pk.row}-${pk.col}`;
                                                 const isPressed = pressedCodes.has(code) || heldTestKeys.has(physKeyId);
+                                                const isSelected = selectedKeys.has(physKeyId);
 
                                                 return (
                                                     <button
                                                         key={physKeyId}
-                                                        className={`keyboard-key ${getKeyClass(code)} ${selectedKey?.row === pk.row && selectedKey?.col === pk.col ? 'key-selected' : ''} ${isPressed ? 'key-pressed' : ''}`}
+                                                        className={`keyboard-key ${getKeyClass(code)} ${isSelected ? 'key-selected' : ''} ${isPressed ? 'key-pressed' : ''}`}
                                                         style={{
                                                             left: `${pk.x * 3.2}rem`,
                                                             top: `${pk.y * 3.2}rem`,
                                                             width: `${pk.w * 3.2 - 0.25}rem`,
                                                             height: `${pk.h * 3.2 - 0.25}rem`,
                                                             position: 'absolute',
-                                                            cursor: isKeyTestMode ? 'crosshair' : 'pointer'
+                                                            cursor: isKeyTestMode ? 'crosshair' : 'pointer',
+                                                            zIndex: isSelected ? 5 : undefined,
                                                         }}
                                                         onMouseDown={(e) => {
                                                             if (isKeyTestMode) {
                                                                 e.preventDefault();
-                                                                if (e.button === 0) { // Left click = tap 
+                                                                if (e.button === 0) {
                                                                     hidService.sendInjectKey(pk.row, pk.col, true);
                                                                     setHeldTestKeys(prev => new Set(prev).add(physKeyId));
-                                                                } else if (e.button === 2) { // Right click = toggle hold
+                                                                } else if (e.button === 2) {
                                                                     setHeldTestKeys(prev => {
                                                                         const next = new Set(prev);
                                                                         if (next.has(physKeyId)) {
@@ -846,10 +888,54 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                                                         return next;
                                                                     });
                                                                 }
+                                                                return;
+                                                            }
+                                                            if (e.button !== 0) return;
+                                                            e.preventDefault();
+                                                            isDraggingRef.current = false;
+
+                                                            if (isRowColEditMode) {
+                                                                // Row/Col edit: always single-select
+                                                                setSelectedKeys(new Set([physKeyId]));
+                                                                lastClickedKeyRef.current = physKeyId;
+                                                            } else if (e.ctrlKey || e.metaKey) {
+                                                                // Ctrl+click: toggle key in selection
+                                                                setSelectedKeys(prev => {
+                                                                    const next = new Set(prev);
+                                                                    if (next.has(physKeyId)) next.delete(physKeyId);
+                                                                    else next.add(physKeyId);
+                                                                    return next;
+                                                                });
+                                                                lastClickedKeyRef.current = physKeyId;
+                                                            } else if (e.shiftKey && lastClickedKeyRef.current) {
+                                                                // Shift+click: range select
+                                                                const flat = getFlatKeyOrder();
+                                                                const a = flat.indexOf(lastClickedKeyRef.current);
+                                                                const b = flat.indexOf(physKeyId);
+                                                                if (a !== -1 && b !== -1) {
+                                                                    const start = Math.min(a, b);
+                                                                    const end = Math.max(a, b);
+                                                                    setSelectedKeys(prev => {
+                                                                        const next = new Set(prev);
+                                                                        for (let i = start; i <= end; i++) next.add(flat[i]);
+                                                                        return next;
+                                                                    });
+                                                                }
+                                                            } else {
+                                                                // Plain click: start potential drag, or single-select
+                                                                setSelectedKeys(new Set([physKeyId]));
+                                                                lastClickedKeyRef.current = physKeyId;
+                                                            }
+                                                        }}
+                                                        onMouseEnter={(e) => {
+                                                            if (!isKeyTestMode && e.buttons === 1 && !e.ctrlKey && !e.shiftKey) {
+                                                                // Drag-select: add to selection
+                                                                isDraggingRef.current = true;
+                                                                setSelectedKeys(prev => new Set(prev).add(physKeyId));
                                                             }
                                                         }}
                                                         onMouseUp={(e) => {
-                                                            if (isKeyTestMode && e.button === 0) { // Release left click
+                                                            if (isKeyTestMode && e.button === 0) {
                                                                 e.preventDefault();
                                                                 hidService.sendInjectKey(pk.row, pk.col, false);
                                                                 setHeldTestKeys(prev => {
@@ -857,10 +943,17 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                                                     next.delete(physKeyId);
                                                                     return next;
                                                                 });
+                                                                return;
                                                             }
+                                                            if (e.button !== 0 || isKeyTestMode) return;
+                                                            // If it wasn't a drag and not ctrl/shift, open modal
+                                                            if (!isDraggingRef.current && !e.ctrlKey && !e.shiftKey && !isRowColEditMode) {
+                                                                setIsModalOpen(true);
+                                                            }
+                                                            isDraggingRef.current = false;
                                                         }}
                                                         onMouseLeave={(e) => {
-                                                            if (isKeyTestMode && e.buttons === 1) { // Left click held but dragged out
+                                                            if (isKeyTestMode && e.buttons === 1) {
                                                                 e.preventDefault();
                                                                 hidService.sendInjectKey(pk.row, pk.col, false);
                                                                 setHeldTestKeys(prev => {
@@ -871,24 +964,116 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                                             }
                                                         }}
                                                         onContextMenu={(e) => {
-                                                            if (isKeyTestMode) {
-                                                                e.preventDefault(); // Prevent context menu during test mode right-clicks
-                                                            }
+                                                            if (isKeyTestMode) e.preventDefault();
                                                         }}
-                                                        onClick={() => {
-                                                            if (!isKeyTestMode) {
-                                                                setSelectedKey({ row: pk.row, col: pk.col });
-                                                                setIsModalOpen(true);
-                                                            }
-                                                        }}
-                                                        title={`[${pk.row},${pk.col}] = 0x${code.toString(16).toUpperCase().padStart(4, '0')}`}
+                                                        title={isRowColEditMode ? `R${pk.row} C${pk.col}` : `[${pk.row},${pk.col}] = 0x${code.toString(16).toUpperCase().padStart(4, '0')}`}
                                                     >
-                                                        <span className="key-label">{getKeyName(code, macros)}</span>
+                                                        <span className="key-label">
+                                                            {isRowColEditMode ? `R${pk.row} C${pk.col}` : getKeyName(code, macros)}
+                                                        </span>
                                                     </button>
                                                 );
                                             })}
                                         </div>
                                     ))}
+                                    {/* Row/Col Grid Overlay */}
+                                    {isRowColEditMode && (() => {
+                                        const UNIT = 3.2 * 16;
+                                        const GAP = 0.25 * 16;
+                                        const svgW = maxKeyX * UNIT;
+                                        const svgH = maxKeyY * UNIT;
+                                        const MARGIN = 20;
+
+                                        // Collect keys grouped by row and col
+                                        const rowKeys = new Map<number, { cx: number; cy: number }[]>();
+                                        const colKeys = new Map<number, { cx: number; cy: number }[]>();
+                                        layout.forEach(physRow => physRow.forEach(pk => {
+                                            const cx = (pk.x + pk.w / 2) * UNIT - GAP / 2;
+                                            const cy = (pk.y + pk.h / 2) * UNIT - GAP / 2;
+                                            if (!rowKeys.has(pk.row)) rowKeys.set(pk.row, []);
+                                            rowKeys.get(pk.row)!.push({ cx, cy });
+                                            if (!colKeys.has(pk.col)) colKeys.set(pk.col, []);
+                                            colKeys.get(pk.col)!.push({ cx, cy });
+                                        }));
+
+                                        // Build polylines: row lines go through each key center sorted L→R
+                                        const rowPolylines: { row: number; points: string; labelX: number; labelY: number }[] = [];
+                                        rowKeys.forEach((keys, row) => {
+                                            const sorted = [...keys].sort((a, b) => a.cx - b.cx);
+                                            const pts = sorted.map(k => `${k.cx},${k.cy}`).join(' ');
+                                            const last = sorted[sorted.length - 1];
+                                            rowPolylines.push({ row, points: pts, labelX: svgW + 4, labelY: last.cy + 4 });
+                                        });
+
+                                        // Col lines go through each key center sorted T→B
+                                        const colPolylines: { col: number; points: string; labelX: number; labelY: number }[] = [];
+                                        colKeys.forEach((keys, col) => {
+                                            const sorted = [...keys].sort((a, b) => a.cy - b.cy);
+                                            const pts = sorted.map(k => `${k.cx},${k.cy}`).join(' ');
+                                            const last = sorted[sorted.length - 1];
+                                            colPolylines.push({ col, points: pts, labelX: last.cx, labelY: svgH + 14 });
+                                        });
+
+                                        return (
+                                            <svg
+                                                className="rowcol-grid-overlay"
+                                                style={{
+                                                    position: 'absolute',
+                                                    left: 0,
+                                                    top: 0,
+                                                    width: svgW + MARGIN,
+                                                    height: svgH + MARGIN,
+                                                    pointerEvents: 'none',
+                                                    overflow: 'visible',
+                                                    zIndex: 10,
+                                                }}
+                                            >
+                                                {/* Row polylines (cyan, routed through key centers) */}
+                                                {rowPolylines.map(rl => (
+                                                    <g key={`r${rl.row}`}>
+                                                        <polyline
+                                                            points={rl.points}
+                                                            fill="none"
+                                                            stroke="rgba(0,220,255,0.5)" strokeWidth={2}
+                                                            strokeLinejoin="round" strokeLinecap="round"
+                                                        />
+                                                        <text
+                                                            x={rl.labelX} y={rl.labelY}
+                                                            fill="rgba(0,220,255,0.8)" fontSize={11} fontFamily="monospace"
+                                                        >R{rl.row}</text>
+                                                    </g>
+                                                ))}
+                                                {/* Col polylines (magenta, routed through key centers) */}
+                                                {colPolylines.map(cl => (
+                                                    <g key={`c${cl.col}`}>
+                                                        <polyline
+                                                            points={cl.points}
+                                                            fill="none"
+                                                            stroke="rgba(255,0,200,0.5)" strokeWidth={2}
+                                                            strokeLinejoin="round" strokeLinecap="round"
+                                                        />
+                                                        <text
+                                                            x={cl.labelX} y={cl.labelY}
+                                                            fill="rgba(255,0,200,0.8)" fontSize={11} fontFamily="monospace"
+                                                            textAnchor="middle"
+                                                        >C{cl.col}</text>
+                                                    </g>
+                                                ))}
+                                                {/* Key center dots */}
+                                                {layout.flatMap(physRow => physRow.map(pk => {
+                                                    const cx = (pk.x + pk.w / 2) * UNIT - GAP / 2;
+                                                    const cy = (pk.y + pk.h / 2) * UNIT - GAP / 2;
+                                                    return (
+                                                        <circle
+                                                            key={`dot-${pk.row}-${pk.col}`}
+                                                            cx={cx} cy={cy} r={3}
+                                                            fill="rgba(255,255,255,0.6)"
+                                                        />
+                                                    );
+                                                }))}
+                                            </svg>
+                                        );
+                                    })()}
                                 </div>
                             );
                         })()}
@@ -896,23 +1081,149 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
 
                     {/* Key Search Modal */}
                     {
-                        isModalOpen && selectedKey && (
-                            <SearchableKeyModal
-                                currentValue={currentLayer[selectedKey.row][selectedKey.col]}
-                                macros={macros}
-                                onSelect={(newValue: number) => {
-                                    handleKeyChange(selectedKey.row, selectedKey.col, newValue);
-                                    setIsModalOpen(false);
-                                    setSelectedKey(null);
-                                }}
-                                onClose={() => {
-                                    setIsModalOpen(false);
-                                    setSelectedKey(null);
-                                }}
-                            />
-                        )
+                        isModalOpen && selectedKeys.size > 0 && (() => {
+                            const firstKey = Array.from(selectedKeys)[0];
+                            const [fRow, fCol] = firstKey.split('-').map(Number);
+                            const firstValue = (currentLayer[fRow] && fCol < currentLayer[fRow].length) ? currentLayer[fRow][fCol] : 0;
+                            return (
+                                <SearchableKeyModal
+                                    currentValue={firstValue}
+                                    macros={macros}
+                                    onSelect={(newValue: number) => {
+                                        handleMultiKeyChange(newValue);
+                                        setIsModalOpen(false);
+                                    }}
+                                    onClose={() => {
+                                        setIsModalOpen(false);
+                                    }}
+                                />
+                            );
+                        })()
                     }
 
+                    {/* Row/Col Edit Panel (single-key only) */}
+                    {isRowColEditMode && selectedKeys.size === 1 && (() => {
+                        const layout = physicalLayout || DEFAULT_PHYSICAL_LAYOUT;
+                        const selId = Array.from(selectedKeys)[0];
+                        // Find the selected PhysKey and its visual row index
+                        let selectedPk: PhysKey | null = null;
+                        let visualRowIdx = -1;
+                        for (let ri = 0; ri < layout.length; ri++) {
+                            for (const pk of layout[ri]) {
+                                if (`${pk.row}-${pk.col}` === selId) {
+                                    selectedPk = pk;
+                                    visualRowIdx = ri;
+                                    break;
+                                }
+                            }
+                            if (selectedPk) break;
+                        }
+                        if (!selectedPk || visualRowIdx === -1) return null;
+
+                        const updateRow = (newRow: number) => {
+                            setPhysicalLayout(prev => {
+                                if (!prev) return prev;
+                                const copy = prev.map(r => r.map(k => ({ ...k })));
+                                const pk = copy[visualRowIdx].find(k => `${k.row}-${k.col}` === selId);
+                                if (pk) {
+                                    const oldId = `${pk.row}-${pk.col}`;
+                                    pk.row = newRow;
+                                    const newId = `${pk.row}-${pk.col}`;
+                                    if (oldId !== newId) setSelectedKeys(new Set([newId]));
+                                }
+                                return copy;
+                            });
+                            setHasPhysLayoutChanges(true);
+                        };
+
+                        const updateCol = (newCol: number) => {
+                            setPhysicalLayout(prev => {
+                                if (!prev) return prev;
+                                const copy = prev.map(r => r.map(k => ({ ...k })));
+                                const visualRow = copy[visualRowIdx];
+                                // Find the key index in the visual row
+                                const keyIdx = visualRow.findIndex(k => `${k.row}-${k.col}` === selId);
+                                if (keyIdx === -1) return copy;
+                                const oldCol = visualRow[keyIdx].col;
+                                const delta = newCol - oldCol;
+                                if (delta === 0) return copy;
+                                // Shift this key and all keys to the right
+                                for (let i = keyIdx; i < visualRow.length; i++) {
+                                    visualRow[i].col += delta;
+                                }
+                                const newId = `${visualRow[keyIdx].row}-${visualRow[keyIdx].col}`;
+                                setSelectedKeys(new Set([newId]));
+                                return copy;
+                            });
+                            setHasPhysLayoutChanges(true);
+                        };
+
+                        return (
+                            <div className="rowcol-edit-panel">
+                                <span className="rowcol-edit-label">
+                                    R{selectedPk.row} C{selectedPk.col}
+                                </span>
+                                <div className="rowcol-edit-field">
+                                    <label>Row</label>
+                                    <input
+                                        type="text"
+                                        inputMode="numeric"
+                                        value={rowInput}
+                                        onChange={(e) => {
+                                            const raw = e.target.value;
+                                            setRowInput(raw);
+                                            const v = parseInt(raw);
+                                            if (!isNaN(v) && v >= 0) updateRow(v);
+                                        }}
+                                        onBlur={() => {
+                                            if (rowInput.trim() === '' || isNaN(parseInt(rowInput))) {
+                                                setRowInput(String(selectedPk!.row));
+                                            }
+                                        }}
+                                        ref={(el) => {
+                                            if (!el) return;
+                                            el.onwheel = (ev) => {
+                                                ev.preventDefault();
+                                                const cur = parseInt(rowInput);
+                                                if (isNaN(cur)) return;
+                                                const next = cur + (ev.deltaY < 0 ? 1 : -1);
+                                                if (next >= 0) { setRowInput(String(next)); updateRow(next); }
+                                            };
+                                        }}
+                                    />
+                                </div>
+                                <div className="rowcol-edit-field">
+                                    <label>Col</label>
+                                    <input
+                                        type="text"
+                                        inputMode="numeric"
+                                        value={colInput}
+                                        onChange={(e) => {
+                                            const raw = e.target.value;
+                                            setColInput(raw);
+                                            const v = parseInt(raw);
+                                            if (!isNaN(v) && v >= 0) updateCol(v);
+                                        }}
+                                        onBlur={() => {
+                                            if (colInput.trim() === '' || isNaN(parseInt(colInput))) {
+                                                setColInput(String(selectedPk!.col));
+                                            }
+                                        }}
+                                        ref={(el) => {
+                                            if (!el) return;
+                                            el.onwheel = (ev) => {
+                                                ev.preventDefault();
+                                                const cur = parseInt(colInput);
+                                                if (isNaN(cur)) return;
+                                                const next = cur + (ev.deltaY < 0 ? 1 : -1);
+                                                if (next >= 0) { setColInput(String(next)); updateCol(next); }
+                                            };
+                                        }}
+                                    />
+                                </div>
+                            </div>
+                        );
+                    })()}
 
                     {/* Action buttons */}
                     <div className="layout-actions">
@@ -924,9 +1235,35 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                             onChange={importLayout}
                         />
 
-
                         {/* Universal Apply button */}
-                        <div style={{ marginLeft: 'auto' }}>
+                        <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem' }}>
+                            {hasPhysLayoutChanges && (
+                                <button
+                                    className="btn btn-success btn-apply-active"
+                                    disabled={isSaving || !isConnected}
+                                    onClick={async () => {
+                                        if (!physicalLayout) return;
+                                        setIsSaving(true);
+                                        const jsonStr = serializePhysicalLayout(physicalLayout, 6, 18);
+                                        const jsonBytes = new TextEncoder().encode(jsonStr);
+                                        const payload = buildConfigPayload(CFG_CMD_SET, CFG_KEY_PHYSICAL_LAYOUT, jsonBytes);
+                                        const resp = await hidService.sendCommand(payload);
+                                        if (resp && resp.status === 0) {
+                                            onLogRef.current('Physical layout saved to device');
+                                            setHasPhysLayoutChanges(false);
+                                        } else {
+                                            onLogRef.current('Physical layout save failed');
+                                        }
+                                        setIsSaving(false);
+                                    }}
+                                    title="Save physical layout changes to device"
+                                >
+                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                                        <path d="M3 3v18h18V3H3zm16 16H5V5h14v14zM7 7h2v2H7V7zm0 4h2v2H7v-2zm0 4h2v2H7v-2zm4-8h2v2h-2V7zm0 4h2v2h-2v-2zm0 4h2v2h-2v-2zm4-8h2v2h-2V7zm0 4h2v2h-2v-2zm0 4h2v2h-2v-2z" />
+                                    </svg>
+                                    Save Layout
+                                </button>
+                            )}
                             <button
                                 className={`btn ${hasChanges.some(c => c) ? 'btn-success btn-apply-active' : 'btn-apply-idle'}`}
                                 disabled={!hasChanges.some(c => c) || isSaving}

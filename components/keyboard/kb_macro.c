@@ -174,6 +174,24 @@ static bool execute_macro_cancellable(uint16_t macro_id, uint8_t depth,
     default:
       break;
     }
+
+    uint32_t delay_ms = m->events[i].delay_ms;
+    if (delay_ms > 0) {
+      if (is_cancellable && rt) {
+        uint32_t remaining = delay_ms;
+        while (remaining > 0) {
+          if (rt->cancel_requested) {
+            kb_macro_force_clear();
+            return false;
+          }
+          uint32_t chunk = remaining > 10 ? 10 : remaining;
+          vTaskDelay(pdMS_TO_TICKS(chunk));
+          remaining -= chunk;
+        }
+      } else {
+        vTaskDelay(pdMS_TO_TICKS(delay_ms));
+      }
+    }
   }
   return true;
 }

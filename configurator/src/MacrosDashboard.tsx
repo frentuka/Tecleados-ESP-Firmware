@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useLayoutEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import type { Macro, MacroElement, MacroAction } from './App';
 import { getKeyName, getKeyClass, MACRO_BASE, BROWSER_CODE_TO_HID } from './KeyDefinitions';
 import SearchableKeyModal from './SearchableKeyModal';
+import { useConfirm } from './hooks/useConfirm';
 
 // ── Execution Mode Helpers ──────────────────────────────────────────────
 type ModeCategory = 'once' | 'repeat' | 'burst';
@@ -254,30 +255,7 @@ function MacroModeModal({ macro, onSave, onClose }: MacroModeModalProps) {
 }
 
 function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEvents }: MacroEditorModalProps) {
-    const implodeElements = (els: MacroElement[]): MacroElement[] => {
-        const result: MacroElement[] = [];
-        for (let i = 0; i < els.length; i++) {
-            const current = els[i];
-            const next = els[i + 1];
-            if (current.type === 'key' && next?.type === 'sleep') {
-                result.push({ ...current, inlineSleep: next.duration });
-                i++; // Skip next
-            } else {
-                result.push(current);
-            }
-        }
-        return result;
-    };
-
-    const explodeElements = (els: MacroElement[]): MacroElement[] => {
-        return els.flatMap(el => {
-            if (el.type === 'key' && el.inlineSleep !== undefined) {
-                const { inlineSleep, ...keyOnly } = el;
-                return [keyOnly as MacroElement, { type: 'sleep' as const, duration: inlineSleep }];
-            }
-            return [el];
-        });
-    };
+    const { confirm } = useConfirm();
 
     const [name, setName] = useState(initialMacro.name || `Custom Macro #${macros.length + 1}`);
     const [macroConfig, setMacroConfig] = useState({
@@ -286,7 +264,7 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEve
         repeatCount: initialMacro.repeatCount
     });
     const [isModeModalOpen, setIsModeModalOpen] = useState(false);
-    const [elements, setElements] = useState<MacroElement[]>(implodeElements(initialMacro.elements || []));
+    const [elements, setElements] = useState<MacroElement[]>(initialMacro.elements || []);
     const [isKeyModalOpen, setIsKeyModalOpen] = useState(false);
     const [editingElementIndex, setEditingElementIndex] = useState<number | null>(null);
     const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
@@ -300,9 +278,8 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEve
     const [showConfigMenu, setShowConfigMenu] = useState(false);
     const configMenuRef = useRef<HTMLDivElement>(null);
 
-    // Compute real event count (exploded = inline sleeps become separate events)
-    const explodedCount = explodeElements(elements).length;
-    const isAtEventLimit = maxEvents !== undefined && explodedCount >= maxEvents;
+    // Compute real event count
+    const isAtEventLimit = maxEvents !== undefined && elements.length >= maxEvents;
 
     const listEndRef = useRef<HTMLDivElement>(null);
     const prevLenRef = useRef(elements.length);
@@ -359,8 +336,7 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEve
                 const diff = recordingStateRef.current.lastEventTime > 0 ? now - recordingStateRef.current.lastEventTime : 0;
 
                 setElements(prev => {
-                    const exploded = explodeElements(prev);
-                    if (maxEvents !== undefined && exploded.length >= maxEvents) {
+                    if (maxEvents !== undefined && prev.length >= maxEvents) {
                         return prev; // At limit, don't add more
                     }
                     const newEls = [...prev];
@@ -395,8 +371,7 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEve
                 const diff = recordingStateRef.current.lastEventTime > 0 ? now - recordingStateRef.current.lastEventTime : 0;
 
                 setElements(prev => {
-                    const exploded = explodeElements(prev);
-                    if (maxEvents !== undefined && exploded.length >= maxEvents) {
+                    if (maxEvents !== undefined && prev.length >= maxEvents) {
                         return prev; // At limit, don't add more
                     }
                     const newEls = [...prev];
@@ -626,7 +601,21 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEve
                                     <line x1="12" y1="5" x2="12" y2="19" />
                                     <line x1="5" y1="12" x2="19" y2="12" />
                                 </svg>
-                                Add
+                                Action
+                            </button>
+                            <button
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => {
+                                    if (isRecording) setIsRecording(false);
+                                    setElements([...elements, { type: 'sleep', duration: defaultDelay || 100 }]);
+                                }}
+                                disabled={isAtEventLimit}
+                                title={isAtEventLimit ? `Maximum actions reached (${maxEvents})` : undefined}
+                            >
+                                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '4px' }}>
+                                    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                                </svg>
+                                Delay
                             </button>
 
                             <button
@@ -729,8 +718,8 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEve
                                             <button
                                                 className="btn btn-sm btn-danger"
                                                 style={{ width: '100%', padding: '0.4rem' }}
-                                                onClick={() => {
-                                                    if (window.confirm("Are you sure you want to clear all actions?")) {
+                                                onClick={async () => {
+                                                    if (await confirm('Clear Actions', 'Are you sure you want to clear all actions?')) {
                                                         setElements([]);
                                                         setShowConfigMenu(false);
                                                     }
@@ -842,8 +831,7 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEve
                 <div className="modal-footer">
                     <button className="btn" onClick={onClose}>Cancel</button>
                     <button className="btn btn-success" onClick={() => {
-                        const exploded = explodeElements(elements);
-                        const filteredElements = exploded.filter(el => el.type !== 'sleep' || el.duration > 0);
+                        const filteredElements = elements.filter(el => el.type !== 'sleep' || el.duration > 0);
                         onSave({ ...initialMacro, ...macroConfig, name, elements: filteredElements });
                     }}>
                         Save
@@ -878,6 +866,143 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEve
     );
 }
 
+const MacroPreviewSequence = ({ m, macros }: { m: Macro; macros: Macro[] }) => {
+    const containerRef = useRef<HTMLDivElement>(null);
+    const [showCount, setShowCount] = useState<number>(0);
+    const [measuredSig, setMeasuredSig] = useState<string | null>(null);
+
+    const items = useMemo(() => {
+        type PItem = { kind: 'key'; action: string; keyCode: number; sleepMs?: number } | { kind: 'sleep'; duration: number };
+        const arr: PItem[] = [];
+        if (!m.elements) return arr;
+        for (let j = 0; j < m.elements.length; j++) {
+            const el = m.elements[j];
+            if (el.type === 'key') {
+                if (el.inlineSleep !== undefined && el.inlineSleep > 0) {
+                    arr.push({ kind: 'key', action: el.action || 'tap', keyCode: el.key, sleepMs: el.inlineSleep });
+                } else {
+                    arr.push({ kind: 'key', action: el.action || 'tap', keyCode: el.key });
+                }
+            } else {
+                arr.push({ kind: 'sleep', duration: el.duration });
+            }
+        }
+        return arr;
+    }, [m.elements, macros]);
+
+    const itemsSig = useMemo(() => JSON.stringify(items), [items]);
+    const isMeasured = measuredSig === itemsSig;
+
+    useEffect(() => {
+        if (!containerRef.current || items.length === 0) return;
+
+        // Observe the parent container (macro-card-content) because it has a stable width.
+        // Observing our own div creates infinite loops if items line-wrap differently upon slicing.
+        const parent = containerRef.current.parentElement;
+        if (!parent) return;
+
+        let lastWidth = parent.offsetWidth;
+
+        const ro = new ResizeObserver((entries) => {
+            if (!entries[0]) return;
+            const w = (entries[0].target as HTMLElement).offsetWidth;
+            // Only force remeasure if the parent card actually resizes (e.g., window resize)
+            if (Math.abs(w - lastWidth) > 2) {
+                lastWidth = w;
+                setMeasuredSig(null);
+            }
+        });
+
+        ro.observe(parent);
+        return () => ro.disconnect();
+    }, [itemsSig]);
+
+    useLayoutEffect(() => {
+        if (!isMeasured && containerRef.current && items.length > 0) {
+            const container = containerRef.current;
+            const children = Array.from(container.children) as HTMLElement[];
+            if (children.length === 0) return;
+
+            let rowCount = 1;
+            let currentY = children[0].offsetTop;
+            let breakIdx = items.length;
+
+            for (let i = 0; i < children.length; i++) {
+                // Allow a small tolerance for vertical flex misalignment
+                if (children[i].offsetTop > currentY + 5) {
+                    currentY = children[i].offsetTop;
+                    rowCount++;
+                }
+                if (rowCount > 3) {
+                    breakIdx = i;
+                    break;
+                }
+            }
+
+            if (breakIdx < items.length) {
+                setShowCount(Math.max(1, breakIdx - 1));
+            } else {
+                setShowCount(items.length);
+            }
+
+            // Mark as measured for this precise content state
+            setMeasuredSig(itemsSig);
+        }
+    }, [isMeasured, items, itemsSig]);
+
+    if (!m.elements) {
+        return (
+            <div className="macro-preview-sequence">
+                <span className="preview-more" style={{ opacity: 0.5, fontStyle: 'italic' }}>
+                    Loading...
+                </span>
+            </div>
+        );
+    }
+
+    if (m.elements.length === 0) {
+        return (
+            <div className="macro-preview-sequence">
+                <span className="preview-more" style={{ opacity: 0.5, fontStyle: 'italic' }}>
+                    empty
+                </span>
+            </div>
+        );
+    }
+
+    const renderItem = (it: any, i: number) => {
+        if (it.kind === 'key') {
+            return (
+                <span key={i} className={`preview-el${it.action !== 'tap' ? ` preview-el-${it.action}` : ''}`}>
+                    <span className="preview-el-action">
+                        {it.action === 'press' ? '↓' : it.action === 'release' ? '↑' : '↕'}
+                    </span>
+                    {getKeyName(it.keyCode, macros)}
+                    {it.sleepMs !== undefined && (
+                        <span className="preview-el-sleep">· {it.sleepMs}</span>
+                    )}
+                </span>
+            );
+        } else {
+            return (
+                <span key={i} className="preview-el preview-sleep">
+                    <span className="preview-sleep-icon">🌙</span>
+                    <span className="preview-sleep-val">{it.duration}</span>
+                </span>
+            );
+        }
+    };
+
+    return (
+        <div ref={containerRef} className="macro-preview-sequence" style={!isMeasured ? { opacity: 0 } : undefined}>
+            {!isMeasured ? items.map(renderItem) : items.slice(0, showCount).map(renderItem)}
+            {isMeasured && items.length > showCount && (
+                <span className="preview-more">+{items.length - showCount}</span>
+            )}
+        </div>
+    );
+};
+
 interface MacrosDashboardProps {
     macros: Macro[];
     macroLimits: { maxEvents: number; maxMacros: number } | null;
@@ -892,9 +1017,18 @@ export default function MacrosDashboard({ macros, macroLimits, isDeveloperMode, 
     const [editingMacro, setEditingMacro] = useState<Macro | null>(null);
     const [modeMacro, setModeMacro] = useState<Macro | null>(null);
     const [fetchingMacroId, setFetchingMacroId] = useState<number | null>(null);
+    const [busyMacroIds, setBusyMacroIds] = useState<Map<number, string>>(new Map());
+    const [isCreating, setIsCreating] = useState(false);
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const menuRef = useRef<HTMLDivElement>(null);
     const isAtMacroLimit = macroLimits != null && macros.length >= macroLimits.maxMacros;
+
+    const markBusy = (id: number, label: string) => {
+        setBusyMacroIds(prev => new Map(prev).set(id, label));
+    };
+    const clearBusy = (id: number) => {
+        setBusyMacroIds(prev => { const next = new Map(prev); next.delete(id); return next; });
+    };
 
     useEffect(() => {
         function handleClickOutside(event: MouseEvent) {
@@ -926,8 +1060,14 @@ export default function MacrosDashboard({ macros, macroLimits, isDeveloperMode, 
     };
 
     const handleDelete = async (id: number) => {
-        if (window.confirm("Are you sure you want to delete this macro?")) {
+        // Deletion confirmation is now handled centrally by App.tsx passed down via onDeleteMacro
+        markBusy(id, 'Deleting...');
+        try {
             await onDeleteMacro(id);
+        } catch (err: any) {
+            alert(`Failed to delete macro: ${err?.message || 'Unknown error'}`);
+        } finally {
+            clearBusy(id);
         }
     };
 
@@ -954,23 +1094,33 @@ export default function MacrosDashboard({ macros, macroLimits, isDeveloperMode, 
                         )}
                     </div>
                 </div>
-                <button className="btn btn-success" onClick={handleCreate} disabled={isAtMacroLimit} title={isAtMacroLimit ? `Maximum macros reached (${macroLimits!.maxMacros})` : undefined}>
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" /></svg>
+                <button className="btn" onClick={handleCreate} disabled={isAtMacroLimit} title={isAtMacroLimit ? `Maximum macros reached (${macroLimits!.maxMacros})` : undefined}>
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '6px' }}>
+                        <line x1="12" y1="5" x2="12" y2="19" />
+                        <line x1="5" y1="12" x2="19" y2="12" />
+                    </svg>
                     Create Macro
                 </button>
             </div>
 
             <div className="macros-list">
-                {macros.length === 0 ? (
+                {macros.length === 0 && !isCreating ? (
                     <div className="empty-state">No macros defined yet.</div>
                 ) : (
                     <div className="macro-cards-grid">
                         {macros.map(m => (
-                            <div key={m.id} className="macro-card glass-panel">
+                            <div key={m.id} className={`macro-card glass-panel ${busyMacroIds.has(m.id) ? 'macro-card-busy' : ''}`} onClick={() => !busyMacroIds.has(m.id) && handleEdit(m)} style={{ cursor: busyMacroIds.has(m.id) ? 'default' : 'pointer', position: 'relative' }}>
+                                {busyMacroIds.has(m.id) && (
+                                    <div className="macro-card-loading-overlay">
+                                        <div className="macro-card-spinner" />
+                                        <span>{busyMacroIds.get(m.id)}</span>
+                                    </div>
+                                )}
                                 <button
                                     className="macro-mode-badge-corner"
-                                    onClick={() => setModeMacro(m)}
+                                    onClick={(e) => { e.stopPropagation(); if (!busyMacroIds.has(m.id)) setModeMacro(m); }}
                                     title="Change execution mode"
+                                    disabled={busyMacroIds.has(m.id)}
                                 >
                                     <span className="macro-mode-badge-icon">{getModeBadgeLabel(m.execMode ?? 0)}</span>
                                 </button>
@@ -979,73 +1129,38 @@ export default function MacrosDashboard({ macros, macroLimits, isDeveloperMode, 
                                     <h4>{m.name || `Macro #${m.id}`}</h4>
                                 </div>
                                 <div className="macro-card-body">
-                                    <div className="macro-preview-sequence">
-                                        {m.elements && m.elements.length > 0 ? (() => {
-                                            // Pre-process: merge a sleep into the preceding key action
-                                            type PItem = { kind: 'key'; action: string; keyCode: number; sleepMs?: number }
-                                                | { kind: 'sleep'; duration: number };
-                                            const items: PItem[] = [];
-                                            for (let j = 0; j < m.elements.length; j++) {
-                                                const el = m.elements[j];
-                                                if (el.type === 'key') {
-                                                    const next = m.elements[j + 1];
-                                                    if (next && next.type === 'sleep') {
-                                                        items.push({ kind: 'key', action: el.action || 'tap', keyCode: el.key, sleepMs: next.duration });
-                                                        j++; // skip the sleep
-                                                    } else {
-                                                        items.push({ kind: 'key', action: el.action || 'tap', keyCode: el.key });
-                                                    }
-                                                } else {
-                                                    items.push({ kind: 'sleep', duration: el.duration });
-                                                }
-                                            }
-                                            const maxShow = 12;
-                                            return (
-                                                <>
-                                                    {items.slice(0, maxShow).map((it, i) => (
-                                                        it.kind === 'key' ? (
-                                                            <span key={i} className={`preview-el${it.action !== 'tap' ? ` preview-el-${it.action}` : ''}`}>
-                                                                <span className="preview-el-action">
-                                                                    {it.action === 'press' ? '↓' : it.action === 'release' ? '↑' : '↕'}
-                                                                </span>
-                                                                {getKeyName(it.keyCode, macros)}
-                                                                {it.sleepMs !== undefined && (
-                                                                    <span className="preview-el-sleep">· {it.sleepMs}</span>
-                                                                )}
-                                                            </span>
-                                                        ) : (
-                                                            <span key={i} className="preview-el preview-sleep">
-                                                                <span className="preview-sleep-icon">🌙</span>
-                                                                <span className="preview-sleep-val">{it.duration}</span>
-                                                            </span>
-                                                        )
-                                                    ))}
-                                                    {items.length > maxShow && (
-                                                        <span className="preview-more">+{items.length - maxShow}</span>
-                                                    )}
-                                                </>
-                                            );
-                                        })() : (
-                                            <span className="preview-more" style={{ opacity: 0.5, fontStyle: 'italic' }}>
-                                                Elements hidden (Click Edit to view)
+                                    <MacroPreviewSequence m={m} macros={macros} />
+                                </div>
+                                <div className="macro-card-actions" onClick={e => e.stopPropagation()}>
+                                    <div style={{ flex: 1, display: 'flex', alignItems: 'center' }}>
+                                        {fetchingMacroId === m.id && <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Loading...</span>}
+                                        {isDeveloperMode && (
+                                            <span className="macro-id-dev" style={{ position: 'relative', bottom: 'auto', right: 'auto', marginLeft: fetchingMacroId === m.id ? '0.5rem' : '0' }}>
+                                                ID: 0x{(MACRO_BASE + m.id).toString(16).toUpperCase()}
                                             </span>
                                         )}
                                     </div>
-                                </div>
-                                <div className="macro-card-actions">
-                                    <button className="btn btn-sm" onClick={() => handleEdit(m)} disabled={fetchingMacroId !== null}>
-                                        {fetchingMacroId === m.id ? 'Loading...' : 'Edit'}
+                                    <button className="btn-icon btn-danger" title="Delete" onClick={() => handleDelete(m.id)} disabled={busyMacroIds.has(m.id)} style={{ position: 'absolute', bottom: '0.75rem', right: '0.75rem', width: '28px', height: '28px', padding: 0, background: 'rgba(255, 60, 60, 0.1)', border: '1px solid rgba(255, 60, 60, 0.25)', borderRadius: '6px' }}>
+                                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: 'middle' }}>
+                                            <polyline points="3 6 5 6 21 6"></polyline>
+                                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                            <line x1="10" y1="11" x2="10" y2="17"></line>
+                                            <line x1="14" y1="11" x2="14" y2="17"></line>
+                                        </svg>
                                     </button>
-                                    <button className="btn btn-sm btn-danger" onClick={() => handleDelete(m.id)}>Delete</button>
-
-                                    {isDeveloperMode && (
-                                        <span className="macro-id-dev">
-                                            ID: 0x{(MACRO_BASE + m.id).toString(16).toUpperCase()}
-                                        </span>
-                                    )}
                                 </div>
                             </div>
                         ))}
+                        {isCreating && (
+                            <div className="macro-card glass-panel macro-card-busy" style={{ position: 'relative', cursor: 'default' }}>
+                                <div className="macro-card-loading-overlay">
+                                    <div className="macro-card-spinner" />
+                                    <span>Creating...</span>
+                                </div>
+                                <div className="macro-card-header"><h4 style={{ opacity: 0.3 }}>New Macro</h4></div>
+                                <div className="macro-card-body" />
+                            </div>
+                        )}
                     </div>
                 )}
             </div>
@@ -1053,8 +1168,16 @@ export default function MacrosDashboard({ macros, macroLimits, isDeveloperMode, 
             {modeMacro && (
                 <MacroModeModal
                     macro={modeMacro}
-                    onSave={(m) => {
-                        onSaveMacro(m);
+                    onSave={async (m) => {
+                        setModeMacro(null);
+                        markBusy(m.id, 'Saving...');
+                        try {
+                            await onSaveMacro(m);
+                        } catch (err: any) {
+                            alert(`Failed to save mode: ${err?.message || 'Unknown error'}`);
+                        } finally {
+                            clearBusy(m.id);
+                        }
                     }}
                     onClose={() => setModeMacro(null)}
                 />
@@ -1065,9 +1188,25 @@ export default function MacrosDashboard({ macros, macroLimits, isDeveloperMode, 
                     macro={editingMacro}
                     macros={macros}
                     maxEvents={macroLimits?.maxEvents}
-                    onSave={(m) => {
-                        onSaveMacro(m);
+                    onSave={async (m) => {
                         setEditingMacro(null);
+                        const isNew = m.id === -1;
+                        if (isNew) {
+                            setIsCreating(true);
+                        } else {
+                            markBusy(m.id, 'Saving...');
+                        }
+                        try {
+                            await onSaveMacro(m);
+                        } catch (err: any) {
+                            alert(`Failed to save macro: ${err?.message || 'Unknown error'}`);
+                        } finally {
+                            if (isNew) {
+                                setIsCreating(false);
+                            } else {
+                                clearBusy(m.id);
+                            }
+                        }
                     }}
                     onClose={() => setEditingMacro(null)}
                 />

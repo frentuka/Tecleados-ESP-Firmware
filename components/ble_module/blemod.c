@@ -137,9 +137,14 @@ static void bleprph_on_reset(int reason) {
 static void bleprph_on_sync(void) {
   int rc;
 
+  ESP_LOGW(TAG, "bleprph_on_sync called");
+
   // Make sure we have a valid address
   rc = ble_hs_util_ensure_addr(0); // 0 = prefer public, fallback to random
-  assert(rc == 0);
+  if (rc != 0) {
+    ESP_LOGE(TAG, "ble_hs_util_ensure_addr failed: %d", rc);
+    return;
+  }
 
   // Stack is ready — start advertising
   ESP_LOGI(TAG, "BLE stack synced, ready to advertise");
@@ -154,6 +159,9 @@ static void ble_hid_advertise(void) {
   struct ble_gap_adv_params adv_params = {0};
   struct ble_hs_adv_fields fields = {0};
   int rc;
+
+  // Stop any existing advertising first
+  ble_gap_adv_stop();
 
   // --- Advertising data (what's broadcast) ---
   fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
@@ -175,7 +183,10 @@ static void ble_hid_advertise(void) {
   fields.uuids16_is_complete = 1;
 
   rc = ble_gap_adv_set_fields(&fields);
-  assert(rc == 0);
+  if (rc != 0) {
+    ESP_LOGE(TAG, "ble_gap_adv_set_fields failed: %d", rc);
+    return;
+  }
 
   // --- Advertising parameters ---
   adv_params.conn_mode = BLE_GAP_CONN_MODE_UND; // connectable
@@ -187,7 +198,10 @@ static void ble_hid_advertise(void) {
                          &adv_params,
                          ble_hid_gap_event, // your GAP event callback
                          NULL);
-  assert(rc == 0);
+  if (rc != 0) {
+    ESP_LOGE(TAG, "ble_gap_adv_start failed: %d", rc);
+    return;
+  }
   ESP_LOGI(TAG, "Advertising started");
 }
 

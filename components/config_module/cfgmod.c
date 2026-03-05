@@ -7,6 +7,9 @@
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "cfg_macros.h"
+#include "esp_heap_caps.h"
+
+static cfg_macro_list_t *s_macro_scratch = NULL;
 
 // module initializers
 extern void cfg_layouts_register(void);
@@ -48,29 +51,6 @@ esp_err_t cfgmod_register_kind(cfgmod_kind_t kind, cfgmod_default_fn def_fn,
   s_registry[kind].struct_size = struct_size;
   s_registry[kind].registered = true;
   return ESP_OK;
-}
-
-static void log_hex(const char *label, const uint8_t *buf, size_t len) {
-  if (!buf || len == 0) {
-    ESP_LOGI(TAG, "%s: (empty)", label);
-    return;
-  }
-
-  char line[128];
-  size_t pos = 0;
-
-  ESP_LOGI(TAG, "%s: len=%u", label, (unsigned)len);
-  for (size_t i = 0; i < len; i++) {
-    int written = snprintf(&line[pos], sizeof(line) - pos, "%02X ", buf[i]);
-    if (written <= 0)
-      break;
-    pos += (size_t)written;
-
-    if ((i % 16) == 15 || i == len - 1) {
-      ESP_LOGI(TAG, "%s", line);
-      pos = 0;
-    }
-  }
 }
 
 /*
@@ -186,7 +166,7 @@ esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
 
     if (root) {
       // Load existing macro list from NVS
-      cfg_macro_list_t *list = malloc(sizeof(cfg_macro_list_t));
+      cfg_macro_list_t *list = s_macro_scratch;
       if (list) {
         cfgmod_get_config(kind, key, list);
 
@@ -199,24 +179,10 @@ esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
           macros_upsert_single(root, list);
         }
 
-        // Serialize full list back and write to NVS
-        cJSON *serialized = s_registry[kind].ser_fn(list);
-        free(list);
-
-        if (serialized) {
-          char *json_str = cJSON_PrintUnformatted(serialized);
-          cJSON_Delete(serialized);
-          if (json_str) {
-            status = cfgmod_write_storage(kind, key, json_str, strlen(json_str) + 1);
-            free(json_str);
-            if (status == ESP_OK && s_registry[kind].update_fn) {
-              s_registry[kind].update_fn(key);
-            }
-          } else {
-            status = ESP_ERR_NO_MEM;
-          }
-        } else {
-          status = ESP_ERR_NO_MEM;
+        // Write directly to NVS as binary via cfgmod_set_config
+        status = cfgmod_set_config(kind, key, list);
+        if (status != ESP_OK) {
+            ESP_LOGE(TAG, "NVS write failed for macro: 0x%X", (unsigned)status);
         }
       } else {
         status = ESP_ERR_NO_MEM;
@@ -249,11 +215,10 @@ esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
     }
 
     if (requested_id != 0xFFFF) {
-      cfg_macro_list_t *list = malloc(sizeof(cfg_macro_list_t));
+      cfg_macro_list_t *list = s_macro_scratch;
       if (list) {
         cfgmod_get_config(kind, key, list);
         cJSON *single_macro = macros_serialize_single(requested_id, list);
-        free(list);
 
         if (single_macro) {
           char *json_str = cJSON_PrintUnformatted(single_macro);
@@ -289,11 +254,10 @@ esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
 
   } else if (hdr.key_id == CFG_KEY_MACROS && hdr.cmd == CFG_CMD_GET) {
     // Return only the macro outline (IDs and names, without elements)
-    cfg_macro_list_t *list = malloc(sizeof(cfg_macro_list_t));
+    cfg_macro_list_t *list = s_macro_scratch;
     if (list) {
       cfgmod_get_config(kind, key, list);
       cJSON *outline = macros_serialize_outline(list);
-      free(list);
 
       if (outline) {
         char *json_str = cJSON_PrintUnformatted(outline);
@@ -385,19 +349,31 @@ esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
     }
 
     if (root) {
-      char *json_str = cJSON_PrintUnformatted(root);
-      cJSON_Delete(root);
-
-      if (json_str) {
-        status = cfgmod_write_storage(kind, key, json_str, strlen(json_str) + 1);
-        free(json_str);
-
-        if (status == ESP_OK && kind < CFGMOD_KIND_MAX && s_registry[kind].update_fn) {
-          s_registry[kind].update_fn(key);
+      if (kind < CFGMOD_KIND_MAX && s_registry[kind].registered) {
+        void *temp_struct = malloc(s_registry[kind].struct_size);
+        if (temp_struct) {
+          // Load existing config to apply partial JSON updates properly
+          cfgmod_get_config(kind, key, temp_struct);
+          if (s_registry[kind].des_fn(root, temp_struct)) {
+            status = cfgmod_set_config(kind, key, temp_struct);
+          } else {
+            status = ESP_ERR_INVALID_ARG;
+          }
+          free(temp_struct);
+        } else {
+          status = ESP_ERR_NO_MEM;
         }
       } else {
-        status = ESP_ERR_NO_MEM;
+        // Fallback for non-registered kinds (shouldn't happen really)
+        char *json_str = cJSON_PrintUnformatted(root);
+        if (json_str) {
+          status = cfgmod_write_storage(kind, key, json_str, strlen(json_str) + 1);
+          free(json_str);
+        } else {
+          status = ESP_ERR_NO_MEM;
+        }
       }
+      cJSON_Delete(root);
     } else {
       status = ESP_ERR_INVALID_ARG;
     }
@@ -449,8 +425,9 @@ bool is_init(void) { return s_init; }
 #include "usb_send.h"
 
 bool cfg_usb_callback(uint8_t *data, uint16_t data_len) {
-    size_t buf_size = 20000;
-    uint8_t *out_buf = malloc(buf_size);
+    size_t buf_size = 32000;
+    uint8_t *out_buf = heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!out_buf) out_buf = malloc(buf_size); // fallback to internal RAM
     if (!out_buf) {
         ESP_LOGE(TAG, "cfg_usb_callback failed to allocate memory");
         return false;
@@ -471,8 +448,24 @@ bool cfg_usb_callback(uint8_t *data, uint16_t data_len) {
     return err == ESP_OK;
 }
 
+static void* spiram_cjson_malloc(size_t size) {
+    void* ptr = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!ptr) ptr = malloc(size);
+    return ptr;
+}
+
+static void spiram_cjson_free(void* ptr) {
+    free(ptr);
+}
+
 // Initialize NVS for cfg storage use.
 esp_err_t cfg_init(void) {
+  // Use PSRAM for cJSON to prevent large config ASTs from exhausting internal memory
+  cJSON_Hooks hooks;
+  hooks.malloc_fn = spiram_cjson_malloc;
+  hooks.free_fn = spiram_cjson_free;
+  cJSON_InitHooks(&hooks);
+
   esp_err_t err = nvs_flash_init();
   if (err == ESP_ERR_NVS_NO_FREE_PAGES ||
       err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -485,6 +478,17 @@ esp_err_t cfg_init(void) {
 
   if (err == ESP_OK) {
     s_init = true;
+
+    // Allocate macro scratch buffer — prefer PSRAM, fall back to internal RAM
+    s_macro_scratch = heap_caps_calloc(1, sizeof(cfg_macro_list_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_macro_scratch) {
+      ESP_LOGW(TAG, "PSRAM alloc failed for macro scratch, trying internal RAM");
+      s_macro_scratch = calloc(1, sizeof(cfg_macro_list_t));
+    }
+    if (!s_macro_scratch) {
+      ESP_LOGE(TAG, "Failed to allocate macro scratch (%u bytes)", (unsigned)sizeof(cfg_macro_list_t));
+      // Continue anyway — macros won't work but other features should
+    }
 
     // Register default modules
     cfg_layouts_register();
@@ -588,6 +592,16 @@ esp_err_t cfgmod_get_config(cfgmod_kind_t kind, const char *key,
     return ESP_OK; // fallback to default
   }
 
+  // Attempt binary load first (if size matches exactly)
+  if (required_size == s_registry[kind].struct_size) {
+    if (nvs_get_blob(handle, nvs_key, out_struct, &required_size) == ESP_OK) {
+      ESP_LOGI(TAG, "NVS get_blob %s (len=%u) binary load successful", nvs_key, (unsigned)required_size);
+      nvs_close(handle);
+      return ESP_OK;
+    }
+  }
+
+  // Legacy JSON fallback
   char *json_str = malloc(required_size + 1);
   if (!json_str) {
     nvs_close(handle);
@@ -596,7 +610,7 @@ esp_err_t cfgmod_get_config(cfgmod_kind_t kind, const char *key,
 
   if (nvs_get_blob(handle, nvs_key, json_str, &required_size) == ESP_OK) {
     json_str[required_size] = '\0'; // Ensure null-termination
-    ESP_LOGI(TAG, "NVS get_blob %s (len=%u) first 50 chars: %.50s", nvs_key, (unsigned)required_size, json_str);
+    ESP_LOGI(TAG, "NVS get_blob %s (len=%u) legacy JSON load", nvs_key, (unsigned)required_size);
     cJSON *root = cJSON_Parse(json_str);
     if (root) {
       if (!s_registry[kind].des_fn(root, out_struct)) {
@@ -626,18 +640,8 @@ esp_err_t cfgmod_set_config(cfgmod_kind_t kind, const char *key,
     return ESP_ERR_INVALID_ARG;
   }
 
-  cJSON *root = s_registry[kind].ser_fn(in_struct);
-  if (!root)
-    return ESP_ERR_NO_MEM;
-
-  char *json_str = cJSON_PrintUnformatted(root);
-  cJSON_Delete(root);
-  if (!json_str)
-    return ESP_ERR_NO_MEM;
-
-  esp_err_t err =
-      cfgmod_write_storage(kind, key, json_str, strlen(json_str) + 1);
-  free(json_str);
+  // Write binary directly instead of JSON
+  esp_err_t err = cfgmod_write_storage(kind, key, in_struct, s_registry[kind].struct_size);
 
   if (err == ESP_OK && s_registry[kind].update_fn) {
     s_registry[kind].update_fn(key);
