@@ -52,6 +52,10 @@
 /* Report Reference Descriptor */
 #define UUID_REPORT_REFERENCE 0x2908
 
+/* Report IDs */
+#define BLE_REPORT_ID_KEYBOARD 1
+#define BLE_REPORT_ID_CONSUMER 2
+
 /* ========================================================================= */
 /* HID Data                                                                  */
 /* ========================================================================= */
@@ -72,9 +76,11 @@ static const uint8_t hid_info[] = {0x11, 0x01, 0x00, 0x03};
  *   Bytes 2-7: Up to 6 simultaneous key codes
  */
 static const uint8_t hid_report_map[] = {
+    // --- KEYBOARD REPORT ---
     0x05, 0x01, // Usage Page (Generic Desktop)
     0x09, 0x06, // Usage (Keyboard)
     0xA1, 0x01, // Collection (Application)
+    0x85, BLE_REPORT_ID_KEYBOARD, // Report ID (1)
 
     // --- Modifier keys (1 byte = 8 bits) ---
     0x05, 0x07, //   Usage Page (Keyboard/Keypad)
@@ -111,8 +117,23 @@ static const uint8_t hid_report_map[] = {
     0x19, 0x00, //   Usage Minimum (0)
     0x29, 0x65, //   Usage Maximum (101)
     0x81, 0x00, //   Input (Data, Array, Absolute)
+    0xC0,       // End Collection
 
-    0xC0 // End Collection
+    // --- CONSUMER CONTROL (MEDIA) REPORT ---
+    0x05, 0x0C, // Usage Page (Consumer)
+    0x09, 0x01, // Usage (Consumer Control)
+    0xA1, 0x01, // Collection (Application)
+    0x85, BLE_REPORT_ID_CONSUMER, // Report ID (2)
+    
+    0x15, 0x00, //   Logical Minimum (0)
+    0x26, 0xFF, 0x03, // Logical Maximum (0x03FF = 1023)
+    0x19, 0x00, //   Usage Minimum (0)
+    0x2A, 0xFF, 0x03, // Usage Maximum (1023)
+    
+    0x75, 0x10, //   Report Size (16 bits)
+    0x95, 0x01, //   Report Count (1)
+    0x81, 0x00, //   Input (Data, Array, Absolute)
+    0xC0        // End Collection
 };
 
 /* ========================================================================= */
@@ -122,10 +143,12 @@ static const uint8_t hid_report_map[] = {
 static uint8_t hid_protocol_mode = 1; // 1 = Report Protocol (default)
 static uint8_t hid_control_point = 0;
 static uint8_t hid_input_report[8] = {0}; // 8 bytes
+static uint16_t hid_consumer_report = 0;  // 2 bytes
 
 /* Attribute handles (set by NimBLE during registration) */
 static uint16_t hid_input_report_handle;
 static uint16_t hid_output_report_handle;
+static uint16_t hid_consumer_report_handle;
 static uint16_t hid_boot_in_handle;
 static uint16_t hid_boot_out_handle;
 static uint16_t bas_battery_level_handle;
@@ -240,7 +263,10 @@ static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
                     .arg = (void *)(uintptr_t)UUID_HID_CONTROL_POINT,
                 },
                 {
-                    /* Input Report — READ + NOTIFY
+/* Macro for Report Reference argument */
+#define REPORT_REF_ARG(id, type) ((void *)(uintptr_t)(((id) << 8) | (type)))
+
+                    /* Input Report (Keyboard) — READ + NOTIFY
                      * NimBLE auto-creates the CCCD (0x2902).
                      * We manually add the Report Reference (0x2908). */
                     .uuid = BLE_UUID16_DECLARE(UUID_HID_REPORT),
@@ -252,12 +278,33 @@ static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
                     .descriptors =
                         (struct ble_gatt_dsc_def[]){
                             {
-                                /* Report Reference: Report ID=0, Type=Input */
+                                /* Report Reference: Report ID=1, Type=Input */
                                 .uuid =
                                     BLE_UUID16_DECLARE(UUID_REPORT_REFERENCE),
                                 .access_cb = hid_report_ref_access_cb,
                                 .att_flags = BLE_ATT_F_READ,
-                                .arg = (void *)(uintptr_t)1, // 1 for Input
+                                .arg = REPORT_REF_ARG(BLE_REPORT_ID_KEYBOARD, 1),
+                            },
+                        {0},
+                        },
+                },
+                {
+                    /* Input Report (Consumer) — READ + NOTIFY */
+                    .uuid = BLE_UUID16_DECLARE(UUID_HID_REPORT),
+                    .access_cb = hid_access_cb,
+                    .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC |
+                             BLE_GATT_CHR_F_NOTIFY,
+                    .val_handle = &hid_consumer_report_handle,
+                    .arg = (void *)(uintptr_t)UUID_HID_REPORT,
+                    .descriptors =
+                        (struct ble_gatt_dsc_def[]){
+                            {
+                                /* Report Reference: Report ID=2, Type=Input */
+                                .uuid =
+                                    BLE_UUID16_DECLARE(UUID_REPORT_REFERENCE),
+                                .access_cb = hid_report_ref_access_cb,
+                                .att_flags = BLE_ATT_F_READ,
+                                .arg = REPORT_REF_ARG(BLE_REPORT_ID_CONSUMER, 1),
                             },
                             {0},
                         },
@@ -273,12 +320,12 @@ static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
                     .descriptors =
                         (struct ble_gatt_dsc_def[]){
                             {
-                                /* Report Reference: Report ID=0, Type=Output */
+                                /* Report Reference: Report ID=1, Type=Output */
                                 .uuid =
                                     BLE_UUID16_DECLARE(UUID_REPORT_REFERENCE),
                                 .access_cb = hid_report_ref_access_cb,
                                 .att_flags = BLE_ATT_F_READ,
-                                .arg = (void *)(uintptr_t)2, // 2 for Output
+                                .arg = REPORT_REF_ARG(BLE_REPORT_ID_KEYBOARD, 2),
                             },
                             {0},
                         },
@@ -313,9 +360,11 @@ static int bas_access_cb(uint16_t conn_handle, uint16_t attr_handle,
 static int hid_report_ref_access_cb(uint16_t conn_handle, uint16_t attr_handle,
                                     struct ble_gatt_access_ctxt *ctxt,
                                     void *arg) {
-  uint8_t is_output = ((uintptr_t)arg == 2) ? 1 : 0;
-  /* Report ID = 0 (No Report ID used), Type = 0x01 (Input) or 0x02 (Output) */
-  uint8_t report_ref[2] = {0x00, is_output ? 0x02 : 0x01};
+  uint16_t arg_val = (uint16_t)(uintptr_t)arg;
+  uint8_t report_id = (arg_val >> 8) & 0xFF;
+  uint8_t report_type = arg_val & 0xFF;
+
+  uint8_t report_ref[2] = {report_id, report_type};
   int rc = os_mbuf_append(ctxt->om, report_ref, sizeof(report_ref));
   return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
 }
@@ -367,6 +416,12 @@ static int hid_access_cb(uint16_t conn_handle, uint16_t attr_handle,
       if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
         rc = os_mbuf_append(ctxt->om, hid_input_report,
                             sizeof(hid_input_report));
+        return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+      }
+    } else if (attr_handle == hid_consumer_report_handle) {
+      if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
+        rc = os_mbuf_append(ctxt->om, &hid_consumer_report,
+                            sizeof(hid_consumer_report));
         return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
       }
     } else if (attr_handle == hid_output_report_handle) {
@@ -447,10 +502,23 @@ int ble_hid_tx_keyboard_report(uint16_t conn_handle, const uint8_t *report,
   if (hid_protocol_mode == 0) {
     return ble_gatts_notify_custom(conn_handle, hid_boot_in_handle, om);
   } else {
-    /* Send standard 8-byte notification directly */
+    /* Send standard notification directly */
     return ble_gatts_notify_custom(conn_handle, hid_input_report_handle, om);
   }
 }
+
+int ble_hid_tx_consumer_report(uint16_t conn_handle, uint16_t media_keycode) {
+  hid_consumer_report = media_keycode;
+
+  struct os_mbuf *om = ble_hs_mbuf_from_flat(&hid_consumer_report, 2);
+  if (!om) {
+    return BLE_HS_ENOMEM;
+  }
+
+  return ble_gatts_notify_custom(conn_handle, hid_consumer_report_handle, om);
+}
+
+
 
 int ble_hid_notify_battery_level(uint16_t conn_handle, uint8_t level) {
   struct os_mbuf *om = ble_hs_mbuf_from_flat(&level, 1);

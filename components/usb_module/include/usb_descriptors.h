@@ -26,17 +26,21 @@ static tusb_desc_device_t const desc_device = {
 #define REPORT_ID_KEYBOARD 1
 #define REPORT_ID_NKRO 2
 #define REPORT_ID_COMM 3
+#define REPORT_ID_CONSUMER 4
 
 #define NKRO_KEYS 0xE7
 #define NKRO_BYTES ((NKRO_KEYS + 7) / 8)
 
 #define NKRO_REPORT_SIZE 64
-#define COMM_REPORT_SIZE 48
+#define COMM_REPORT_SIZE 63
 
 // Keyboard report descriptor (6KRO + NKRO)
 static uint8_t const desc_hid_report_kbd[] = {
     // 6KRO boot keyboard
     TUD_HID_REPORT_DESC_KEYBOARD(HID_REPORT_ID(REPORT_ID_KEYBOARD)),
+
+    // Consumer Control (Media)
+    TUD_HID_REPORT_DESC_CONSUMER(HID_REPORT_ID(REPORT_ID_CONSUMER)),
 
     // NKRO bitmap
     0x05, 0x01,           // Usage Page (Generic Desktop)
@@ -148,8 +152,8 @@ static uint8_t const desc_configuration[] = {
                              sizeof(desc_hid_report_comm), // wDescriptorLength
                              EPNUM_HID_COMM_OUT, // bEndpointAddress (OUT)
                              EPNUM_HID_COMM_IN,  // bEndpointAddress (IN)
-                             COMM_REPORT_SIZE,   // wMaxPacketSize
-                             5                   // bInterval (milliseconds)
+                             64,                 // wMaxPacketSize
+                             1                   // bInterval (milliseconds)
                              )};
 
 // ------------ String Descriptors ------------

@@ -18,10 +18,11 @@ bool usb_keyboard_use_boot_protocol(void);
 bool usb_send_keyboard_6kro(uint8_t modifier, const uint8_t keycodes[6]);
 bool usb_send_keyboard_nkro(uint8_t modifier, const uint8_t *bitmap,
                             uint16_t len);
+bool usb_send_consumer_report(uint16_t keycode);
 
-void usbmod_register_callback(usb_msg_type_t callback_type,
+void usbmod_register_callback(usb_msg_module_t callback_module,
                               usb_data_callback_t callback);
-bool usbmod_execute_callback(usb_msg_type_t callback_type, uint8_t const *data,
+bool usbmod_execute_callback(usb_msg_module_t callback_module, uint8_t const *data,
                              uint16_t data_len);
 
 void usb_task(void *arg);

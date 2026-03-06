@@ -19,7 +19,7 @@ void usbmod_tud_hid_set_report_cb(uint8_t instance,
                            uint8_t const *buffer,
                            uint16_t bufsize);
 
-void register_callback(usb_msg_type_t callback_type, usb_data_callback_t callback);
-bool execute_callback(usb_msg_type_t callback_type, uint8_t const *data, uint16_t data_len);
+void register_callback(usb_msg_module_t callback_module, usb_data_callback_t callback);
+bool execute_callback(usb_msg_module_t callback_module, uint8_t const *data, uint16_t data_len);
 
 void usb_callbacks_init(void);

@@ -1,0 +1,96 @@
+.btn-moon-toggle {
+    margin-left: -0.25rem;
+    margin-right: 0.5rem;
+    opacity: 0;
+    transition: opacity 0.2s, transform 0.2s, background 0.2s;
+    width: 28px;
+    height: 28px;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 0;
+    flex-shrink: 0;
+}
+
+.macro-element-row:hover .btn-moon-toggle {
+    opacity: 0.6;
+}
+
+.btn-moon-toggle:hover {
+    opacity: 1 !important;
+    transform: scale(1.1);
+    background: rgba(255, 255, 255, 0.05);
+    border-color: var(--border-color);
+}
+
+.btn-moon-toggle.active {
+    opacity: 1;
+    color: #f1c40f;
+    /* Moon yellow */
+    background: rgba(241, 196, 15, 0.1);
+    border-color: rgba(241, 196, 15, 0.3);
+}
+
+.inline-sleep-container {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-left: 1rem;
+    padding-left: 1rem;
+    border-left: 1px solid var(--border-color);
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    animation: fadeIn 0.3s ease-out;
+}
+
+.inline-sleep-input {
+    width: 55px !important;
+    padding: 0.2rem 0.4rem !important;
+    font-size: 0.9rem !important;
+    height: 24px;
+}
+
+.btn-inline-remove {
+    background: none;
+    border: none;
+    color: var(--danger-color);
+    font-size: 1.1rem;
+    cursor: pointer;
+    padding: 0 0.2rem;
+    opacity: 0.5;
+    transition: opacity 0.2s;
+}
+
+.btn-inline-remove:hover {
+    opacity: 1;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateX(-5px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+.btn-icon-ghost {
+    background: none !important;
+    border: 1px solid transparent !important;
+    box-shadow: none !important;
+}
+
+.btn-icon-ghost:hover,
+.btn-icon-ghost.active {
+    background: rgba(88, 166, 255, 0.1) !important;
+    border-color: var(--accent-color) !important;
+    transform: translateY(-2px);
+}

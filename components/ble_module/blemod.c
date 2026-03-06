@@ -10,12 +10,16 @@
 
 #include "host/ble_hs.h"
 #include "host/util/util.h"
+#include <assert.h>
+
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
 
 #include "ble_hid_service.h"
+#include "cfg_ble.h"
+#include "host/ble_gap.h"
 
 #define TAG "ble_hid_mod"
 
@@ -23,7 +27,12 @@
 /* Globals                                                                   */
 /* ========================================================================= */
 
-static uint16_t g_ble_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+static uint16_t g_conn_handles[CFG_BLE_MAX_PROFILES];
+
+// Currently "advertising for pair" target profile. -1 if not pairing.
+static int g_pairing_profile = -1;
+// Currently directed advertising target. -1 if not doing directed.
+static int g_directed_profile = -1;
 
 /* ========================================================================= */
 /* Forward Declarations                                                      */
@@ -43,24 +52,84 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
   case BLE_GAP_EVENT_CONNECT:
     if (event->connect.status == 0) {
       ESP_LOGI(TAG, "Device connected, handle=%d", event->connect.conn_handle);
-      g_ble_conn_handle = event->connect.conn_handle;
+      struct ble_gap_conn_desc desc;
+      if (ble_gap_conn_find(event->connect.conn_handle, &desc) == 0) {
+        int profile = -1;
+        if (g_pairing_profile != -1) {
+            profile = g_pairing_profile;
+        } else if (g_directed_profile != -1) {
+            profile = g_directed_profile;
+        } else if (desc.our_id_addr.type == BLE_ADDR_RANDOM) {
+            uint8_t base_mac[6] = {0};
+            ble_hs_id_copy_addr(BLE_ADDR_PUBLIC, base_mac, NULL);
+            profile = (desc.our_id_addr.val[0] - base_mac[0]) & 0xFF;
+        }
+
+        if (profile >= 0 && profile < CFG_BLE_MAX_PROFILES) {
+            g_conn_handles[profile] = event->connect.conn_handle;
+            ESP_LOGI(TAG, "Mapped connection %d to profile %d", event->connect.conn_handle, profile);
+        } else {
+            ESP_LOGW(TAG, "Could not map connection to profile!");
+        }
+
+        // If we are currently pairing to a profile, save its MAC
+        if (g_pairing_profile >= 0 && g_pairing_profile < CFG_BLE_MAX_PROFILES) {
+            ESP_LOGI(TAG, "Saving newly connected MAC to profile %d", g_pairing_profile);
+            
+            // Note: In a real scenario we might wait for pairing to complete,
+            // but for simplicity we save the MAC now. We'll mark it valid.
+            cfg_ble_state_t new_state = *cfg_ble_get_state();
+            new_state.profiles[g_pairing_profile].is_valid = true;
+            new_state.profiles[g_pairing_profile].addr_type = desc.peer_id_addr.type;
+            memcpy(new_state.profiles[g_pairing_profile].val, desc.peer_id_addr.val, 6);
+            new_state.selected_profile = g_pairing_profile;
+            cfg_ble_save_state(&new_state);
+            
+            g_pairing_profile = -1;
+        }
+      }
 
       int rc = ble_gap_security_initiate(event->connect.conn_handle);
       ESP_LOGI(TAG, "Security initiation requested: %d", rc);
     } else {
-      ESP_LOGI(TAG, "Connection failed, restarting advertising");
+      ESP_LOGI(TAG, "Connection failed (status %d), returning to general advertising", event->connect.status);
+      g_directed_profile = -1;
       ble_hid_advertise();
     }
     break;
 
   case BLE_GAP_EVENT_DISCONNECT:
-    ESP_LOGI(TAG, "Device disconnected, reason=%d", event->disconnect.reason);
-    g_ble_conn_handle = BLE_HS_CONN_HANDLE_NONE;
-    ble_hid_advertise(); // restart so it's discoverable again
+    ESP_LOGI(TAG, "Device disconnected, reason=%d. Handle=%d", event->disconnect.reason, event->disconnect.conn.conn_handle);
+    for (int i = 0; i < CFG_BLE_MAX_PROFILES; i++) {
+        if (g_conn_handles[i] == event->disconnect.conn.conn_handle) {
+            ESP_LOGI(TAG, "Connection for profile %d cleared.", i);
+            g_conn_handles[i] = BLE_HS_CONN_HANDLE_NONE;
+        }
+    }
+    
+    // We only restart general advertising if not pending a direct connection
+    if (g_directed_profile != -1) {
+        ESP_LOGI(TAG, "Pending directed advertising for profile %d... Triggering.", g_directed_profile);
+        ble_hid_advertise(); 
+    } else if (g_pairing_profile != -1) {
+        ESP_LOGI(TAG, "Pending general pairing advertising for profile %d... Triggering.", g_pairing_profile);
+        ble_hid_advertise();
+    } else {
+        ESP_LOGI(TAG, "No pending profile action. General advertise.");
+        ble_hid_advertise(); // default to general
+    }
     break;
 
   case BLE_GAP_EVENT_ADV_COMPLETE:
-    ESP_LOGI(TAG, "Advertising complete");
+    ESP_LOGI(TAG, "Advertising complete event (timeout/stopped). Reason=%d", event->adv_complete.reason);
+    // If we were pairing, we likely timed out (30 seconds over). Stop pairing mode.
+    if (g_pairing_profile != -1) {
+        ESP_LOGW(TAG, "Pairing timed out for profile %d. Stopping pairing mode.", g_pairing_profile);
+        g_pairing_profile = -1;
+    }
+    
+    ESP_LOGI(TAG, "Restarting general advertisement after idle timeout.");
+    g_directed_profile = -1;
     ble_hid_advertise(); // restart if it timed out
     break;
 
@@ -130,16 +199,23 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
 
 static void bleprph_on_reset(int reason) {
   ESP_LOGE(TAG, "BLE stack reset, reason: %d", reason);
-  g_ble_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+  for (int i = 0; i < CFG_BLE_MAX_PROFILES; i++) {
+      g_conn_handles[i] = BLE_HS_CONN_HANDLE_NONE;
+  }
   // can attempt to re-advertise here or set a flag if needed
 }
 
 static void bleprph_on_sync(void) {
   int rc;
 
+  ESP_LOGW(TAG, "bleprph_on_sync called");
+
   // Make sure we have a valid address
   rc = ble_hs_util_ensure_addr(0); // 0 = prefer public, fallback to random
-  assert(rc == 0);
+  if (rc != 0) {
+    ESP_LOGE(TAG, "ble_hs_util_ensure_addr failed: %d", rc);
+    return;
+  }
 
   // Stack is ready — start advertising
   ESP_LOGI(TAG, "BLE stack synced, ready to advertise");
@@ -155,7 +231,55 @@ static void ble_hid_advertise(void) {
   struct ble_hs_adv_fields fields = {0};
   int rc;
 
+  // Stop any existing advertising first
+  ble_gap_adv_stop();
+  
+  // Determine which profile we are representing
+  const cfg_ble_state_t *st = cfg_ble_get_state();
+  int active_profile = st->selected_profile;
+  if (g_pairing_profile != -1) active_profile = g_pairing_profile;
+  else if (g_directed_profile != -1) active_profile = g_directed_profile;
+
+  // Generate a Static Random Address derived from the public MAC + profile ID
+  uint8_t base_mac[6] = {0};
+  // Note: ble_hs_id_copy_addr expects an address type, ble_hs_id_gen_rnd can also be used, 
+  // but let's just get the public address:
+  ble_hs_id_copy_addr(BLE_ADDR_PUBLIC, base_mac, NULL);
+  
+  uint8_t rand_addr[6];
+  memcpy(rand_addr, base_mac, 6);
+  rand_addr[5] |= 0xC0; // Set highest 2 bits of MSB for Static Random Address
+  rand_addr[0] = (rand_addr[0] + active_profile) & 0xFF; // Vary LSB 
+  
+  rc = ble_hs_id_set_rnd(rand_addr);
+  if (rc != 0) {
+      ESP_LOGE(TAG, "Failed to set random address: %d", rc);
+  }
+
   // --- Advertising data (what's broadcast) ---
+  if (g_directed_profile >= 0 && g_directed_profile < CFG_BLE_MAX_PROFILES) {
+      const cfg_ble_state_t *st = cfg_ble_get_state();
+      if (st->profiles[g_directed_profile].is_valid) {
+          ESP_LOGI(TAG, "Starting DIRECTED advertising to profile %d", g_directed_profile);
+          ble_addr_t peer_addr;
+          peer_addr.type = st->profiles[g_directed_profile].addr_type;
+          memcpy(peer_addr.val, st->profiles[g_directed_profile].val, 6);
+          
+          adv_params.conn_mode = BLE_GAP_CONN_MODE_DIR; // directed
+          adv_params.disc_mode = BLE_GAP_DISC_MODE_NON; // not general discoverable
+          
+          rc = ble_gap_adv_start(BLE_OWN_ADDR_RANDOM, &peer_addr,
+                                 10000, &adv_params, ble_hid_gap_event, NULL);
+          if (rc != 0) {
+              ESP_LOGE(TAG, "Directed adv start failed: %d", rc);
+              g_directed_profile = -1; // Fallback?
+          }
+          return;
+      }
+  }
+
+  // General advertising
+  g_directed_profile = -1;
   fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
 
   // Appearance: HID keyboard (0x03C1)
@@ -175,20 +299,30 @@ static void ble_hid_advertise(void) {
   fields.uuids16_is_complete = 1;
 
   rc = ble_gap_adv_set_fields(&fields);
-  assert(rc == 0);
+  if (rc != 0) {
+    ESP_LOGE(TAG, "ble_gap_adv_set_fields failed: %d", rc);
+    return;
+  }
 
   // --- Advertising parameters ---
   adv_params.conn_mode = BLE_GAP_CONN_MODE_UND; // connectable
   adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN; // general discoverable
 
-  rc = ble_gap_adv_start(BLE_OWN_ADDR_PUBLIC, // or BLE_OWN_ADDR_RANDOM
+  // Duration: 30 seconds (30000 ms) if pairing, else BLE_HS_FOREVER
+  int32_t duration_ms = (g_pairing_profile != -1) ? 30000 : BLE_HS_FOREVER;
+  ESP_LOGI(TAG, "Starting gap adv: mode=GEN_DISC, duration=%ld ms, profile=%d", (long)duration_ms, active_profile);
+
+  rc = ble_gap_adv_start(BLE_OWN_ADDR_RANDOM, // Use the profile-specific static random address
                          NULL,                // no direct peer
-                         BLE_HS_FOREVER,      // advertise indefinitely
+                         duration_ms,         // timeout duration
                          &adv_params,
                          ble_hid_gap_event, // your GAP event callback
                          NULL);
-  assert(rc == 0);
-  ESP_LOGI(TAG, "Advertising started");
+  if (rc != 0) {
+    ESP_LOGE(TAG, "ble_gap_adv_start failed: %d", rc);
+    return;
+  }
+  ESP_LOGI(TAG, "Advertising started successfully");
 }
 
 /* NimBLE runs its own task — this is its entry point */
@@ -204,6 +338,10 @@ static void ble_host_task(void *param) {
 
 void ble_hid_init(void) {
   esp_err_t ret;
+
+  for (int i = 0; i < CFG_BLE_MAX_PROFILES; i++) {
+      g_conn_handles[i] = BLE_HS_CONN_HANDLE_NONE;
+  }
 
   // 1. Init the NimBLE transport (HCI over VHCI for integrated controller)
   ret = nimble_port_init();
@@ -238,23 +376,131 @@ void ble_hid_init(void) {
   // 6. Spin up the NimBLE FreeRTOS task
   nimble_port_freertos_init(ble_host_task);
 
+  // Note: BLE_MAX_CONNECTIONS is configured in menuconfig
   ESP_LOGI(TAG, "BLE HID initialization complete");
 }
 
+static uint16_t get_active_conn_handle(void) {
+  const cfg_ble_state_t *st = cfg_ble_get_state();
+  int sel = st->selected_profile;
+  if (sel >= 0 && sel < CFG_BLE_MAX_PROFILES) {
+      return g_conn_handles[sel];
+  }
+  return BLE_HS_CONN_HANDLE_NONE;
+}
+
 bool ble_hid_is_connected(void) {
-  return (g_ble_conn_handle != BLE_HS_CONN_HANDLE_NONE);
+  return (get_active_conn_handle() != BLE_HS_CONN_HANDLE_NONE);
 }
 
 esp_err_t ble_hid_send_keyboard_report(const uint8_t *report, size_t len) {
-  if (!ble_hid_is_connected()) {
+  uint16_t handle = get_active_conn_handle();
+  if (handle == BLE_HS_CONN_HANDLE_NONE) {
     return ESP_ERR_INVALID_STATE;
   }
+  
+  const cfg_ble_state_t *st = cfg_ble_get_state();
+  if (!st->ble_routing_enabled) {
+      return ESP_OK; // Silently drop, acting as "OFF"
+  }
 
-  int rc = ble_hid_tx_keyboard_report(g_ble_conn_handle, report, len);
+  int rc = ble_hid_tx_keyboard_report(handle, report, len);
   if (rc != 0) {
     ESP_LOGE(TAG, "Failed characteristic tx: %d", rc);
     return ESP_FAIL;
   }
 
   return ESP_OK;
+}
+
+esp_err_t ble_hid_send_consumer_report(uint16_t media_keycode) {
+  uint16_t handle = get_active_conn_handle();
+  if (handle == BLE_HS_CONN_HANDLE_NONE) {
+    return ESP_ERR_INVALID_STATE;
+  }
+
+  int rc = ble_hid_tx_consumer_report(handle, media_keycode);
+  if (rc != 0) {
+    ESP_LOGE(TAG, "Failed consumer tx: %d", rc);
+    return ESP_FAIL;
+  }
+
+  return ESP_OK;
+}
+
+void ble_hid_profile_pair(uint8_t profile_id) {
+    ESP_LOGI(TAG, "[BLE API] Handling HOLD (Pair) for profile %d", profile_id);
+
+    // Erase old credentials if valid
+    const cfg_ble_state_t *st = cfg_ble_get_state();
+    if (st->profiles[profile_id].is_valid) {
+        ESP_LOGI(TAG, "[BLE API] Erasing old credentials for profile %d", profile_id);
+        ble_addr_t old_addr;
+        old_addr.type = st->profiles[profile_id].addr_type;
+        memcpy(old_addr.val, st->profiles[profile_id].val, 6);
+        ble_store_util_delete_peer(&old_addr);
+    }
+    
+    g_pairing_profile = profile_id;
+    g_directed_profile = -1;
+    
+    if (g_conn_handles[profile_id] != BLE_HS_CONN_HANDLE_NONE) {
+        ESP_LOGI(TAG, "[BLE API] Profile %d already connected (handle %d). Terminating for pairing.", profile_id, g_conn_handles[profile_id]);
+        ble_gap_terminate(g_conn_handles[profile_id], BLE_ERR_REM_USER_CONN_TERM);
+        // The GAP disconnect event will start the advertising.
+    } else {
+        ESP_LOGI(TAG, "[BLE API] Not currently connected on profile %d. Starting general advertisement for pairing.", profile_id);
+        ble_hid_advertise(); // General advertise
+    }
+}
+
+void ble_hid_profile_connect_and_select(uint8_t profile_id) {
+    ESP_LOGI(TAG, "[BLE API] Handling SINGLE TAP (Select/Connect) for profile %d", profile_id);
+    const cfg_ble_state_t *st = cfg_ble_get_state();
+    
+    cfg_ble_state_t new_state = *st;
+    new_state.selected_profile = profile_id;
+    cfg_ble_save_state(&new_state);
+
+    if (st->profiles[profile_id].is_valid) {
+        if (g_conn_handles[profile_id] != BLE_HS_CONN_HANDLE_NONE) {
+            ESP_LOGI(TAG, "[BLE API] Profile %d is already connected. Routing is now switched.", profile_id);
+            // No need to terminate anything else. They can stay connected.
+        } else {
+            ESP_LOGI(TAG, "[BLE API] Profile %d not currently connected. Starting directed advertisement.", profile_id);
+            g_pairing_profile = -1;
+            g_directed_profile = profile_id;
+            ble_hid_advertise(); // Directed advertise
+        }
+    } else {
+        ESP_LOGW(TAG, "[BLE API] Profile %d is not configured. Switching selection but not connecting.", profile_id);
+    }
+}
+
+void ble_hid_profile_toggle_connection(uint8_t profile_id) {
+    ESP_LOGI(TAG, "[BLE API] Handling DOUBLE TAP (Toggle Connect) for profile %d", profile_id);
+    if (g_conn_handles[profile_id] != BLE_HS_CONN_HANDLE_NONE) {
+        ESP_LOGI(TAG, "[BLE API] Profile %d connected. Terminating connection (Toggle OFF).", profile_id);
+        ble_gap_terminate(g_conn_handles[profile_id], BLE_ERR_REM_USER_CONN_TERM);
+    } else {
+        const cfg_ble_state_t *st = cfg_ble_get_state();
+        if (st->profiles[profile_id].is_valid) {
+            ESP_LOGI(TAG, "[BLE API] Not connected. Attempting directed advertising for profile %d.", profile_id);
+            g_pairing_profile = -1;
+            g_directed_profile = profile_id;
+            ble_hid_advertise(); // Directed advertise
+        } else {
+            ESP_LOGW(TAG, "[BLE API] Profile %d is not configured (invalid).", profile_id);
+        }
+    }
+}
+
+void ble_hid_set_routing_active(bool active) {
+    cfg_ble_state_t new_state = *cfg_ble_get_state();
+    new_state.ble_routing_enabled = active;
+    cfg_ble_save_state(&new_state);
+}
+
+bool ble_hid_is_routing_active(void) {
+    return cfg_ble_get_state()->ble_routing_enabled;
 }

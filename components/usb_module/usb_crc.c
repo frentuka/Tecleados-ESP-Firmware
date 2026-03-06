@@ -42,6 +42,6 @@ void usb_crc_prepare_packet(uint8_t *packet) {
 
 // verify packet
 bool usb_crc_verify_packet(const uint8_t *packet) {
-    uint8_t crc = compute_crc8(packet, 48);  // Over payload + received CRC
+    uint8_t crc = compute_crc8(packet, COMM_REPORT_SIZE);  // Over payload + received CRC
     return (crc == 0);  // 1 if valid, 0 if error
 }

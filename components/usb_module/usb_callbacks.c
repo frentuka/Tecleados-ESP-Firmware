@@ -9,7 +9,7 @@
 
 
 #include "basic_utils.h"
-#include "cfgmod.h"
+
 
 
 #include "freertos/queue.h"
@@ -24,9 +24,8 @@
 
 // ============ Packet processing queues ============
 
-#define PROCESS_QUEUE_LENGTH 4
-static QueueHandle_t rx_processing_queue = NULL;
-static QueueHandle_t tx_processing_queue = NULL;
+#define PROCESS_QUEUE_LENGTH 64
+static QueueHandle_t usb_processing_queue = NULL;
 
 // ============ Callbacks ============
 
@@ -70,7 +69,7 @@ void usbmod_tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
   uint16_t payload_len = bufsize > 0 ? bufsize - 1 : 0;
   uint8_t const *payload = buffer + 1;
 
-  ESP_LOGI(TAG, "HID Comms RX: %d bytes (payload only)", payload_len);
+  //ESP_LOGI(TAG, "HID Comms RX: %d bytes (payload only)", payload_len);
 
   // Validate payload availability (only full sized messages are allowed)
   if (payload_len == 0 || payload_len > sizeof(usb_packet_msg_t)) {
@@ -84,39 +83,65 @@ void usbmod_tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
 
   // Validate payload's CRT
   if (!usb_crc_verify_packet(payload)) {
-    ESP_LOGE(TAG, "Unable to validate payload. Responding with NAK.");
-    build_send_single_msg_packet(PAYLOAD_FLAG_NAK, msg.remaining_packets, 0,
-                                 NULL);
+    // During blast mode, silently drop CRC failures (bitmap will catch them)
+    if (!rx_blast_active()) {
+      ESP_LOGE(TAG, "Unable to validate payload. Responding with NAK.");
+      build_send_single_msg_packet(PAYLOAD_FLAG_NAK, msg.remaining_packets, 0,
+                                   NULL);
+    }
     return;
   }
 
-  // message payload is correct and can be acknowledged
-  build_send_single_msg_packet(PAYLOAD_FLAG_ACK, msg.remaining_packets, 0,
-                               NULL);
+  // During blast mode, suppress per-packet ACK (reconciliation handles it)
+  // Only ACK the FIRST packet (handshake) and non-blast packets
+  if (!rx_blast_active() || (msg.flags & PAYLOAD_FLAG_FIRST)) {
+    // For STATUS_REQ and BITMAP packets, don't send ACK (they have their own response)
+    if (msg.flags != PAYLOAD_FLAG_STATUS_REQ && msg.flags != PAYLOAD_FLAG_BITMAP) {
+      build_send_single_msg_packet(PAYLOAD_FLAG_ACK, msg.remaining_packets, 0,
+                                   NULL);
+    }
+  }
 
   // check process queue initialization
-  if (rx_processing_queue == NULL) {
+  // check process queue initialization
+  if (usb_processing_queue == NULL) {
     ESP_LOGE(TAG, "Process queue not initialized");
     return;
   }
 
   // send packet to be processed on another thread
-  if (xQueueSend(rx_processing_queue, &msg, 0) != pdTRUE) {
+  if (xQueueSend(usb_processing_queue, &msg, 0) != pdTRUE) {
     ESP_LOGE(TAG, "Process queue full, dropping packet");
   }
 }
 
 static void process_incoming_packet(usb_packet_msg_t msg) {
-  ESP_LOGI(TAG, "Received payload. len: %u, flags: %u, remaining: %u",
-           msg.payload_len, msg.flags, msg.remaining_packets);
-  print_bytes_as_chars(TAG, msg.payload, msg.payload_len);
+  // ESP_LOGI(TAG, "Received payload. len: %u, flags: %02X, remaining: %u",
+  //          msg.payload_len, msg.flags, msg.remaining_packets);
+  // print_bytes_as_chars(TAG, msg.payload, msg.payload_len);
 
-  // Verify payload's length
-  if (msg.payload_len == 0) {
-    ESP_LOGE(TAG, "Received payload_len == 0");
+  // --- Blast reconcile: STATUS_REQ (sender asking for our bitmap) ---
+  if (msg.flags == PAYLOAD_FLAG_STATUS_REQ) {
+    if (rx_blast_active()) {
+      ESP_LOGI(TAG, "STATUS_REQ: sending RX bitmap");
+      usb_packet_msg_t bitmap_msg = {0};
+      rx_blast_build_bitmap_response(&bitmap_msg);
+      send_single_packet((uint8_t *)&bitmap_msg, COMM_REPORT_SIZE);
+    } else {
+      ESP_LOGW(TAG, "STATUS_REQ received but not in blast mode");
+    }
     return;
   }
 
+  // --- Blast reconcile: BITMAP response (receiver telling us what it got) ---
+  // --- Blast reconcile: BITMAP response (receiver telling us what it got) ---
+  if (msg.flags == PAYLOAD_FLAG_BITMAP) {
+    ESP_LOGI(TAG, "BITMAP: routing to TX blast handler");
+    process_tx_response(msg);
+    return;
+  }
+
+  // --- Normal routing ---
   bool is_rx = msg.flags & PAYLOAD_FLAG_FIRST || msg.flags & PAYLOAD_FLAG_MID ||
                msg.flags & PAYLOAD_FLAG_LAST;
   bool is_tx =
@@ -124,14 +149,32 @@ static void process_incoming_packet(usb_packet_msg_t msg) {
                  msg.flags & PAYLOAD_FLAG_OK || msg.flags & PAYLOAD_FLAG_ERR ||
                  msg.flags & PAYLOAD_FLAG_ABORT);
 
+  // Verify payload's length
+  if (is_rx && msg.payload_len == 0) {
+    ESP_LOGE(TAG, "Received RX payload_len == 0");
+    return;
+  }
+
   if (is_rx) {
-    ESP_LOGI(TAG, "process_incoming_packet: Processing RX-wise packet");
+    // During blast mode, check if LAST packet -> commit and respond
+    if (rx_blast_active() && (msg.flags & PAYLOAD_FLAG_LAST)) {
+      ESP_LOGI(TAG, "Blast RX: LAST packet received, committing");
+      bool result = rx_blast_commit(&msg);
+      if (result) {
+        build_send_single_msg_packet(PAYLOAD_FLAG_ACK | PAYLOAD_FLAG_OK, 0, 0, NULL);
+      } else {
+        build_send_single_msg_packet(PAYLOAD_FLAG_ACK | PAYLOAD_FLAG_ERR, 0, 0, NULL);
+      }
+      return;
+    }
+
+    // ESP_LOGI(TAG, "process_incoming_packet: Processing RX-wise packet");
     process_rx_request(msg);
     return;
   }
 
   if (is_tx) {
-    ESP_LOGI(TAG, "process_incoming_packet: Processing TX-wise packet");
+    // ESP_LOGI(TAG, "process_incoming_packet: Processing TX-wise packet");
     process_tx_response(msg);
     return;
   }
@@ -149,22 +192,12 @@ uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance) {
 
 // ============ init ============
 
-static void rx_processing_task(void *pvParameters) {
+static void usb_processing_task(void *pvParameters) {
   usb_packet_msg_t msg;
   while (1) {
     // check for incoming packets
-    if (xQueueReceive(rx_processing_queue, &msg, portMAX_DELAY) == pdTRUE) {
+    if (xQueueReceive(usb_processing_queue, &msg, portMAX_DELAY) == pdTRUE) {
       process_incoming_packet(msg);
-    }
-  }
-}
-
-static void tx_processing_task(void *pvParameters) {
-  usb_packet_msg_t msg;
-  while (1) {
-    // check for incoming packets
-    if (xQueueReceive(tx_processing_queue, &msg, portMAX_DELAY) == pdTRUE) {
-      process_tx_response(msg);
     }
   }
 }
@@ -179,60 +212,57 @@ static void timeouts_task(void *pvParameters) {
       erase_rx_buffer();
     }
 
-    // check for packet timeout (rx_buf)
+    // check for packet timeout (tx_buf)
     uint64_t tx_timestamp_elapsed = now_us - tx_get_last_packet_timestamp_us();
     if (tx_get_last_packet_timestamp_us() &&
         tx_timestamp_elapsed > TX_TIMEOUT_MS * 1000) {
       erase_tx_buffer();
     }
 
-    // Throttle loop to max 50hz
-    vTaskDelay(pdMS_TO_TICKS(20));
+    // Throttle loop to max 200hz
+    vTaskDelay(pdMS_TO_TICKS(5));
   }
 }
 
-static usb_data_callback_t s_type_callbacks[USB_MSG_TYPE_COUNT] = {0};
+static usb_data_callback_t s_module_callbacks[USB_MODULE_COUNT] = {0};
 
-void register_callback(usb_msg_type_t callback_type,
+void register_callback(usb_msg_module_t callback_module,
                        usb_data_callback_t callback) {
-  if (callback_type >= USB_MSG_TYPE_COUNT) {
-    ESP_LOGE(TAG, "Failed to register callback: type > USB_MSG_TYPE_COUNT");
+  if (callback_module >= USB_MODULE_COUNT) {
+    ESP_LOGE(TAG, "Failed to register callback: module > USB_MODULE_COUNT");
     return;
   }
 
-  s_type_callbacks[callback_type] = callback;
+  s_module_callbacks[callback_module] = callback;
 }
 
-bool execute_callback(usb_msg_type_t callback_type, uint8_t const *data,
+bool execute_callback(usb_msg_module_t callback_module, uint8_t const *data,
                       uint16_t data_len) {
-  if (callback_type >= USB_MSG_TYPE_COUNT) {
-    ESP_LOGE(TAG, "Failed to execute callback: type > USB_MSG_TYPE_COUNT");
+  if (callback_module >= USB_MODULE_COUNT) {
+    ESP_LOGE(TAG, "Failed to execute callback: module > USB_MODULE_COUNT");
     return false;
   }
 
-  if (!s_type_callbacks[callback_type]) {
+  if (!s_module_callbacks[callback_module]) {
     ESP_LOGE(TAG, "Failed to execute callback: callback not registered");
     return false;
   }
 
-  return s_type_callbacks[callback_type];
+  return s_module_callbacks[callback_module]((uint8_t *)data, data_len);
 }
 
 void usb_callbacks_init(void) {
-  rx_processing_queue =
-      xQueueCreate(PROCESS_QUEUE_LENGTH, sizeof(usb_packet_msg_t));
-  tx_processing_queue =
+  usb_processing_queue =
       xQueueCreate(PROCESS_QUEUE_LENGTH, sizeof(usb_packet_msg_t));
 
-  if (rx_processing_queue == NULL || tx_processing_queue == NULL) {
+  if (usb_processing_queue == NULL) {
     ESP_LOGE(TAG, "Failed to create process queue");
     return;
   }
 
-  // 32KB stack sizes (64KB total)
-  xTaskCreate(rx_processing_task, "usb_rx_processing_task", 8192, NULL, 5,
+  // Create unified processing task
+  xTaskCreate(usb_processing_task, "usb_processing_task", 16384, NULL, 5,
               NULL);
-  xTaskCreate(tx_processing_task, "usb_tx_processing_task", 8192, NULL, 5,
-              NULL);
-  xTaskCreate(timeouts_task, "usb_cb_timeouts_task", 2048, NULL, 5, NULL);
+  
+  xTaskCreate(timeouts_task, "usb_cb_timeouts_task", 3072, NULL, 5, NULL);
 }
