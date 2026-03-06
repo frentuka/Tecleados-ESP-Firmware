@@ -230,9 +230,10 @@ void process_tx_response(const usb_packet_msg_t msg)
             uint64_t now_us = esp_timer_get_time();
             float size_kb = tx_buf_len / 1024.0f;
             float transfer_time_ms = (now_us - tx_blast_start_time_us) / 1000.0f;
+            float transfer_speed_kbps = transfer_time_ms > 0 ? size_kb / (transfer_time_ms / 1000.0f) : 0;
 
-            ESP_LOGI(TAG, "Payload TX Complete! Packets: %u | Size: %.2f KB | Transfer time: %.2f ms | Reconcile rounds: %u", 
-                     tx_blast_total_packets, size_kb, transfer_time_ms, tx_blast_reconcile_attempts);
+            ESP_LOGI(TAG, "Payload TX Complete! Packets: %u | Size: %.2f KB | Transfer time: %.2f ms | Speed: %.2f KB/s | Reconcile rounds: %u", 
+                     tx_blast_total_packets, size_kb, transfer_time_ms, transfer_speed_kbps, tx_blast_reconcile_attempts);
 
             erase_tx_buffer();
             return;
@@ -425,7 +426,7 @@ bool send_payload(const uint8_t *payload, uint16_t payload_len)
 {
     // Check for buffer content
     if (tx_buf_len) {
-        ESP_LOGE(TAG, "Can't send payload: dirty buffer");
+        ESP_LOGE(TAG, "Can't send payload: buffer is not empty");
         return false;
     }
 

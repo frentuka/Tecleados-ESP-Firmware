@@ -18,6 +18,8 @@ import type { Macro } from './App';
 // ── Matrix dimensions (must match firmware) ──
 const LAYER_COUNT = 4;
 const LAYER_NAMES = ['Base', 'FN1', 'FN2', 'FN3'];
+const MATRIX_ROWS = 6;
+const MATRIX_COLS = 18;
 
 // ── Types ──
 type LayerData = number[][]; // ROWS × COLS
@@ -253,12 +255,18 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
 
     // ── Export/Import ──
     const exportLayout = async () => {
-        const data = {
+        const data: any = {
             version: 1,
-            physicalLayout,
-            layers,
+            matrixRows: MATRIX_ROWS,
+            matrixCols: MATRIX_COLS,
+            layers: layers.map((l, i) => l || DEFAULT_KEYMAPS[i]),
             timestamp: new Date().toISOString()
         };
+
+        if (isDeveloperMode) {
+            data.physicalLayout = physicalLayout || DEFAULT_PHYSICAL_LAYOUT;
+        }
+
         const fileName = `${hidService.getDeviceName()}_${new Date().toISOString().slice(0, 10)}.json`;
         const jsonContent = JSON.stringify(data, null, 2);
 
@@ -307,16 +315,17 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
         reader.onload = (event) => {
             try {
                 const data = JSON.parse(event.target?.result as string);
-                if (data.physicalLayout) {
+                if (data.physicalLayout && isDeveloperMode) {
                     setPhysicalLayout(data.physicalLayout);
                     setPhysLayoutStatus('loaded');
+                    setHasPhysLayoutChanges(true); // Mark as changed so user can save to device
                 }
                 if (data.layers && Array.isArray(data.layers)) {
                     setLayers(data.layers);
                     setLayerStatus(data.layers.map((l: LayerData | null) => l ? 'loaded' : 'idle'));
                     setHasChanges(data.layers.map((l: LayerData | null) => l !== null));
                 }
-                onLogRef.current('Layout imported from JSON. Remember to save layers to device.');
+                onLogRef.current('Layout imported from JSON. Remember to save layout and layers to device.');
             } catch (err) {
                 onLogRef.current('Failed to parse layout JSON');
                 console.error(err);
@@ -1120,42 +1129,116 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                         }
                         if (!selectedPk || visualRowIdx === -1) return null;
 
-                        const updateRow = (newRow: number) => {
-                            setPhysicalLayout(prev => {
-                                if (!prev) return prev;
-                                const copy = prev.map(r => r.map(k => ({ ...k })));
-                                const pk = copy[visualRowIdx].find(k => `${k.row}-${k.col}` === selId);
-                                if (pk) {
-                                    const oldId = `${pk.row}-${pk.col}`;
-                                    pk.row = newRow;
-                                    const newId = `${pk.row}-${pk.col}`;
-                                    if (oldId !== newId) setSelectedKeys(new Set([newId]));
+                        const getUpdatedRowLayout = (prev: PhysKey[][], newRow: number): { nextLayout: PhysKey[][], newId: string } | null => {
+                            const flatKeys = prev.flatMap(r => r.map(k => ({ ...k })));
+                            const targetKey = flatKeys.find(k => `${k.row}-${k.col}` === selId);
+                            if (!targetKey) return null;
+
+                            const delta = newRow - targetKey.row;
+                            if (delta === 0) return null;
+
+                            const movedKeys = new Map<string, PhysKey>();
+                            const tryMoveRecursive = (key: PhysKey, d: number): boolean => {
+                                const nextRow = key.row + d;
+                                if (nextRow < 0 || nextRow >= MATRIX_ROWS) return false;
+
+                                const originalId = `${key.row}-${key.col}`;
+                                if (movedKeys.has(originalId)) return true;
+
+                                const projectedKey = { ...key, row: nextRow };
+                                movedKeys.set(originalId, projectedKey);
+
+                                // Check for collisions with other keys
+                                for (const other of flatKeys) {
+                                    const otherId = `${other.row}-${other.col}`;
+                                    if (otherId === originalId) continue;
+
+                                    if (other.row === projectedKey.row && other.col === projectedKey.col) {
+                                        // Collision! Try to push the other key
+                                        if (!tryMoveRecursive(other, d)) return false;
+                                    }
                                 }
-                                return copy;
-                            });
-                            setHasPhysLayoutChanges(true);
+                                return true;
+                            };
+
+                            if (!tryMoveRecursive(targetKey, delta)) return null;
+
+                            const nextLayout = prev.map(row => row.map(pk => {
+                                const moved = movedKeys.get(`${pk.row}-${pk.col}`);
+                                return moved ? { ...moved } : { ...pk };
+                            }));
+
+                            return {
+                                nextLayout,
+                                newId: `${targetKey.row + delta}-${targetKey.col}`
+                            };
                         };
 
-                        const updateCol = (newCol: number) => {
-                            setPhysicalLayout(prev => {
-                                if (!prev) return prev;
-                                const copy = prev.map(r => r.map(k => ({ ...k })));
-                                const visualRow = copy[visualRowIdx];
-                                // Find the key index in the visual row
-                                const keyIdx = visualRow.findIndex(k => `${k.row}-${k.col}` === selId);
-                                if (keyIdx === -1) return copy;
-                                const oldCol = visualRow[keyIdx].col;
-                                const delta = newCol - oldCol;
-                                if (delta === 0) return copy;
-                                // Shift this key and all keys to the right
-                                for (let i = keyIdx; i < visualRow.length; i++) {
-                                    visualRow[i].col += delta;
+                        const getUpdatedColLayout = (prev: PhysKey[][], newCol: number): { nextLayout: PhysKey[][], newId: string } | null => {
+                            const flatKeys = prev.flatMap(r => r.map(k => ({ ...k })));
+                            const targetKey = flatKeys.find(k => `${k.row}-${k.col}` === selId);
+                            if (!targetKey) return null;
+
+                            const delta = newCol - targetKey.col;
+                            if (delta === 0) return null;
+
+                            const movedKeys = new Map<string, PhysKey>();
+                            const tryMoveRecursive = (key: PhysKey, d: number): boolean => {
+                                const nextCol = key.col + d;
+                                if (nextCol < 0 || nextCol >= MATRIX_COLS) return false;
+
+                                const originalId = `${key.row}-${key.col}`;
+                                if (movedKeys.has(originalId)) return true;
+
+                                const projectedKey = { ...key, col: nextCol };
+                                movedKeys.set(originalId, projectedKey);
+
+                                // Check for collisions with other keys
+                                for (const other of flatKeys) {
+                                    const otherId = `${other.row}-${other.col}`;
+                                    if (otherId === originalId) continue;
+
+                                    if (other.row === projectedKey.row && other.col === projectedKey.col) {
+                                        // Collision! Try to push the other key
+                                        if (!tryMoveRecursive(other, d)) return false;
+                                    }
                                 }
-                                const newId = `${visualRow[keyIdx].row}-${visualRow[keyIdx].col}`;
-                                setSelectedKeys(new Set([newId]));
-                                return copy;
-                            });
-                            setHasPhysLayoutChanges(true);
+                                return true;
+                            };
+
+                            if (!tryMoveRecursive(targetKey, delta)) return null;
+
+                            const nextLayout = prev.map(row => row.map(pk => {
+                                const moved = movedKeys.get(`${pk.row}-${pk.col}`);
+                                return moved ? { ...moved } : { ...pk };
+                            }));
+
+                            return {
+                                nextLayout,
+                                newId: `${targetKey.row}-${targetKey.col + delta}`
+                            };
+                        };
+
+                        const updateRow = (targetValue: number) => {
+                            const current = physicalLayout || DEFAULT_PHYSICAL_LAYOUT;
+                            const result = getUpdatedRowLayout(current, targetValue);
+                            if (result) {
+                                setPhysicalLayout(result.nextLayout);
+                                setSelectedKeys(new Set([result.newId]));
+                                setRowInput(String(targetValue));
+                                setHasPhysLayoutChanges(true);
+                            }
+                        };
+
+                        const updateCol = (targetValue: number) => {
+                            const current = physicalLayout || DEFAULT_PHYSICAL_LAYOUT;
+                            const result = getUpdatedColLayout(current, targetValue);
+                            if (result) {
+                                setPhysicalLayout(result.nextLayout);
+                                setSelectedKeys(new Set([result.newId]));
+                                setColInput(String(targetValue));
+                                setHasPhysLayoutChanges(true);
+                            }
                         };
 
                         return (
@@ -1186,8 +1269,8 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                                 ev.preventDefault();
                                                 const cur = parseInt(rowInput);
                                                 if (isNaN(cur)) return;
-                                                const next = cur + (ev.deltaY < 0 ? 1 : -1);
-                                                if (next >= 0) { setRowInput(String(next)); updateRow(next); }
+                                                const target = cur + (ev.deltaY < 0 ? 1 : -1);
+                                                if (target >= 0) updateRow(target);
                                             };
                                         }}
                                     />
@@ -1215,8 +1298,8 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                                 ev.preventDefault();
                                                 const cur = parseInt(colInput);
                                                 if (isNaN(cur)) return;
-                                                const next = cur + (ev.deltaY < 0 ? 1 : -1);
-                                                if (next >= 0) { setColInput(String(next)); updateCol(next); }
+                                                const target = cur + (ev.deltaY < 0 ? 1 : -1);
+                                                if (target >= 0) updateCol(target);
                                             };
                                         }}
                                     />

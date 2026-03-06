@@ -61,17 +61,25 @@ void macros_default(void *out_struct);
 bool macros_deserialize(cJSON *root, void *out_struct);
 cJSON *macros_serialize(const void *in_struct);
 
+typedef struct {
+  uint32_t active_mask; // Bit N is 1 if macro N exists (N 0..31)
+} cfg_macro_index_t;
+
 // Serialize an outline of all macros (IDs and Names only)
-cJSON *macros_serialize_outline(const cfg_macro_list_t *list);
+cJSON *macros_serialize_outline(const cfg_macro_index_t *idx);
 
 // Serialize a specific macro by its ID
-cJSON *macros_serialize_single(uint16_t id, const cfg_macro_list_t *list);
+cJSON *macros_serialize_single(uint16_t id, const cfg_macro_index_t *idx);
 
 // Serialize compile-time limits as JSON: { "maxEvents": N, "maxMacros": M }
 cJSON *macros_serialize_limits(void);
 
-// Insert or replace a single macro (by ID) in the list
-void macros_upsert_single(cJSON *macro_json, cfg_macro_list_t *list);
+// Insert or replace a single macro (by ID) directly to NVS
+esp_err_t macros_upsert_single(cJSON *macro_json, cfg_macro_index_t *idx);
 
-// Remove a macro by ID from the list
-void macros_delete_single(uint16_t id, cfg_macro_list_t *list);
+// Remove a macro by ID directly from NVS and index
+esp_err_t macros_delete_single(uint16_t id, cfg_macro_index_t *idx);
+
+// Load all active macros from NVS into a list
+esp_err_t macros_load_all(cfg_macro_list_t *out_list);
+

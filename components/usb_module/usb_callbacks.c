@@ -25,8 +25,7 @@
 // ============ Packet processing queues ============
 
 #define PROCESS_QUEUE_LENGTH 64
-static QueueHandle_t rx_processing_queue = NULL;
-static QueueHandle_t tx_processing_queue = NULL;
+static QueueHandle_t usb_processing_queue = NULL;
 
 // ============ Callbacks ============
 
@@ -70,7 +69,7 @@ void usbmod_tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
   uint16_t payload_len = bufsize > 0 ? bufsize - 1 : 0;
   uint8_t const *payload = buffer + 1;
 
-  ESP_LOGI(TAG, "HID Comms RX: %d bytes (payload only)", payload_len);
+  //ESP_LOGI(TAG, "HID Comms RX: %d bytes (payload only)", payload_len);
 
   // Validate payload availability (only full sized messages are allowed)
   if (payload_len == 0 || payload_len > sizeof(usb_packet_msg_t)) {
@@ -104,13 +103,14 @@ void usbmod_tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
   }
 
   // check process queue initialization
-  if (rx_processing_queue == NULL) {
+  // check process queue initialization
+  if (usb_processing_queue == NULL) {
     ESP_LOGE(TAG, "Process queue not initialized");
     return;
   }
 
   // send packet to be processed on another thread
-  if (xQueueSend(rx_processing_queue, &msg, 0) != pdTRUE) {
+  if (xQueueSend(usb_processing_queue, &msg, 0) != pdTRUE) {
     ESP_LOGE(TAG, "Process queue full, dropping packet");
   }
 }
@@ -134,15 +134,10 @@ static void process_incoming_packet(usb_packet_msg_t msg) {
   }
 
   // --- Blast reconcile: BITMAP response (receiver telling us what it got) ---
+  // --- Blast reconcile: BITMAP response (receiver telling us what it got) ---
   if (msg.flags == PAYLOAD_FLAG_BITMAP) {
     ESP_LOGI(TAG, "BITMAP: routing to TX blast handler");
-    if (tx_processing_queue == NULL) {
-      ESP_LOGE(TAG, "tx_processing_queue not initialized");
-      return;
-    }
-    if (xQueueSend(tx_processing_queue, &msg, 0) != pdTRUE) {
-      ESP_LOGE(TAG, "TX Process queue full, dropping BITMAP");
-    }
+    process_tx_response(msg);
     return;
   }
 
@@ -179,14 +174,8 @@ static void process_incoming_packet(usb_packet_msg_t msg) {
   }
 
   if (is_tx) {
-    // ESP_LOGI(TAG, "process_incoming_packet: Queuing TX-wise packet");
-    if (tx_processing_queue == NULL) {
-      ESP_LOGE(TAG, "tx_processing_queue not initialized");
-      return;
-    }
-    if (xQueueSend(tx_processing_queue, &msg, 0) != pdTRUE) {
-      ESP_LOGE(TAG, "TX Process queue full, dropping packet");
-    }
+    // ESP_LOGI(TAG, "process_incoming_packet: Processing TX-wise packet");
+    process_tx_response(msg);
     return;
   }
 }
@@ -203,22 +192,12 @@ uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance) {
 
 // ============ init ============
 
-static void rx_processing_task(void *pvParameters) {
+static void usb_processing_task(void *pvParameters) {
   usb_packet_msg_t msg;
   while (1) {
     // check for incoming packets
-    if (xQueueReceive(rx_processing_queue, &msg, portMAX_DELAY) == pdTRUE) {
+    if (xQueueReceive(usb_processing_queue, &msg, portMAX_DELAY) == pdTRUE) {
       process_incoming_packet(msg);
-    }
-  }
-}
-
-static void tx_processing_task(void *pvParameters) {
-  usb_packet_msg_t msg;
-  while (1) {
-    // check for incoming packets
-    if (xQueueReceive(tx_processing_queue, &msg, portMAX_DELAY) == pdTRUE) {
-      process_tx_response(msg);
     }
   }
 }
@@ -233,15 +212,15 @@ static void timeouts_task(void *pvParameters) {
       erase_rx_buffer();
     }
 
-    // check for packet timeout (rx_buf)
+    // check for packet timeout (tx_buf)
     uint64_t tx_timestamp_elapsed = now_us - tx_get_last_packet_timestamp_us();
     if (tx_get_last_packet_timestamp_us() &&
         tx_timestamp_elapsed > TX_TIMEOUT_MS * 1000) {
       erase_tx_buffer();
     }
 
-    // Throttle loop to max 50hz
-    vTaskDelay(pdMS_TO_TICKS(20));
+    // Throttle loop to max 200hz
+    vTaskDelay(pdMS_TO_TICKS(5));
   }
 }
 
@@ -273,20 +252,17 @@ bool execute_callback(usb_msg_module_t callback_module, uint8_t const *data,
 }
 
 void usb_callbacks_init(void) {
-  rx_processing_queue =
-      xQueueCreate(PROCESS_QUEUE_LENGTH, sizeof(usb_packet_msg_t));
-  tx_processing_queue =
+  usb_processing_queue =
       xQueueCreate(PROCESS_QUEUE_LENGTH, sizeof(usb_packet_msg_t));
 
-  if (rx_processing_queue == NULL || tx_processing_queue == NULL) {
+  if (usb_processing_queue == NULL) {
     ESP_LOGE(TAG, "Failed to create process queue");
     return;
   }
 
-  // 32KB stack sizes (64KB total)
-  xTaskCreate(rx_processing_task, "usb_rx_processing_task", 8192, NULL, 5,
+  // Create unified processing task
+  xTaskCreate(usb_processing_task, "usb_processing_task", 16384, NULL, 5,
               NULL);
-  xTaskCreate(tx_processing_task, "usb_tx_processing_task", 8192, NULL, 5,
-              NULL);
+  
   xTaskCreate(timeouts_task, "usb_cb_timeouts_task", 3072, NULL, 5, NULL);
 }

@@ -252,7 +252,7 @@ class HIDService {
         if (dev.vendorId === VENDOR_ID && dev.productId === PRODUCT_ID) {
             console.log('Device reappeared, reconnecting...');
             // Small delay to let the device fully initialize
-            setTimeout(() => this.tryReconnect(), 500);
+            setTimeout(() => this.tryReconnect(), 1000);
         }
     }
 
@@ -261,6 +261,7 @@ class HIDService {
         console.log('Starting auto-reconnect polling...');
         this.reconnectTimer = setInterval(() => this.tryReconnect(), 2000);
     }
+
 
     private stopReconnectPolling(): void {
         if (this.reconnectTimer) {
@@ -287,7 +288,7 @@ class HIDService {
                 await this.openDevice(target);
             }
         } catch (error) {
-            // Silently retry
+            // to-do
         }
     }
 
@@ -637,16 +638,23 @@ class HIDService {
         if (event.reportId !== COMM_REPORT_ID) return;
         const data = new Uint8Array(event.data.buffer);
 
-        // Broadcast raw data to legacy log callbacks
-        this.logCallbacks.forEach(cb => cb(data));
-        this.rawPacketCallbacks.forEach(cb => cb(data, 'rx'));
-
         if (data.length < 63) return;
 
         const flags = data[0];
         const remaining = data[1] | (data[2] << 8);
         const safeLen = Math.min(data[3], 58);
         const payloadBytes = data.slice(4, 4 + safeLen);
+
+        // --- Blast check ---
+        const isBlastPacket = (flags & PAYLOAD_FLAG_MID) || (flags & PAYLOAD_FLAG_LAST);
+        const isHandshake = (flags & PAYLOAD_FLAG_FIRST) && remaining > 0;
+
+        // Broadcast raw data and logs ONLY for non-blast payload packets or handshakes
+        // This avoids 500+ callbacks during a 258-packet blast
+        if (!this.blastRx.active || isHandshake || !isBlastPacket) {
+            this.logCallbacks.forEach(cb => cb(data));
+            this.rawPacketCallbacks.forEach(cb => cb(data, 'rx'));
+        }
 
         // ── Check flag waiters (blast protocol responses) ──
         // Check exact flag match first (for BITMAP, STATUS_REQ)

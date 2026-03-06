@@ -14,6 +14,7 @@
 #include "kb_matrix.h"
 #include "kb_report.h"
 #include "kb_state.h"
+#include "kb_system_action.h"
 
 #include "cfg_layouts.h"
 
@@ -47,7 +48,7 @@ static inline bool get_bit(const uint8_t *bitmap, size_t bit_index) {
 }
 
 static bool kb_system_usb_callback(uint8_t *data, uint16_t len) {
-  if (len < 2) return false;
+  if (len < 1) return false;
   
   uint8_t cmd = data[0];
   if (cmd == SYS_CMD_INJECT_KEY && len >= 4) {
@@ -275,6 +276,7 @@ void kb_manager_start(void) {
   ESP_LOGI(TAG, "Starting keyboard manager...");
   kb_state_init();
   kb_macro_init();
+  kb_system_action_init();
   cfg_layout_load_all();
   memset(s_injected_matrix, 0, sizeof(s_injected_matrix));
   usbmod_register_callback(MODULE_SYSTEM, kb_system_usb_callback);

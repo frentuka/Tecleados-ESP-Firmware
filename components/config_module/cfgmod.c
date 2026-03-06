@@ -16,6 +16,7 @@ extern void cfg_layouts_register(void);
 extern void cfg_macros_register(void);
 extern void cfg_system_register(void);
 extern void cfg_physical_register(void);
+extern void cfg_ble_init(void);
 
 #include "esp_log.h"
 
@@ -165,28 +166,28 @@ esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
     }
 
     if (root) {
-      // Load existing macro list from NVS
-      cfg_macro_list_t *list = s_macro_scratch;
-      if (list) {
-        cfgmod_get_config(kind, key, list);
+      // Load existing macro index from NVS
+      cfg_macro_index_t idx = {0};
+      size_t idx_len = sizeof(idx);
+      cfgmod_read_storage(CFGMOD_KIND_MACRO, "mac_idx", &idx, &idx_len);
 
-        cJSON *del = cJSON_GetObjectItem(root, "delete");
-        if (cJSON_IsNumber(del)) {
-          // Delete mode
-          macros_delete_single((uint16_t)del->valueint, list);
-        } else {
-          // Upsert mode
-          macros_upsert_single(root, list);
-        }
-
-        // Write directly to NVS as binary via cfgmod_set_config
-        status = cfgmod_set_config(kind, key, list);
-        if (status != ESP_OK) {
-            ESP_LOGE(TAG, "NVS write failed for macro: 0x%X", (unsigned)status);
-        }
+      cJSON *del = cJSON_GetObjectItem(root, "delete");
+      if (cJSON_IsNumber(del)) {
+        // Delete mode
+        status = macros_delete_single((uint16_t)del->valueint, &idx);
       } else {
-        status = ESP_ERR_NO_MEM;
+        // Upsert mode
+        status = macros_upsert_single(root, &idx);
       }
+
+      if (status != ESP_OK) {
+          ESP_LOGE(TAG, "NVS write failed for macro: 0x%X", (unsigned)status);
+      } else {
+          if (s_registry[CFGMOD_KIND_MACRO].update_fn) {
+              s_registry[CFGMOD_KIND_MACRO].update_fn("macros");
+          }
+      }
+
       cJSON_Delete(root);
     } else {
       status = ESP_ERR_INVALID_ARG;
@@ -215,10 +216,11 @@ esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
     }
 
     if (requested_id != 0xFFFF) {
-      cfg_macro_list_t *list = s_macro_scratch;
-      if (list) {
-        cfgmod_get_config(kind, key, list);
-        cJSON *single_macro = macros_serialize_single(requested_id, list);
+        cfg_macro_index_t idx = {0};
+        size_t idx_len = sizeof(idx);
+        cfgmod_read_storage(CFGMOD_KIND_MACRO, "mac_idx", &idx, &idx_len);
+
+        cJSON *single_macro = macros_serialize_single(requested_id, &idx);
 
         if (single_macro) {
           char *json_str = cJSON_PrintUnformatted(single_macro);
@@ -242,10 +244,6 @@ esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
           status = ESP_ERR_NO_MEM;
           actual_payload_len = status_size;
         }
-      } else {
-        status = ESP_ERR_NO_MEM;
-        actual_payload_len = status_size;
-      }
     } else {
       status = ESP_ERR_INVALID_ARG;
       actual_payload_len = status_size;
@@ -254,32 +252,29 @@ esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
 
   } else if (hdr.key_id == CFG_KEY_MACROS && hdr.cmd == CFG_CMD_GET) {
     // Return only the macro outline (IDs and names, without elements)
-    cfg_macro_list_t *list = s_macro_scratch;
-    if (list) {
-      cfgmod_get_config(kind, key, list);
-      cJSON *outline = macros_serialize_outline(list);
+    cfg_macro_index_t idx = {0};
+    size_t idx_len = sizeof(idx);
+    cfgmod_read_storage(CFGMOD_KIND_MACRO, "mac_idx", &idx, &idx_len);
+    
+    cJSON *outline = macros_serialize_outline(&idx);
 
-      if (outline) {
-        char *json_str = cJSON_PrintUnformatted(outline);
-        cJSON_Delete(outline);
-        if (json_str) {
-          size_t json_len = strlen(json_str) + 1;
-          if (json_len <= out_payload_max - status_size) {
-            memcpy(out_payload + status_size, json_str, json_len);
-            actual_payload_len = status_size + json_len;
-            status = ESP_OK;
-          } else {
-            status = ESP_ERR_NO_MEM;
-            actual_payload_len = status_size;
-          }
-          free(json_str);
+    if (outline) {
+      char *json_str = cJSON_PrintUnformatted(outline);
+      cJSON_Delete(outline);
+      if (json_str) {
+        size_t json_len = strlen(json_str) + 1;
+        if (json_len <= out_payload_max - status_size) {
+          memcpy(out_payload + status_size, json_str, json_len);
+          actual_payload_len = status_size + json_len;
+          status = ESP_OK;
         } else {
-           status = ESP_ERR_NO_MEM;
-           actual_payload_len = status_size;
+          status = ESP_ERR_NO_MEM;
+          actual_payload_len = status_size;
         }
+        free(json_str);
       } else {
-        status = ESP_ERR_NO_MEM;
-        actual_payload_len = status_size;
+         status = ESP_ERR_NO_MEM;
+         actual_payload_len = status_size;
       }
     } else {
       status = ESP_ERR_NO_MEM;
@@ -490,11 +485,11 @@ esp_err_t cfg_init(void) {
       // Continue anyway — macros won't work but other features should
     }
 
-    // Register default modules
     cfg_layouts_register();
     cfg_macros_register();
     cfg_system_register();
     cfg_physical_register();
+    cfg_ble_init();
 
     // Register test data
     static const char hello_msg[] = "\"Hello world\"";

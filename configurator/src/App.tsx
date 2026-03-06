@@ -153,6 +153,7 @@ function App() {
       }
     }
   }, [isConnected]);
+
   const fetchSingleMacro = useCallback(async (id: number): Promise<Macro | null> => {
     if (!isConnected) return null;
     if (macroCache.current[id]) {
@@ -206,6 +207,9 @@ function App() {
           list = parsed.macros;
         }
 
+        // Sort alphabetically by name before setting and fetching details
+        list.sort((a, b) => a.name.localeCompare(b.name));
+
         setMacros(list);
         macroCache.current = {}; // Reset cache on full list fetch
 
@@ -224,13 +228,24 @@ function App() {
   const handleSaveMacro = async (newMacro: Macro) => {
     let macroToSave = newMacro;
     let isNew = false;
+    const maxAllowedId = macroLimits ? macroLimits.maxMacros - 1 : 31;
+
     if (newMacro.id === -1) {
       // Find the smallest available ID
       const existingIds = new Set(macros.map(m => m.id));
       let nextId = 0;
       while (existingIds.has(nextId)) nextId++;
+
+      if (nextId > maxAllowedId) {
+        throw new Error(`Maximum number of macros reached. Max allowed is ${maxAllowedId + 1}.`);
+      }
+
       macroToSave = { ...newMacro, id: nextId };
       isNew = true;
+    } else {
+      if (macroToSave.id > maxAllowedId) {
+        throw new Error(`Macro ID ${macroToSave.id} exceeds maximum allowed ID of ${maxAllowedId}.`);
+      }
     }
 
     // Send only the single macro via CFG_KEY_MACRO_SINGLE

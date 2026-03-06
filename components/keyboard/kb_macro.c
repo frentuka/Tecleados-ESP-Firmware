@@ -13,6 +13,7 @@
 #include "class/hid/hid.h"
 #include "kb_layout.h"
 #include "kb_report.h"
+#include "kb_system_action.h"
 
 static const char *TAG = "kb_macro";
 
@@ -284,7 +285,7 @@ static void macro_task(void *arg) {
 // Reload macros from storage
 static void on_macros_updated(const char *key) {
     ESP_LOGI(TAG, "Reloading macros from storage...");
-    cfgmod_get_config(CFGMOD_KIND_MACRO, "macros", &s_macros);
+    macros_load_all(&s_macros);
     // Reset all runtime state on reload
     memset(s_rt_state, 0, sizeof(s_rt_state));
 }
@@ -303,7 +304,7 @@ void kb_macro_init(void) {
                        macros_serialize, on_macros_updated, sizeof(cfg_macro_list_t));
 
   // Load initial macros
-  cfgmod_get_config(CFGMOD_KIND_MACRO, "macros", &s_macros);
+  macros_load_all(&s_macros);
   ESP_LOGI(TAG, "Loaded %d macros from storage", (int)s_macros.count);
 
   xTaskCreate(macro_task, "kb_macro", 4096, NULL, 4, NULL);
@@ -375,8 +376,14 @@ static void process_system_action(uint16_t action, bool is_pressed) {
     case SYS_ACTION_BLE_1:
     case SYS_ACTION_BLE_2:
     case SYS_ACTION_BLE_3:
-      ESP_LOGI(TAG, "BLE action %04x not yet implemented", action);
-      // TODO: call blemod functions
+    case SYS_ACTION_BLE_4:
+    case SYS_ACTION_BLE_5:
+    case SYS_ACTION_BLE_6:
+    case SYS_ACTION_BLE_7:
+    case SYS_ACTION_BLE_8:
+    case SYS_ACTION_BLE_9:
+    case SYS_ACTION_BLE_10:
+      kb_system_action_process(action, true);
       break;
 
 
@@ -417,6 +424,14 @@ void kb_macro_process_action(uint16_t action_code, bool is_pressed) {
              action_code <= ACTION_CODE_SYSTEM_MAX) {
     // System / Layer changes
     process_system_action(action_code, is_pressed);
+    
+    // Also dispatch release events for BLE keys to the tap/hold engine
+    if (!is_pressed) {
+      if ((action_code >= SYS_ACTION_BLE_ON && action_code <= SYS_ACTION_BLE_10) ||
+           action_code == SYS_ACTION_BLE_TOGGLE) {
+        kb_system_action_process(action_code, false);
+      }
+    }
   } else if (action_code >= ACTION_CODE_MACRO_MIN &&
              action_code <= ACTION_CODE_MACRO_MAX) {
     // Multi-step custom macro — mode-aware press/release handling

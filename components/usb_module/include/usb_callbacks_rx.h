@@ -5,7 +5,7 @@
 
 // ============ RX Buffer ============
 
-#define RX_TIMEOUT_MS 250 // max timeout for incoming sequential packets
+#define RX_TIMEOUT_MS 100 // max timeout for incoming sequential packets
 #define MAX_RX_BUF_SIZE 21500 // 21.5KB -> 43(payload size) * 100(polling rate) * 5(seconds)
 #define MAX_RX_BUF_SIZE_IN_PAYLOADS (MAX_RX_BUF_SIZE / MAX_PAYLOAD_LENGTH)
 

@@ -147,9 +147,10 @@ bool rx_blast_commit(const usb_packet_msg_t *last_msg)
     float size_kb = rx_buf_len / 1024.0f;
     float receive_time_ms = (rx_last_packet_timestamp_us - rx_blast_start_time_us) / 1000.0f;
     float process_time_ms = (rx_process_end - rx_process_start) / 1000.0f;
+    float transfer_speed_kbps = receive_time_ms > 0 ? size_kb / (receive_time_ms / 1000.0f) : 0;
 
-    ESP_LOGI(TAG, "Payload RX Complete! Packets: %u | Size: %.2f KB | Receive time: %.2f ms | Process time: %.2f ms", 
-             rx_blast_total_packets, size_kb, receive_time_ms, process_time_ms);
+    ESP_LOGI(TAG, "Payload RX Complete! Packets: %u | Size: %.2f KB | Receive time: %.2f ms | Process time: %.2f ms | Speed: %.2f KB/s", 
+             rx_blast_total_packets, size_kb, receive_time_ms, process_time_ms, transfer_speed_kbps);
 
     // Clean up
     rx_blast_reset();

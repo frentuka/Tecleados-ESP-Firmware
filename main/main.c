@@ -32,6 +32,8 @@
 #include "tinyusb.h"
 #include "tinyusb_default_config.h"
 
+#include "ble_controller.h"
+
 #define TAG "MAIN"
 
 enum ColorSet { Red, Green, Blue };
@@ -58,6 +60,8 @@ static void init_procedure(void) {
 
   usb_init();
   ble_hid_init();
+
+  ble_controller_init();
 
   kb_manager_start();
 }

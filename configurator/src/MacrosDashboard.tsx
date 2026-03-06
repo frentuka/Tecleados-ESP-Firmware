@@ -282,9 +282,11 @@ function ExportModal({ macros, onClose, onExport, isExporting }: ExportModalProp
                 </div>
                 <div className="modal-body">
                     {macros.length === 0 ? (
-                        <div className="empty-state" style={{ padding: '2rem 0' }}>No macros to export.</div>
+                        <div className="text-center text-slate-400 py-8">
+                            No macros available to export.
+                        </div>
                     ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '300px', overflowY: 'auto' }}>
+                        <div className="grid grid-cols-1 gap-2">
                             {macros.map(m => (
                                 <label key={m.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: isExporting ? 'default' : 'pointer', opacity: isExporting ? 0.5 : 1 }}>
                                     <input
@@ -1085,6 +1087,10 @@ export default function MacrosDashboard({ macros, macroLimits, isDeveloperMode, 
     const menuRef = useRef<HTMLDivElement>(null);
     const isAtMacroLimit = macroLimits != null && macros.length >= macroLimits.maxMacros;
 
+    const sortedMacros = useMemo(() => {
+        return [...macros].sort((a, b) => a.name.localeCompare(b.name));
+    }, [macros]);
+
     const markBusy = (id: number, label: string) => {
         setBusyMacroIds(prev => new Map(prev).set(id, label));
     };
@@ -1140,18 +1146,44 @@ export default function MacrosDashboard({ macros, macroLimits, isDeveloperMode, 
             for (const sm of selectedMacros) {
                 if (onFetchSingleMacro) {
                     const fm = await onFetchSingleMacro(sm.id);
-                    if (fm) fullMacros.push(fm);
+                    if (fm) {
+                        const { id, ...macroWithoutId } = fm;
+                        fullMacros.push(macroWithoutId);
+                    }
                 } else {
-                    fullMacros.push(sm);
+                    const { id, ...macroWithoutId } = sm;
+                    fullMacros.push(macroWithoutId);
                 }
             }
-            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(fullMacros, null, 2));
-            const downloadAnchorNode = document.createElement('a');
-            downloadAnchorNode.setAttribute("href", dataStr);
-            downloadAnchorNode.setAttribute("download", "macros_export.json");
-            document.body.appendChild(downloadAnchorNode);
-            downloadAnchorNode.click();
-            downloadAnchorNode.remove();
+            const dataStr = JSON.stringify(fullMacros, null, 2);
+
+            if ('showSaveFilePicker' in window) {
+                try {
+                    const handle = await (window as any).showSaveFilePicker({
+                        suggestedName: 'macros_export.json',
+                        types: [{
+                            description: 'JSON Files',
+                            accept: { 'application/json': ['.json'] },
+                        }],
+                    });
+                    const writable = await handle.createWritable();
+                    await writable.write(dataStr);
+                    await writable.close();
+                } catch (err: any) {
+                    // Ignore AbortError when user cancels the save dialog
+                    if (err.name !== 'AbortError') {
+                        throw err;
+                    }
+                }
+            } else {
+                const url = "data:text/json;charset=utf-8," + encodeURIComponent(dataStr);
+                const downloadAnchorNode = document.createElement('a');
+                downloadAnchorNode.setAttribute("href", url);
+                downloadAnchorNode.setAttribute("download", "macros_export.json");
+                document.body.appendChild(downloadAnchorNode);
+                downloadAnchorNode.click();
+                downloadAnchorNode.remove();
+            }
         } catch (err) {
             alert("Failed to export macros.");
         } finally {
@@ -1171,7 +1203,8 @@ export default function MacrosDashboard({ macros, macroLimits, isDeveloperMode, 
                 const macrosToImport = Array.isArray(importedData) ? importedData : [importedData];
 
                 for (const m of macrosToImport) {
-                    const newMacro = { ...m, id: -1 };
+                    const { id, ...restOfMacro } = m;
+                    const newMacro = { ...restOfMacro, id: -1 };
                     setIsCreating(true);
                     try {
                         await onSaveMacro(newMacro);
@@ -1250,7 +1283,7 @@ export default function MacrosDashboard({ macros, macroLimits, isDeveloperMode, 
                     <div className="empty-state">No macros defined yet.</div>
                 ) : (
                     <div className="macro-cards-grid">
-                        {macros.map(m => (
+                        {sortedMacros.map(m => (
                             <div key={m.id} className={`macro-card glass-panel ${busyMacroIds.has(m.id) ? 'macro-card-busy' : ''}`} onClick={() => !busyMacroIds.has(m.id) && handleEdit(m)} style={{ cursor: busyMacroIds.has(m.id) ? 'default' : 'pointer', position: 'relative' }}>
                                 {busyMacroIds.has(m.id) && (
                                     <div className="macro-card-loading-overlay">
@@ -1356,7 +1389,7 @@ export default function MacrosDashboard({ macros, macroLimits, isDeveloperMode, 
 
             {isExportModalOpen && (
                 <ExportModal
-                    macros={macros}
+                    macros={sortedMacros}
                     onClose={() => setIsExportModalOpen(false)}
                     onExport={handleExportSubmit}
                     isExporting={isExporting}
