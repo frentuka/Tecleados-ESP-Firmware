@@ -24,7 +24,7 @@
 
 // ============ Packet processing queues ============
 
-#define PROCESS_QUEUE_LENGTH 64
+#define PROCESS_QUEUE_LENGTH 128
 static QueueHandle_t usb_processing_queue = NULL;
 
 // ============ Callbacks ============
@@ -122,6 +122,7 @@ static void process_incoming_packet(usb_packet_msg_t msg) {
 
   // --- Blast reconcile: STATUS_REQ (sender asking for our bitmap) ---
   if (msg.flags == PAYLOAD_FLAG_STATUS_REQ) {
+    rx_blast_update_activity();
     if (rx_blast_active()) {
       ESP_LOGI(TAG, "STATUS_REQ: sending RX bitmap");
       usb_packet_msg_t bitmap_msg = {0};
@@ -136,6 +137,7 @@ static void process_incoming_packet(usb_packet_msg_t msg) {
   // --- Blast reconcile: BITMAP response (receiver telling us what it got) ---
   // --- Blast reconcile: BITMAP response (receiver telling us what it got) ---
   if (msg.flags == PAYLOAD_FLAG_BITMAP) {
+    rx_blast_update_activity();
     ESP_LOGI(TAG, "BITMAP: routing to TX blast handler");
     process_tx_response(msg);
     return;
