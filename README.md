@@ -21,7 +21,7 @@ This is a custom keyboard firmware written in C for the ESP32 (specifically targ
 
 ## To-do
 
-- [ ] Implement VIA-like configuration interface.
+- [x] Implement VIA-like configuration interface.
 - [ ] Add battery support.
 - [ ] Add 2.4GHz dongle wireless connectivity.
 - [ ] Add host-slave communication support for split keyboards.
