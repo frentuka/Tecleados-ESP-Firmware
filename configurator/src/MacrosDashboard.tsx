@@ -5,6 +5,10 @@ import { getKeyName, getKeyClass, MACRO_BASE, BROWSER_CODE_TO_HID } from './KeyD
 import SearchableKeyModal from './SearchableKeyModal';
 import { useConfirm } from './hooks/useConfirm';
 
+interface ImportableMacro extends Macro {
+    tempId: string;
+}
+
 // ── Execution Mode Helpers ──────────────────────────────────────────────
 type ModeCategory = 'once' | 'repeat' | 'burst';
 
@@ -265,6 +269,7 @@ function ExportModal({ macros, onClose, onExport, isExporting }: ExportModalProp
     const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set(macros.map(m => m.id)));
 
     const toggleSelection = (id: number) => {
+        if (isExporting) return;
         const newSet = new Set(selectedIds);
         if (newSet.has(id)) {
             newSet.delete(id);
@@ -274,39 +279,97 @@ function ExportModal({ macros, onClose, onExport, isExporting }: ExportModalProp
         setSelectedIds(newSet);
     };
 
+    const selectAll = () => {
+        if (isExporting) return;
+        setSelectedIds(new Set(macros.map(m => m.id)));
+    };
+
+    const selectNone = () => {
+        if (isExporting) return;
+        setSelectedIds(new Set());
+    };
+
     return createPortal(
         <div className="modal-overlay" onClick={isExporting ? undefined : onClose}>
-            <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '400px' }}>
+            <div className="modal-content macro-list-modal" onClick={e => e.stopPropagation()}>
                 <div className="modal-header">
-                    <h3>Export Macros</h3>
+                    <div>
+                        <h3>Export Macros</h3>
+                        <div className="macro-list-header-actions">
+                            <button className="btn-ghost-sm" onClick={selectAll} disabled={isExporting}>Select All</button>
+                            <button className="btn-ghost-sm" onClick={selectNone} disabled={isExporting}>Select None</button>
+                        </div>
+                    </div>
+                    <button className="btn-close" onClick={onClose} disabled={isExporting}>&times;</button>
                 </div>
                 <div className="modal-body">
                     {macros.length === 0 ? (
-                        <div className="text-center text-slate-400 py-8">
-                            No macros available to export.
+                        <div className="macro-list-empty-state">
+                            <div className="macro-list-empty-icon">📂</div>
+                            <p>No macros available to export.</p>
                         </div>
                     ) : (
-                        <div className="grid grid-cols-1 gap-2">
+                        <div className="macro-list-container">
                             {macros.map(m => (
-                                <label key={m.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: isExporting ? 'default' : 'pointer', opacity: isExporting ? 0.5 : 1 }}>
-                                    <input
-                                        type="checkbox"
-                                        checked={selectedIds.has(m.id)}
-                                        onChange={() => !isExporting && toggleSelection(m.id)}
-                                        disabled={isExporting}
-                                    />
-                                    {m.name || `Macro #${m.id}`}
-                                </label>
+                                <div
+                                    key={m.id}
+                                    className={`macro-list-item ${selectedIds.has(m.id) ? 'selected' : ''}`}
+                                    onClick={() => toggleSelection(m.id)}
+                                    style={{ opacity: isExporting ? 0.6 : 1, pointerEvents: isExporting ? 'none' : 'auto' }}
+                                >
+                                    <div className="macro-checkbox-wrapper">
+                                        <div className="macro-checkbox-custom">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round">
+                                                <polyline points="20 6 9 17 4 12" />
+                                            </svg>
+                                        </div>
+                                    </div>
+
+                                    <div className="macro-list-icon">
+                                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                            <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3m-3-3l-2.5-2.5" />
+                                        </svg>
+                                    </div>
+
+                                    <div className="macro-list-info">
+                                        <div className="macro-list-name">{m.name || `Macro #${m.id}`}</div>
+                                        <div className="macro-list-details">
+                                            {m.elements?.length || 0} {(m.elements?.length || 0) === 1 ? 'action' : 'actions'}
+                                        </div>
+                                    </div>
+
+                                    <div className="macro-id" style={{ fontSize: '0.7rem' }}>#{m.id}</div>
+                                </div>
                             ))}
                         </div>
                     )}
                 </div>
+
+                <div className="macro-list-stats" style={{ margin: '0 1.5rem' }}>
+                    <span>Selected: <strong>{selectedIds.size}</strong></span>
+                    <span>Total: {macros.length}</span>
+                </div>
+
                 <div className="modal-footer">
                     <button className="btn" onClick={onClose} disabled={isExporting}>Cancel</button>
-                    <button className="btn btn-success" onClick={() => {
+                    <button className="btn btn-primary" onClick={() => {
                         onExport(macros.filter(m => selectedIds.has(m.id)));
                     }} disabled={selectedIds.size === 0 || isExporting || macros.length === 0}>
-                        {isExporting ? 'Exporting...' : `Export (${selectedIds.size})`}
+                        {isExporting ? (
+                            <>
+                                <div className="macro-card-spinner" style={{ width: '16px', height: '16px', borderWidth: '2px' }}></div>
+                                Exporting...
+                            </>
+                        ) : (
+                            <>
+                                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '8px' }}>
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                    <polyline points="7 10 12 15 17 10" />
+                                    <line x1="12" y1="15" x2="12" y2="3" />
+                                </svg>
+                                {`Export (${selectedIds.size})`}
+                            </>
+                        )}
                     </button>
                 </div>
             </div>
@@ -314,6 +377,140 @@ function ExportModal({ macros, onClose, onExport, isExporting }: ExportModalProp
         document.body
     );
 }
+
+interface ImportModalProps {
+    macros: ImportableMacro[];
+    maxMacros: number;
+    currentCount: number;
+    onClose: () => void;
+    onImport: (selectedMacros: ImportableMacro[]) => void;
+    isImporting: boolean;
+}
+
+function ImportModal({ macros, maxMacros, currentCount, onClose, onImport, isImporting }: ImportModalProps) {
+    const [selectedTempIds, setSelectedTempIds] = useState<Set<string>>(new Set());
+
+    // Initialize selection once when macros are first loaded
+    useEffect(() => {
+        if (selectedTempIds.size === 0 && macros.length > 0 && !isImporting) {
+            setSelectedTempIds(new Set(macros.map(m => m.tempId)));
+        }
+    }, [macros, isImporting]);
+
+    const allowedToImport = Math.max(0, maxMacros - currentCount);
+
+    // Only count macros that are still in the list AND selected
+    const currentSelectedCount = macros.filter(m => selectedTempIds.has(m.tempId)).length;
+    const isOverLimit = currentSelectedCount > allowedToImport;
+
+    const toggleSelection = (tempId: string) => {
+        if (isImporting) return;
+        const newSet = new Set(selectedTempIds);
+        if (newSet.has(tempId)) {
+            newSet.delete(tempId);
+        } else {
+            newSet.add(tempId);
+        }
+        setSelectedTempIds(newSet);
+    };
+
+    const selectAll = () => {
+        if (isImporting) return;
+        setSelectedTempIds(new Set(macros.map(m => m.tempId)));
+    };
+
+    const selectNone = () => {
+        if (isImporting) return;
+        setSelectedTempIds(new Set());
+    };
+
+    return createPortal(
+        <div className="modal-overlay" onClick={isImporting ? undefined : onClose}>
+            <div className="modal-content macro-list-modal" onClick={e => e.stopPropagation()}>
+                <div className="modal-header">
+                    <div>
+                        <h3>Import Macros</h3>
+                        <div className="macro-list-header-actions">
+                            <button className="btn-ghost-sm" onClick={selectAll} disabled={isImporting}>Select All</button>
+                            <button className="btn-ghost-sm" onClick={selectNone} disabled={isImporting}>Select None</button>
+                        </div>
+                    </div>
+                    <button className="btn-close" onClick={onClose} disabled={isImporting}>&times;</button>
+                </div>
+                <div className="modal-body">
+                    {macros.length === 0 && isImporting ? (
+                        <div className="macro-list-empty-state">
+                            <div className="macro-card-spinner" style={{ marginBottom: '1rem' }}></div>
+                            <p>Finishing imports...</p>
+                        </div>
+                    ) : (
+                        <div className="macro-list-container">
+                            {macros.map((m) => (
+                                <div
+                                    key={m.tempId}
+                                    className={`macro-list-item ${selectedTempIds.has(m.tempId) ? 'selected' : ''}`}
+                                    onClick={() => toggleSelection(m.tempId)}
+                                    style={{ opacity: isImporting ? 0.6 : 1, pointerEvents: isImporting ? 'none' : 'auto' }}
+                                >
+                                    <div className="macro-checkbox-wrapper">
+                                        <div className="macro-checkbox-custom">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round">
+                                                <polyline points="20 6 9 17 4 12" />
+                                            </svg>
+                                        </div>
+                                    </div>
+
+                                    <div className="macro-list-icon">
+                                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                            <polyline points="17 8 12 3 7 8" />
+                                            <line x1="12" y1="3" x2="12" y2="15" />
+                                        </svg>
+                                    </div>
+
+                                    <div className="macro-list-info">
+                                        <div className="macro-list-name">{m.name || `Imported Macro`}</div>
+                                        <div className="macro-list-details">
+                                            {m.elements?.length || 0} {(m.elements?.length || 0) === 1 ? 'action' : 'actions'}
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                <div className="macro-list-stats" style={{ margin: '0 1.5rem', flexDirection: 'column', alignItems: 'stretch', gap: '4px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
+                        <span>Selected to Import: <strong style={{ color: isOverLimit ? 'var(--danger-color)' : 'var(--accent-color)' }}>{currentSelectedCount}</strong></span>
+                        <span>Slots Available: {allowedToImport}</span>
+                    </div>
+                    {isOverLimit && (
+                        <div className="macro-list-error-text">
+                            ⚠️ Maximum limit exceeded. Please deselect {currentSelectedCount - allowedToImport} macro(s).
+                        </div>
+                    )}
+                </div>
+
+                <div className="modal-footer">
+                    <button className="btn" onClick={onClose} disabled={isImporting}>Cancel</button>
+                    <button className="btn btn-primary" onClick={() => {
+                        onImport(macros.filter(m => selectedTempIds.has(m.tempId)));
+                    }} disabled={currentSelectedCount === 0 || isOverLimit || isImporting}>
+                        {isImporting ? (
+                            <>
+                                <div className="macro-card-spinner" style={{ width: '16px', height: '16px' }}></div>
+                                Importing...
+                            </>
+                        ) : 'Import Selected'}
+                    </button>
+                </div>
+            </div>
+        </div>,
+        document.body
+    );
+}
+
 
 function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEvents }: MacroEditorModalProps) {
     const { confirm } = useConfirm();
@@ -1083,6 +1280,8 @@ export default function MacrosDashboard({ macros, macroLimits, isDeveloperMode, 
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const [isExportModalOpen, setIsExportModalOpen] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
+    const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+    const [isImporting, setIsImporting] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const menuRef = useRef<HTMLDivElement>(null);
     const isAtMacroLimit = macroLimits != null && macros.length >= macroLimits.maxMacros;
@@ -1192,6 +1391,8 @@ export default function MacrosDashboard({ macros, macroLimits, isDeveloperMode, 
         }
     };
 
+    const [macrosToImport, setMacrosToImport] = useState<ImportableMacro[]>([]);
+
     const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
         if (!file) return;
@@ -1200,20 +1401,14 @@ export default function MacrosDashboard({ macros, macroLimits, isDeveloperMode, 
         reader.onload = async (e) => {
             try {
                 const importedData = JSON.parse(e.target?.result as string);
-                const macrosToImport = Array.isArray(importedData) ? importedData : [importedData];
-
-                for (const m of macrosToImport) {
-                    const { id, ...restOfMacro } = m;
-                    const newMacro = { ...restOfMacro, id: -1 };
-                    setIsCreating(true);
-                    try {
-                        await onSaveMacro(newMacro);
-                    } catch (err: any) {
-                        alert(`Failed to save imported macro "${newMacro.name}": ${err?.message || 'Unknown error'}`);
-                    } finally {
-                        setIsCreating(false);
-                    }
-                }
+                const parsedMacros = Array.isArray(importedData) ? importedData : [importedData];
+                // Augment with tempId for robust tracking
+                const importableMacros: ImportableMacro[] = parsedMacros.map((m, i) => ({
+                    ...m,
+                    tempId: `import-${Date.now()}-${i}-${Math.random().toString(36).substring(2, 9)}`
+                }));
+                setMacrosToImport(importableMacros);
+                setIsImportModalOpen(true);
             } catch (error) {
                 alert("Failed to parse JSON file.");
             }
@@ -1221,6 +1416,40 @@ export default function MacrosDashboard({ macros, macroLimits, isDeveloperMode, 
         reader.readAsText(file);
 
         event.target.value = ''; // Reset input
+    };
+
+    const importGuardRef = useRef(false);
+    const handleImportSubmit = async (selectedMacros: ImportableMacro[]) => {
+        if (importGuardRef.current) return;
+        importGuardRef.current = true;
+        setIsImporting(true);
+        try {
+            for (const m of selectedMacros) {
+                const { tempId, id, ...restOfMacro } = m;
+                const newMacro = { ...restOfMacro, id: -1 };
+                setIsCreating(true);
+                try {
+                    await onSaveMacro(newMacro);
+                    // On success, remove from the parent state so it disappears from the modal
+                    setMacrosToImport(prev => prev.filter(item => item.tempId !== tempId));
+                } catch (err: any) {
+                    alert(`Failed to save imported macro "${newMacro.name}": ${err?.message || 'Unknown error'}`);
+                    break; // Stop on first error to avoid alert storm
+                } finally {
+                    setIsCreating(false);
+                }
+            }
+        } finally {
+            setIsImporting(false);
+            // Close the modal only if we've successfully processed all selected macros
+            setMacrosToImport(prev => {
+                if (prev.length === 0) {
+                    setIsImportModalOpen(false);
+                }
+                return prev;
+            });
+            importGuardRef.current = false;
+        }
     };
 
     return (
@@ -1393,6 +1622,17 @@ export default function MacrosDashboard({ macros, macroLimits, isDeveloperMode, 
                     onClose={() => setIsExportModalOpen(false)}
                     onExport={handleExportSubmit}
                     isExporting={isExporting}
+                />
+            )}
+
+            {isImportModalOpen && (
+                <ImportModal
+                    macros={macrosToImport}
+                    maxMacros={macroLimits?.maxMacros || 0}
+                    currentCount={macros.length}
+                    onClose={() => setIsImportModalOpen(false)}
+                    onImport={handleImportSubmit}
+                    isImporting={isImporting}
                 />
             )}
         </div>

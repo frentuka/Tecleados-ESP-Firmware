@@ -173,6 +173,13 @@ static bool tx_send_packet_by_index(uint16_t index)
 
 static bool tx_blast_send_all_mid_packets()
 {
+    // Safety guard: if we have 0 or 1 packets, there are no MID packets to send.
+    // This prevents an underflow in the loop condition (i < total - 1)
+    if (tx_blast_total_packets < 2) {
+        ESP_LOGW(TAG, "Blast: no MID packets to send (total=%u)", tx_blast_total_packets);
+        return true;
+    }
+
     // Send indices 1..total-2 (all MID packets)
     for (uint16_t i = 1; i < tx_blast_total_packets - 1; i++) {
         if (!tx_send_packet_by_index(i)) {

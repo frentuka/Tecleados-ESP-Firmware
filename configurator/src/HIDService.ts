@@ -116,7 +116,9 @@ class HIDService {
     } | null = null;
     private pendingResolve: ((resp: CommandResponse | null) => void) | null = null;
 
-    // ── Generic flag-based response waiting ──
+    // ── Universal Task Queue ──
+    private taskQueue: Array<{ task: () => Promise<any>; resolve: (val: any) => void; reject: (err: any) => void }> = [];
+    private isProcessingQueue = false;
     private flagWaiters: Map<number, (msg: { flags: number; remaining: number; payloadLen: number; payload: Uint8Array }) => void> = new Map();
 
     // ── Blast receive state (for ESP→Website direction) ──
@@ -231,10 +233,10 @@ class HIDService {
                 this.pendingResponse = null;
             }
 
-            // Flush command queue
-            while (this.commandQueue.length > 0) {
-                const cmd = this.commandQueue.shift()!;
-                cmd.resolve(null);
+            // Flush task queue
+            while (this.taskQueue.length > 0) {
+                const item = this.taskQueue.shift()!;
+                item.resolve(null);
             }
             this.isProcessingQueue = false;
 
@@ -536,12 +538,42 @@ class HIDService {
     }
 
     // ══════════════════════════════════════════════════════════
-    // ── High-level API: sendCommand (serial queue) ──
+    // ── Serial Task Queue Mechanism ──
     // ══════════════════════════════════════════════════════════
 
-    // Command queue to prevent concurrent sendCommand calls from interfering
-    private commandQueue: Array<{ payload: Uint8Array; timeoutMs: number; resolve: (resp: CommandResponse | null) => void }> = [];
-    private isProcessingQueue = false;
+    /**
+     * Enqueue an async task to be executed serially.
+     * Use this for ALL HID transmission to prevent protocol overlap.
+     */
+    public enqueueTask<T>(task: () => Promise<T>): Promise<T> {
+        return new Promise<T>((resolve, reject) => {
+            this.taskQueue.push({ task, resolve, reject });
+            this.processNextTask();
+        });
+    }
+
+    private async processNextTask(): Promise<void> {
+        if (this.isProcessingQueue || this.taskQueue.length === 0) return;
+
+        this.isProcessingQueue = true;
+        const { task, resolve, reject } = this.taskQueue.shift()!;
+
+        try {
+            const result = await task();
+            resolve(result);
+        } catch (err) {
+            console.error('[HID Queue] Task failed:', err);
+            reject(err);
+        } finally {
+            // Inter-task settle time: 150ms (Balanced for NVS stability and batch performance)
+            // We must keep isProcessingQueue = true until the timeout fires to prevent
+            // the next task from jumping the gun.
+            setTimeout(() => {
+                this.isProcessingQueue = false;
+                this.processNextTask();
+            }, 300);
+        }
+    }
 
     /**
      * Send a command and wait for the complete response.
@@ -553,91 +585,68 @@ class HIDService {
     public sendCommand(payload: Uint8Array, timeoutMs?: number): Promise<CommandResponse | null> {
         if (!this.isConnected()) return Promise.resolve(null);
 
-        // Scale timeout based on payload size: base 5s + 5ms per byte for large payloads
         const effectiveTimeout = timeoutMs ?? Math.max(5000, 5000 + payload.length * 5);
+        const cmdHex = Array.from(payload.slice(0, Math.min(4, payload.length)))
+            .map(b => b.toString(16).padStart(2, '0')).join(' ');
 
-        return new Promise<CommandResponse | null>((resolve) => {
-            this.commandQueue.push({ payload, timeoutMs: effectiveTimeout, resolve });
-            this.processNextCommand();
-        });
-    }
+        return this.enqueueTask(async () => {
+            console.log(`[HID Queue] Sending command: ${cmdHex} (${payload.length} bytes)`);
 
-    private async processNextCommand(): Promise<void> {
-        if (this.isProcessingQueue) return; // already processing
-        if (this.commandQueue.length === 0) return;
+            let timer: any;
+            const promise = new Promise<CommandResponse | null>((resolve) => {
+                timer = setTimeout(() => {
+                    if (this.pendingResolve) {
+                        console.warn(`[HID Queue] Command timed out after ${effectiveTimeout}ms: ${cmdHex}`);
+                        this.pendingResolve = null;
+                        this.pendingResponse = null;
+                        this.blastRxReset();
+                        resolve(null);
+                    }
+                }, effectiveTimeout);
 
-        this.isProcessingQueue = true;
-        const { payload, timeoutMs, resolve } = this.commandQueue.shift()!;
+                this.pendingResolve = (resp) => {
+                    clearTimeout(timer);
+                    this.pendingResolve = null;
+                    resolve(resp);
+                };
+            });
 
-        // Log the command being processed
-        const cmdHex = Array.from(payload.slice(0, Math.min(4, payload.length))).map(b => b.toString(16).padStart(2, '0')).join(' ');
-        console.log(`[HID Queue] Processing command: ${cmdHex} (${payload.length} bytes, queue remaining: ${this.commandQueue.length})`);
-
-        if (!this.isConnected()) {
-            console.warn('[HID Queue] Not connected, skipping command');
-            resolve(null);
-            this.isProcessingQueue = false;
-            this.processNextCommand();
-            return;
-        }
-
-        // Set up response handler
-        const result = await new Promise<CommandResponse | null>(async (innerResolve) => {
-            this.pendingResolve = innerResolve;
-
-            const timeout = setTimeout(() => {
-                if (this.pendingResolve === innerResolve) {
-                    console.warn(`[HID Queue] Command timed out after ${timeoutMs}ms: ${cmdHex}`);
+            try {
+                const success = await this.sendCustomCommReport(payload);
+                if (!success) {
+                    clearTimeout(timer);
                     this.pendingResolve = null;
                     this.pendingResponse = null;
-                    innerResolve(null);
+                    this.blastRxReset();
+                    return null;
                 }
-            }, timeoutMs);
-
-            // Wrap to clear timeout on success
-            this.pendingResolve = (resp) => {
-                clearTimeout(timeout);
-                innerResolve(resp);
-            };
-
-            await this.sendCustomCommReport(payload);
+                return await promise;
+            } catch (err) {
+                clearTimeout(timer);
+                this.pendingResolve = null;
+                this.pendingResponse = null;
+                this.blastRxReset();
+                throw err;
+            }
         });
-
-        console.log(`[HID Queue] Command ${cmdHex} completed:`, result ? `status=${result.status}, keyId=${result.keyId}, jsonLen=${result.jsonText.length}` : 'NULL');
-        resolve(result);
-
-        this.isProcessingQueue = false;
-        this.processNextCommand(); // process next in queue
     }
-
-    // ══════════════════════════════════════════════════════════
-    // ── System API (Key Test Mode) ──
-    // ══════════════════════════════════════════════════════════
 
     public async sendInjectKey(row: number, col: number, state: boolean): Promise<boolean> {
         if (!this.isConnected()) return false;
-
-        // Payload: [CMD, row, col, state]
         const payload = new Uint8Array([MODULE_SYSTEM, SYS_CMD_INJECT_KEY, row, col, state ? 1 : 0]);
-        return this.sendCustomCommReport(payload);
+        return this.enqueueTask(() => this.sendCustomCommReport(payload));
     }
 
     public async clearInjectedKeys(): Promise<boolean> {
         if (!this.isConnected()) return false;
-
-        // Payload: [CMD]
         const payload = new Uint8Array([MODULE_SYSTEM, SYS_CMD_CLEAR_INJECTED]);
-        return this.sendCustomCommReport(payload);
+        return this.enqueueTask(() => this.sendCustomCommReport(payload));
     }
 
-    // ══════════════════════════════════════════════════════════
-    // ── Incoming packet handler (auto-ACK + reassembly) ──
-    // ══════════════════════════════════════════════════════════
-
-    private handleInputReport(event: any): void {
+    // ── Incoming packet handler ──
+    private async handleInputReport(event: any): Promise<void> {
         if (event.reportId !== COMM_REPORT_ID) return;
         const data = new Uint8Array(event.data.buffer);
-
         if (data.length < 63) return;
 
         const flags = data[0];
@@ -645,78 +654,66 @@ class HIDService {
         const safeLen = Math.min(data[3], 58);
         const payloadBytes = data.slice(4, 4 + safeLen);
 
-        // --- Blast check ---
         const isBlastPacket = (flags & PAYLOAD_FLAG_MID) || (flags & PAYLOAD_FLAG_LAST);
         const isHandshake = (flags & PAYLOAD_FLAG_FIRST) && remaining > 0;
 
-        // Broadcast raw data and logs ONLY for non-blast payload packets or handshakes
-        // This avoids 500+ callbacks during a 258-packet blast
         if (!this.blastRx.active || isHandshake || !isBlastPacket) {
             this.logCallbacks.forEach(cb => cb(data));
             this.rawPacketCallbacks.forEach(cb => cb(data, 'rx'));
         }
 
-        // ── Check flag waiters (blast protocol responses) ──
-        // Check exact flag match first (for BITMAP, STATUS_REQ)
         if (this.flagWaiters.has(flags)) {
             this.flagWaiters.get(flags)!({ flags, remaining, payloadLen: safeLen, payload: payloadBytes });
             return;
         }
-        // Check partial flag match for ACK (ACK may be combined with OK)
+
         if ((flags & PAYLOAD_FLAG_ACK) && this.flagWaiters.has(PAYLOAD_FLAG_ACK)) {
             this.flagWaiters.get(PAYLOAD_FLAG_ACK)!({ flags, remaining, payloadLen: safeLen, payload: payloadBytes });
             return;
         }
 
-        // ── Blast reconcile: STATUS_REQ from ESP (ESP asking for our bitmap) ──
         if (flags === PAYLOAD_FLAG_STATUS_REQ && this.blastRx.active) {
-            console.log('[Blast RX] STATUS_REQ received, sending bitmap');
             const bitmapPacket = this.blastRxBuildBitmapPacket();
             this.device?.sendReport(COMM_REPORT_ID, bitmapPacket);
             return;
         }
 
-        // ── Skip pure ACK/NAK/OK/ERR/ABORT when not caught by flag waiters ──
         const isResponsePacket = (flags & PAYLOAD_FLAG_ACK) || (flags & PAYLOAD_FLAG_NAK) ||
             (flags & PAYLOAD_FLAG_OK) || (flags & PAYLOAD_FLAG_ERR) || (flags & PAYLOAD_FLAG_ABORT);
         if (isResponsePacket) return;
 
-        // ── Blast receive mode: ESP → Website multi-packet ──
         if ((flags & PAYLOAD_FLAG_FIRST) && remaining > 0 && safeLen >= 7) {
-            // Enter blast receive mode 
             const totalPackets = remaining + 1;
-            console.log(`[Blast RX] Entering blast mode: ${totalPackets} packets`);
+            if (totalPackets > 5000) {
+                console.error(`[Blast RX] ABORTING: Ridiculous packet count (${totalPackets})`);
+                this.sendResponse(PAYLOAD_FLAG_ABORT);
+                return;
+            }
             this.blastRx.active = true;
             this.blastRx.totalPackets = totalPackets;
             this.blastRx.buffer = new Uint8Array(totalPackets * 58);
             this.blastRx.bitmap = new Uint8Array(Math.ceil(totalPackets / 8));
             this.blastRx.payloadLens = new Uint8Array(totalPackets);
-
-            // Store FIRST packet
             this.blastRxReceivePacket(0, payloadBytes, safeLen);
-
-            // Send ACK (handshake)
             this.sendResponse(PAYLOAD_FLAG_ACK);
             return;
         }
 
-        // Blast RX: MID packets (silent absorb)
         if (this.blastRx.active && (flags & PAYLOAD_FLAG_MID)) {
             const index = this.blastRx.totalPackets - 1 - remaining;
+            if (index < 0 || index >= this.blastRx.totalPackets) {
+                console.error(`[Blast RX] Index OOB: ${index}`);
+                this.blastRxReset();
+                return;
+            }
             this.blastRxReceivePacket(index, payloadBytes, safeLen);
             return;
         }
 
-        // Blast RX: LAST packet (commit)
         if (this.blastRx.active && (flags & PAYLOAD_FLAG_LAST)) {
             const lastIndex = this.blastRx.totalPackets - 1;
             this.blastRxReceivePacket(lastIndex, payloadBytes, safeLen);
-
-            // Assemble full payload and process
             const fullPayload = this.blastRxAssemblePayload();
-            console.log(`[Blast RX] Committed: ${this.blastRx.totalPackets} packets, ${fullPayload.length} bytes`);
-
-            // Process assembled response (same as the original multi-packet handling)
             if (fullPayload.length >= 7) {
                 const module = fullPayload[0];
                 const cmd = fullPayload[1];
@@ -724,14 +721,12 @@ class HIDService {
                 const status = (fullPayload[3] | (fullPayload[4] << 8) | (fullPayload[5] << 16) | (fullPayload[6] << 24));
                 const jsonText = new TextDecoder().decode(fullPayload.slice(7)).replace(/\0/g, '');
                 this.pendingResponse = { module, cmd, keyId, status, jsonText };
-                this.sendAckAndFinish(true);
+                await this.sendAckAndFinish(true);
             }
-
             this.blastRxReset();
             return;
         }
 
-        // ── Legacy single-packet response (FIRST|LAST with remaining=0) ──
         if ((flags & PAYLOAD_FLAG_FIRST) && (flags & PAYLOAD_FLAG_LAST) && safeLen >= 7) {
             const module = payloadBytes[0];
             const cmd = payloadBytes[1];
@@ -739,58 +734,28 @@ class HIDService {
             const status = (payloadBytes[3] | (payloadBytes[4] << 8) | (payloadBytes[5] << 16) | (payloadBytes[6] << 24));
             const jsonText = new TextDecoder().decode(payloadBytes.slice(7)).replace(/\0/g, '');
             this.pendingResponse = { module, cmd, keyId, status, jsonText };
-            this.sendAckAndFinish(true);
+            await this.sendAckAndFinish(true);
         }
     }
 
-    /**
-     * Send ACK (with optional OK) and resolve the pending command immediately.
-     * Fire-and-forget: don't await the sendReport — let the OS queue it.
-     */
-    private sendAckAndFinish(isLast: boolean): void {
-        if (isLast) {
-            this.sendResponse(PAYLOAD_FLAG_ACK | PAYLOAD_FLAG_OK);
-        } else {
-            this.sendResponse(PAYLOAD_FLAG_ACK);
-        }
-
+    private async sendAckAndFinish(isLast: boolean): Promise<void> {
+        if (isLast) await this.sendResponse(PAYLOAD_FLAG_ACK | PAYLOAD_FLAG_OK);
+        else await this.sendResponse(PAYLOAD_FLAG_ACK);
         this.finishResponse();
     }
 
     private finishResponse(): void {
-        if (!this.pendingResponse) return;
-
-        const response: CommandResponse = { ...this.pendingResponse };
-
-        if (this.pendingResolve) {
-            this.pendingResolve(response);
+        if (this.pendingResolve && this.pendingResponse) {
+            this.pendingResolve(this.pendingResponse);
             this.pendingResolve = null;
+            this.pendingResponse = null;
         }
-
-        this.pendingResponse = null;
     }
 
-    // ══════════════════════════════════════════════════════════
-    // ── Callback registration ──
-    // ══════════════════════════════════════════════════════════
-
-    /** Register for raw packet data (legacy — prefer sendCommand) */
-    public onLogReceived(callback: LogCallback): void {
-        this.logCallbacks.add(callback);
-    }
-
-    public offLogReceived(callback: LogCallback): void {
-        this.logCallbacks.delete(callback);
-    }
-
-    /** Register for raw packet events with direction info (for debug UI) */
-    public onRawPacket(callback: RawPacketCallback): void {
-        this.rawPacketCallbacks.add(callback);
-    }
-
-    public offRawPacket(callback: RawPacketCallback): void {
-        this.rawPacketCallbacks.delete(callback);
-    }
+    public onLogReceived(callback: LogCallback): void { this.logCallbacks.add(callback); }
+    public offLogReceived(callback: LogCallback): void { this.logCallbacks.delete(callback); }
+    public onRawPacket(callback: RawPacketCallback): void { this.rawPacketCallbacks.add(callback); }
+    public offRawPacket(callback: RawPacketCallback): void { this.rawPacketCallbacks.delete(callback); }
 }
 
 export const hidService = new HIDService();
