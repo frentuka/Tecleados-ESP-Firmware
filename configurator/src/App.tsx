@@ -534,22 +534,42 @@ function App() {
 
   return (
     <div className="app-container">
-      <h1 className="title">Tecleados Runtime Configurator</h1>
+      <header className="main-header">
+        <div className="header-left">
+          {!isConnected ? (
+            <button className="btn btn-success header-btn" onClick={handleConnect}>
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+              </svg>
+              Connect
+            </button>
+          ) : (
+            <button className="btn btn-danger header-btn" onClick={handleDisconnect}>
+              Disconnect
+            </button>
+          )}
 
-      <div className="glass-panel">
-        <h2>Connection Status</h2>
-        <div style={{ display: 'flex', alignItems: 'center', marginBottom: '1rem', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center' }}>
+          <div className="header-status">
             <span className={`status-indicator ${isConnected ? 'status-connected' : 'status-disconnected'}`}></span>
-            <span>{isConnected ? 'Device connected' : 'No device connected'}</span>
+            <span>{isConnected ? 'LIVE' : 'OFFLINE'}</span>
           </div>
+        </div>
 
-          <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', cursor: 'pointer', userSelect: 'none' }} title="Enable developer options">
+        <div className="header-center">
+          <h1 className="title">Tecleados Configurator</h1>
+        </div>
+
+        <div className="header-right">
+          <div
+            className="header-dev-toggle"
+            onClick={() => setIsDeveloperMode(!isDeveloperMode)}
+            title="Enable developer options"
+          >
             <span style={{ fontSize: '0.75rem', fontWeight: 600, color: isDeveloperMode ? 'var(--accent-color)' : 'var(--text-secondary)' }}>
               DEV MODE
             </span>
             <div
-              onClick={() => setIsDeveloperMode(!isDeveloperMode)}
               style={{
                 width: '32px',
                 height: '16px',
@@ -570,23 +590,9 @@ function App() {
                 transition: 'all 0.2s',
               }} />
             </div>
-          </label>
+          </div>
         </div>
-
-        {!isConnected ? (
-          <button className="btn btn-success" onClick={handleConnect}>
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-            </svg>
-            Connect Device
-          </button>
-        ) : (
-          <button className="btn btn-danger" onClick={handleDisconnect}>
-            Disconnect
-          </button>
-        )}
-      </div>
+      </header>
 
       {isConnected && (
         <>
