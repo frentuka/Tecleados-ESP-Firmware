@@ -371,10 +371,10 @@ function App() {
       macrosRef.current = newList;
       setMacros(newList);
       delete macroCache.current[id]; // Remove from cache
-      setLogs(prev => [...prev, { id: Date.now(), timestamp: new Date(), data: new Uint8Array(0), text: `Macro deleted. ${macrosRef.current.length} remaining.` }]);
+      setLogs(prev => [...prev, { id: Date.now() + Math.random(), timestamp: new Date(), data: new Uint8Array(0), text: `Macro deleted. ${macrosRef.current.length} remaining.` }]);
     } else {
       const errMsg = resp ? `Device error (0x${resp.status.toString(16).toUpperCase()})` : 'Device timeout';
-      setLogs(prev => [...prev, { id: Date.now(), timestamp: new Date(), data: new Uint8Array(0), text: `Failed to delete macro: ${errMsg}` }]);
+      setLogs(prev => [...prev, { id: Date.now() + Math.random(), timestamp: new Date(), data: new Uint8Array(0), text: `Failed to delete macro: ${errMsg}` }]);
       throw new Error(errMsg);
     }
   };

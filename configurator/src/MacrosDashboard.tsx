@@ -18,11 +18,56 @@ function getModeCategory(execMode: number): ModeCategory {
     return 'once';
 }
 
-function getModeBadgeLabel(execMode: number): string {
-    const cat = getModeCategory(execMode);
-    if (cat === 'once') return '1×';
-    if (cat === 'repeat') return '⟳';
-    return 'N×';
+// ── Execution Mode Icons (2-symbol system) ──────────────────────────────
+const IconOne = () => <span className="m-sym">1</span>;
+const IconN = () => <span className="m-sym">N</span>;
+const IconXSmall = () => <span className="m-sym m-smaller">×</span>;
+const IconPlus = () => <span className="m-sym m-smaller">+</span>;
+const IconExclamation = () => <span className="m-sym m-smaller">!</span>;
+const IconMultiply = () => <span className="m-sym m-smaller">×</span>;
+
+const IconHold = () => (
+    <svg className="m-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 4v14M7 13l5 5 5-5M5 21h14" />
+    </svg>
+);
+
+const IconToggle = () => (
+    <svg className="m-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M18.36 6.64a9 9 0 1 1-12.73 0M12 2v10" />
+    </svg>
+);
+
+const IconLoop = () => (
+    <svg className="m-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+        <polyline points="21 3 21 8 16 8" />
+    </svg>
+);
+
+const IconLoopCancel = () => (
+    <svg className="m-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+        <polyline points="21 3 21 8 16 8" />
+        <line x1="10" y1="10" x2="14" y2="14" strokeWidth="3" />
+        <line x1="14" y1="10" x2="10" y2="14" strokeWidth="3" />
+    </svg>
+);
+
+function getModeBadge(execMode: number): React.ReactNode {
+    // 0=stack-once, 1=no-stack, 2=stack-N
+    // 3=hold-finish, 4=hold-cancel, 5=toggle-finish, 6=toggle-cancel, 7=burst
+    switch (execMode) {
+        case 0: return <><IconOne /><IconXSmall /></>;
+        case 1: return <><IconOne /><IconExclamation /></>;
+        case 2: return <><IconN /><IconPlus /></>;
+        case 3: return <><IconLoop /><IconHold /></>;
+        case 4: return <><IconLoopCancel /><IconHold /></>;
+        case 5: return <><IconLoop /><IconToggle /></>;
+        case 6: return <><IconLoopCancel /><IconToggle /></>;
+        case 7: return <><IconN /><IconMultiply /></>;
+        default: return <><IconOne /><IconXSmall /></>;
+    }
 }
 
 interface MacroEditorModalProps {
@@ -924,7 +969,7 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEve
                                         >
                                             <span>Execution mode</span>
                                             <span className="macro-mode-badge-icon">
-                                                {getModeBadgeLabel(macroConfig.execMode ?? 0)}
+                                                {getModeBadge(macroConfig.execMode ?? 0)}
                                             </span>
                                         </div>
                                         <label className="config-dropdown-row config-dropdown-toggle">
@@ -1526,7 +1571,7 @@ export default function MacrosDashboard({ macros, macroLimits, isDeveloperMode, 
                                     title="Change execution mode"
                                     disabled={busyMacroIds.has(m.id)}
                                 >
-                                    <span className="macro-mode-badge-icon">{getModeBadgeLabel(m.execMode ?? 0)}</span>
+                                    <span className="macro-mode-badge-icon">{getModeBadge(m.execMode ?? 0)}</span>
                                 </button>
 
                                 <div className="macro-card-header">
