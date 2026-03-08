@@ -16,8 +16,8 @@ static void on_kb_sys_action(uint16_t action_code, kb_action_ev_t event) {
         return;
     }
 
-    if (action_code >= SYS_ACTION_BLE_1 && action_code <= SYS_ACTION_BLE_10) {
-        uint8_t profile_id = action_code - SYS_ACTION_BLE_1; // 0 to 9
+    if (action_code >= SYS_ACTION_BLE_1 && action_code <= SYS_ACTION_BLE_9) {
+        uint8_t profile_id = action_code - SYS_ACTION_BLE_1; // 0 to 8
 
         switch (event) {
             case KB_EV_HOLD:

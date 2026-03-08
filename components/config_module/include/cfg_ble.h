@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include "nimble/ble.h"
 
-#define CFG_BLE_MAX_PROFILES 10
+#define CFG_BLE_MAX_PROFILES 9
 
 typedef struct {
     uint8_t addr_type; // e.g. BLE_ADDR_PUBLIC or BLE_ADDR_RANDOM
@@ -14,7 +14,7 @@ typedef struct {
 
 typedef struct {
     cfg_ble_profile_t profiles[CFG_BLE_MAX_PROFILES];
-    uint8_t selected_profile; // 0 to 9
+    uint8_t selected_profile; // 0 to 8
     bool ble_routing_enabled; // True if BLE_TG is ON
 } cfg_ble_state_t;
 

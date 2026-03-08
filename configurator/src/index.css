@@ -113,12 +113,21 @@ h3 {
 .header-left {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 2rem;
 }
 
 .header-center {
   display: flex;
   justify-content: center;
+  transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1), transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@media (max-width: 900px) {
+  .header-center.collapsed {
+    opacity: 0;
+    transform: translateY(-5px);
+    pointer-events: none;
+  }
 }
 
 .header-right {

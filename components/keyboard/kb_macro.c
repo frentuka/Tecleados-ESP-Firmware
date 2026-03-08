@@ -382,7 +382,6 @@ static void process_system_action(uint16_t action, bool is_pressed) {
     case SYS_ACTION_BLE_7:
     case SYS_ACTION_BLE_8:
     case SYS_ACTION_BLE_9:
-    case SYS_ACTION_BLE_10:
       kb_system_action_process(action, true);
       break;
 
@@ -427,7 +426,7 @@ void kb_macro_process_action(uint16_t action_code, bool is_pressed) {
     
     // Also dispatch release events for BLE keys to the tap/hold engine
     if (!is_pressed) {
-      if ((action_code >= SYS_ACTION_BLE_ON && action_code <= SYS_ACTION_BLE_10) ||
+      if ((action_code >= SYS_ACTION_BLE_ON && action_code <= SYS_ACTION_BLE_9) ||
            action_code == SYS_ACTION_BLE_TOGGLE) {
         kb_system_action_process(action_code, false);
       }

@@ -26,6 +26,7 @@ import {
 } from './HIDService';
 import KeyboardLayoutEditor from './KeyboardLayoutEditor';
 import MacrosDashboard from './MacrosDashboard';
+import StatusWidget from './StatusWidget';
 import { useConfirm } from './hooks/useConfirm';
 import './index.css';
 
@@ -66,6 +67,7 @@ function getFlagsString(flags: number): string {
 
 function App() {
   const [isConnected, setIsConnected] = useState(false);
+  const [deviceStatus, setDeviceStatus] = useState<{ mode: number; profile: number; bitmap: number } | null>(null);
   const [controlsEnabled, setControlsEnabled] = useState(false);
   const [isDeveloperMode, setIsDeveloperMode] = useState<boolean>(() => {
     return localStorage.getItem('isDeveloperMode') === 'true';
@@ -93,11 +95,24 @@ function App() {
   useEffect(() => {
     const handler = (connected: boolean) => {
       setIsConnected(connected);
+      if (!connected) setDeviceStatus(null);
       setLogs(prev => [...prev, { id: Date.now() + Math.random(), timestamp: new Date(), data: new Uint8Array(0), text: connected ? "Device connected" : "Device disconnected" }]);
     };
     hidService.onConnectionChange(handler);
-    return () => hidService.offConnectionChange(handler);
+
+    // Also listen for status updates (pushed from ESP)
+    const statusHandler = (status: { mode: number; profile: number; bitmap: number }) => {
+      setDeviceStatus(status);
+    };
+    hidService.onStatusUpdate(statusHandler);
+
+    return () => {
+      hidService.offConnectionChange(handler);
+      hidService.offStatusUpdate(statusHandler);
+    };
   }, []);
+
+  // Remove polling logic (no longer needed with push updates)
 
   const [selectedModule, setSelectedModule] = useState<number>(MODULE_CONFIG);
   // Default to SET because the dynamic UI implicitly wants to SET what the GET retrieved.
@@ -140,6 +155,14 @@ function App() {
       setConfigData({});
     }
     setIsFetching(false);
+  }, [isConnected]);
+
+  const fetchStatus = useCallback(async () => {
+    if (!isConnected) return;
+    const status = await hidService.fetchStatus();
+    if (status) {
+      setDeviceStatus(status);
+    }
   }, [isConnected]);
 
   const fetchMacroLimits = useCallback(async () => {
@@ -358,9 +381,10 @@ function App() {
 
   useEffect(() => {
     if (isConnected) {
+      fetchStatus();
       fetchMacroLimits();
     }
-  }, [isConnected, fetchMacroLimits]);
+  }, [isConnected, fetchStatus, fetchMacroLimits]);
 
   useEffect(() => {
     if (isConnected && controlsEnabled) {
@@ -549,15 +573,16 @@ function App() {
               Disconnect
             </button>
           )}
-
-          <div className="header-status">
-            <span className={`status-indicator ${isConnected ? 'status-connected' : 'status-disconnected'}`}></span>
-            <span>{isConnected ? 'LIVE' : 'OFFLINE'}</span>
-          </div>
         </div>
 
         <div className="header-center">
-          <h1 className="title">Tecleados Configurator</h1>
+          <StatusWidget
+            isConnected={isConnected}
+            transportMode={deviceStatus?.mode ?? 0}
+            selectedProfile={deviceStatus?.profile ?? 0}
+            connectedBitmap={deviceStatus?.bitmap ?? 0}
+            onOfflineClick={handleConnect}
+          />
         </div>
 
         <div className="header-right">

@@ -28,6 +28,7 @@
 #include "cfgmod.h"
 #include "rgb.h"
 #include "usbmod.h"
+#include "statusmod.h"
 
 #include "tinyusb.h"
 #include "tinyusb_default_config.h"
@@ -62,6 +63,7 @@ static void init_procedure(void) {
   ble_hid_init();
 
   ble_controller_init();
+  status_module_init();
 
   kb_manager_start();
 }

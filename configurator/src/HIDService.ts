@@ -22,6 +22,7 @@ export const PAYLOAD_FLAG_ABORT = 0x01;
 // Module IDs
 export const MODULE_CONFIG = 0x00;
 export const MODULE_SYSTEM = 0x01;
+export const MODULE_STATUS = 0x03;
 
 // Config Commands
 export const CFG_CMD_GET = 0x00;
@@ -97,12 +98,14 @@ export function computeCrc8(data: Uint8Array): number {
 }
 
 export type ConnectionCallback = (connected: boolean) => void;
+export type StatusUpdateCallback = (status: { mode: number; profile: number; bitmap: number }) => void;
 
 class HIDService {
     private device: HIDDeviceMock | null = null;
     private logCallbacks: Set<LogCallback> = new Set();
     private rawPacketCallbacks: Set<RawPacketCallback> = new Set();
     private connectionCallbacks: Set<ConnectionCallback> = new Set();
+    private statusUpdateCallbacks: Set<StatusUpdateCallback> = new Set();
     private reconnectTimer: ReturnType<typeof setInterval> | null = null;
     private wantConnection = false; // true after user clicks Connect
 
@@ -184,8 +187,10 @@ class HIDService {
         }
     }
 
-    public async disconnect(): Promise<void> {
-        this.wantConnection = false;
+    public async disconnect(forceReset: boolean = false): Promise<void> {
+        if (forceReset) {
+            this.wantConnection = false;
+        }
         this.stopReconnectPolling();
         if (this.device) {
             this.device.removeEventListener('inputreport', this.handleInputReport as EventListener);
@@ -215,6 +220,15 @@ class HIDService {
 
     private notifyConnectionChange(connected: boolean): void {
         this.connectionCallbacks.forEach(cb => cb(connected));
+    }
+
+    // ── Status update observers ──
+    public onStatusUpdate(callback: StatusUpdateCallback): void {
+        this.statusUpdateCallbacks.add(callback);
+    }
+
+    public offStatusUpdate(callback: StatusUpdateCallback): void {
+        this.statusUpdateCallbacks.delete(callback);
     }
 
     // ── Disconnect handler ──
@@ -324,16 +338,32 @@ class HIDService {
     // ── Low-level send helpers ──
     // ══════════════════════════════════════════════════════════
 
-    public async sendResponse(flags: number, data?: Uint8Array): Promise<boolean> {
-        if (!this.isConnected()) return false;
+    /** Wrapper for device.sendReport to catch fatal browser/HID errors */
+    private async safeSendReport(reportId: number, data: Uint8Array): Promise<boolean> {
+        if (!this.device || !this.device.opened) return false;
         try {
-            const reportData = this.buildCommPacket(flags, 0, data || new Uint8Array(0));
-            await this.device!.sendReport(COMM_REPORT_ID, reportData);
+            await this.device.sendReport(reportId, data);
             return true;
-        } catch (error) {
-            console.error('Error sending response COMM report:', error);
+        } catch (error: any) {
+            console.error(`[HID Service] Fatal send error: ${error.name}: ${error.message}`);
+            // NotAllowedError often happens when the device is gone or permission is revoked mid-flow
+            if (error.name === 'NotAllowedError' || error.name === 'InvalidStateError' || error.name === 'NotFoundError') {
+                this.handleFatalError(error);
+            }
             return false;
         }
+    }
+
+    private handleFatalError(error: any): void {
+        console.warn('[HID Service] Handling fatal error, forcing disconnect...', error);
+        // forceReset = true clears wantConnection so we don't auto-reconnect to a zombie/missing device
+        this.disconnect(true);
+    }
+
+    public async sendResponse(flags: number, data?: Uint8Array): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        const reportData = this.buildCommPacket(flags, 0, data || new Uint8Array(0));
+        return await this.safeSendReport(COMM_REPORT_ID, reportData);
     }
 
     // ══════════════════════════════════════════════════════════
@@ -369,12 +399,7 @@ class HIDService {
         else flags = PAYLOAD_FLAG_MID;
 
         const reportData = this.buildCommPacket(flags, remaining, chunk);
-        try {
-            await this.device!.sendReport(COMM_REPORT_ID, reportData);
-            return true;
-        } catch {
-            return false;
-        }
+        return await this.safeSendReport(COMM_REPORT_ID, reportData);
     }
 
     /** Parse a bitmap response to find missing packet indices */
@@ -456,8 +481,7 @@ class HIDService {
             if (totalPackets === 1) {
                 const flags = PAYLOAD_FLAG_FIRST | PAYLOAD_FLAG_LAST;
                 const reportData = this.buildCommPacket(flags, 0, data);
-                await this.device!.sendReport(COMM_REPORT_ID, reportData);
-                return true;
+                return await this.safeSendReport(COMM_REPORT_ID, reportData);
             }
 
             console.log(`[Blast TX] Starting: ${totalPackets} packets for ${data.length} bytes`);
@@ -491,7 +515,11 @@ class HIDService {
                 // Send STATUS_REQ
                 const bitmapPromise = this.waitForFlag(PAYLOAD_FLAG_BITMAP, 3000);
                 const statusPacket = this.buildCommPacket(PAYLOAD_FLAG_STATUS_REQ, 0, new Uint8Array(0));
-                await this.device!.sendReport(COMM_REPORT_ID, statusPacket);
+                if (!await this.safeSendReport(COMM_REPORT_ID, statusPacket)) {
+                    console.error(`[Blast TX] Failed to send STATUS_REQ (round ${round})`);
+                    if (round === MAX_RECONCILE_ROUNDS - 1) return false;
+                    continue;
+                }
 
                 const bitmapResp = await bitmapPromise;
                 if (!bitmapResp) {
@@ -565,13 +593,13 @@ class HIDService {
             console.error('[HID Queue] Task failed:', err);
             reject(err);
         } finally {
-            // Inter-task settle time: 150ms (Balanced for NVS stability and batch performance)
+            // Inter-task settle time: 50ms (Optimized for performance while maintaining NVS stability)
             // We must keep isProcessingQueue = true until the timeout fires to prevent
             // the next task from jumping the gun.
             setTimeout(() => {
                 this.isProcessingQueue = false;
                 this.processNextTask();
-            }, 300);
+            }, 50);
         }
     }
 
@@ -643,6 +671,25 @@ class HIDService {
         return this.enqueueTask(() => this.sendCustomCommReport(payload));
     }
 
+    public async fetchStatus(): Promise<{ mode: number; profile: number; bitmap: number } | null> {
+        if (!this.isConnected()) return null;
+
+        // Command: [MODULE_STATUS]
+        const buf = new Uint8Array([MODULE_STATUS]);
+
+        // sendCommand handles multi-packet assembly and timeout
+        const resp = await this.sendCommand(buf, 2000);
+
+        if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
+            try {
+                return JSON.parse(resp.jsonText);
+            } catch (e) {
+                console.error('Failed to parse status JSON in fetchStatus:', e);
+            }
+        }
+        return null;
+    }
+
     // ── Incoming packet handler ──
     private async handleInputReport(event: any): Promise<void> {
         if (event.reportId !== COMM_REPORT_ID) return;
@@ -674,7 +721,7 @@ class HIDService {
 
         if (flags === PAYLOAD_FLAG_STATUS_REQ && this.blastRx.active) {
             const bitmapPacket = this.blastRxBuildBitmapPacket();
-            this.device?.sendReport(COMM_REPORT_ID, bitmapPacket);
+            this.safeSendReport(COMM_REPORT_ID, bitmapPacket);
             return;
         }
 
@@ -745,9 +792,23 @@ class HIDService {
     }
 
     private finishResponse(): void {
-        if (this.pendingResolve && this.pendingResponse) {
-            this.pendingResolve(this.pendingResponse);
-            this.pendingResolve = null;
+        if (this.pendingResponse) {
+            const { module, jsonText } = this.pendingResponse;
+
+            // Catch unsolicited or pushed status updates
+            if (module === MODULE_STATUS && jsonText) {
+                try {
+                    const status = JSON.parse(jsonText);
+                    this.statusUpdateCallbacks.forEach(cb => cb(status));
+                } catch (e) {
+                    console.error('Failed to parse push status JSON:', e);
+                }
+            }
+
+            if (this.pendingResolve) {
+                this.pendingResolve(this.pendingResponse);
+                this.pendingResolve = null;
+            }
             this.pendingResponse = null;
         }
     }

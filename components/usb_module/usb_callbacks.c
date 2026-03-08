@@ -254,6 +254,8 @@ bool execute_callback(usb_msg_module_t callback_module, uint8_t const *data,
 }
 
 void usb_callbacks_init(void) {
+  usb_tx_init(); // Initialize the TX queue and task
+  
   usb_processing_queue =
       xQueueCreate(PROCESS_QUEUE_LENGTH, sizeof(usb_packet_msg_t));
 

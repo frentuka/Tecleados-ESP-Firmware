@@ -31,7 +31,6 @@ export const SYSTEM_ACTION_NAMES: Record<number, string> = {
     0x2006: 'BLE 1', 0x2007: 'BLE 2', 0x2008: 'BLE 3',
     0x2009: 'BLE 4', 0x200A: 'BLE 5', 0x200B: 'BLE 6',
     0x200C: 'BLE 7', 0x200D: 'BLE 8', 0x200E: 'BLE 9',
-    0x200F: 'BLE 10',
     0x2010: 'BRI+', 0x2011: 'BRI-',
     0x2012: 'VOL+', 0x2013: 'VOL-', 0x2014: 'MUTE',
     0x2015: 'M.NXT', 0x2016: 'M.PRV', 0x2017: 'M.TOG',
@@ -110,7 +109,7 @@ export const ALL_KEYS: { label: string; value: number }[] = [
     { label: 'RGB Bright +', value: 0x201C }, { label: 'RGB Bright -', value: 0x201D },
     { label: 'BLE Toggle', value: 0x2005 },
     { label: 'BLE ON', value: 0x2003 }, { label: 'BLE OFF', value: 0x2004 },
-    ...Array.from({ length: 10 }, (_, i) => ({
+    ...Array.from({ length: 9 }, (_, i) => ({
         label: `BLE ${i + 1}`,
         value: 0x2006 + i,
     })),

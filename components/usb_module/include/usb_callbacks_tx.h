@@ -5,7 +5,7 @@
 
 // ============ TX Buffer ============
 
-#define TX_TIMEOUT_MS 300
+#define TX_TIMEOUT_MS 1000  // Increased for reliability during high load
 #define MAX_TX_BUF_SIZE 21500
 #define MAX_TX_BUF_SIZE_IN_PAYLOADS (MAX_TX_BUF_SIZE / MAX_PAYLOAD_LENGTH)
 
@@ -21,3 +21,9 @@ uint64_t tx_get_last_packet_timestamp_us();
 // Blast mode API
 bool tx_blast_active();
 void tx_blast_handle_bitmap(const usb_packet_msg_t *msg);
+
+// High-level API for sending payloads (now queued)
+bool send_payload(const uint8_t *payload, uint16_t payload_len);
+
+// Initialization for TX Queue and Task
+void usb_tx_init(void);
