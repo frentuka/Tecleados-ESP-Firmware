@@ -159,8 +159,15 @@ class HIDService {
             });
 
             if (devices.length > 0) {
+                // Find the device with the vendor-defined collection (Comm interface)
+                const target = devices.find((d: any) => this.isCommInterface(d)) || devices[0];
                 this.wantConnection = true;
-                return await this.openDevice(devices[0]);
+                const ok = await this.openDevice(target);
+                if (!ok) {
+                    console.warn('[HID Service] Initial open failed, starting auto-reconnect polling');
+                    this.startReconnectPolling();
+                }
+                return ok;
             }
             return false;
         } catch (error) {
@@ -297,7 +304,7 @@ class HIDService {
             // getDevices() returns previously authorized devices without user prompt
             const devices = await nav.hid.getDevices();
             const target = devices.find(
-                (d: any) => d.vendorId === VENDOR_ID && d.productId === PRODUCT_ID
+                (d: any) => d.vendorId === VENDOR_ID && d.productId === PRODUCT_ID && this.isCommInterface(d)
             );
             if (target) {
                 console.log('Found previously authorized device, reopening...');
@@ -306,6 +313,13 @@ class HIDService {
         } catch (error) {
             // to-do
         }
+    }
+
+    /** Check if this HID interface is the Vendor Defined Comm interface */
+    private isCommInterface(device: any): boolean {
+        // The Comm interface uses Usage Page 0xFFFF (Vendor Defined)
+        if (!device || !device.collections) return false;
+        return device.collections.some((c: any) => c.usagePage === 0xFFFF);
     }
 
     // ══════════════════════════════════════════════════════════
@@ -355,9 +369,9 @@ class HIDService {
     }
 
     private handleFatalError(error: any): void {
-        console.warn('[HID Service] Handling fatal error, forcing disconnect...', error);
-        // forceReset = true clears wantConnection so we don't auto-reconnect to a zombie/missing device
-        this.disconnect(true);
+        console.warn('[HID Service] Handling fatal error, forcing cleanup...', error);
+        // forceReset = false keeps wantConnection = true so we auto-reconnect
+        this.disconnect(false);
     }
 
     public async sendResponse(flags: number, data?: Uint8Array): Promise<boolean> {

@@ -578,6 +578,7 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEve
     const [recordDelay, setRecordDelay] = useState(true);
     const [clearOnRecord, setClearOnRecord] = useState(false);
     const [defaultDelay, setDefaultDelay] = useState(100);
+    const [defaultPressTime, setDefaultPressTime] = useState(10);
     const [showConfigMenu, setShowConfigMenu] = useState(false);
     const configMenuRef = useRef<HTMLDivElement>(null);
 
@@ -739,10 +740,16 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEve
         if (isRecording) setIsRecording(false);
         if (editingElementIndex !== null) {
             const newElements = [...elements];
-            newElements[editingElementIndex] = { type: 'key', key };
+            const oldEl = newElements[editingElementIndex];
+            newElements[editingElementIndex] = { ...oldEl, type: 'key', key };
             setElements(newElements);
         } else {
-            setElements([...elements, { type: 'key', key }]);
+            const isMacro = key >= MACRO_BASE && key < MACRO_BASE + 256;
+            const newEl: MacroElement = { type: 'key', key };
+            if (!isMacro) {
+                newEl.pressTime = defaultPressTime;
+            }
+            setElements([...elements, newEl]);
         }
         setIsKeyModalOpen(false);
     };
@@ -775,7 +782,15 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEve
         else nextAction = 'tap';
 
         const newElements = [...elements];
-        newElements[index] = { ...el, action: nextAction };
+        const updatedEl: any = { ...el, action: nextAction };
+
+        if (nextAction === 'tap') {
+            updatedEl.pressTime = el.pressTime !== undefined ? el.pressTime : defaultPressTime;
+        } else {
+            delete updatedEl.pressTime;
+        }
+
+        newElements[index] = updatedEl;
         setElements(newElements);
     };
 
@@ -799,6 +814,15 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEve
         const el = newElements[index];
         if (el.type !== 'key') return;
         el.inlineSleep = Math.max(0, duration);
+        setElements(newElements);
+    };
+
+    const updatePressTime = (index: number, duration: number) => {
+        if (isRecording) setIsRecording(false);
+        const newElements = [...elements];
+        const el = newElements[index];
+        if (el.type !== 'key') return;
+        el.pressTime = Math.max(0, duration);
         setElements(newElements);
     };
 
@@ -1017,6 +1041,21 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEve
                                                 <span className="config-delay-suffix">ms</span>
                                             </div>
                                         </div>
+                                        <div className="config-dropdown-row">
+                                            <span>Default press time</span>
+                                            <div className="config-delay-input">
+                                                <input
+                                                    type="number"
+                                                    value={defaultPressTime === 0 ? '' : defaultPressTime}
+                                                    onChange={e => {
+                                                        if (isRecording) setIsRecording(false);
+                                                        setDefaultPressTime(e.target.value === '' ? 0 : parseInt(e.target.value) || 0);
+                                                    }}
+                                                    min="0"
+                                                />
+                                                <span className="config-delay-suffix">ms</span>
+                                            </div>
+                                        </div>
                                         <div className="config-dropdown-row" style={{ marginTop: '0.5rem' }}>
                                             <button
                                                 className="btn btn-sm btn-danger"
@@ -1060,42 +1099,58 @@ function MacroEditorModal({ macro: initialMacro, onSave, onClose, macros, maxEve
                                         {el.type === 'key' ? (
                                             <>
                                                 <button
-                                                    className={`btn-action-toggle ${el.key >= MACRO_BASE ? 'disabled' : ''}`}
+                                                    className={`btn-action-toggle ${(el.key >= MACRO_BASE && el.key < MACRO_BASE + 256) ? 'disabled' : ''}`}
                                                     onClick={() => toggleAction(i)}
-                                                    title={el.key >= MACRO_BASE ? "Macros are always 'Tap'" : (el.action ? el.action.charAt(0).toUpperCase() + el.action.slice(1) : 'Tap')}
-                                                    disabled={el.key >= MACRO_BASE}
+                                                    title={(el.key >= MACRO_BASE && el.key < MACRO_BASE + 256) ? "Macros are always 'Tap'" : (el.action ? el.action.charAt(0).toUpperCase() + el.action.slice(1) : 'Tap')}
+                                                    disabled={el.key >= MACRO_BASE && el.key < MACRO_BASE + 256}
                                                 >
                                                     {(!el.action || el.action === 'tap') && <ActionTapIcon />}
                                                     {el.action === 'press' && <ActionPressIcon />}
                                                     {el.action === 'release' && <ActionReleaseIcon />}
                                                 </button>
+
                                                 <div className={`key-preview ${getKeyClass(el.key)}`} onClick={() => {
                                                     setEditingElementIndex(i);
                                                     setIsKeyModalOpen(true);
                                                 }}>
                                                     {getKeyName(el.key, macros)}
                                                 </div>
-                                                <button
-                                                    className={`btn-action-toggle btn-moon-toggle ${el.inlineSleep !== undefined ? 'active' : ''}`}
-                                                    onClick={() => toggleInlineSleep(i)}
-                                                    title="Add sleep after this action"
-                                                    style={{ order: 10 }}
-                                                >
-                                                    <MoonIcon />
-                                                </button>
-                                                {el.inlineSleep !== undefined && (
-                                                    <div className="inline-sleep-container" style={{ order: 11 }}>
-                                                        <span className="inline-sleep-label">then sleep for</span>
+
+                                                {(!el.action || el.action === 'tap') && !(el.key >= MACRO_BASE && el.key < MACRO_BASE + 256) && (
+                                                    <div className="press-time-container">
+                                                        <span className="press-time-label">Press for</span>
                                                         <input
                                                             type="number"
-                                                            value={el.inlineSleep === 0 ? '' : el.inlineSleep}
-                                                            onChange={e => updateInlineSleep(i, e.target.value === '' ? 0 : parseInt(e.target.value) || 0)}
+                                                            value={el.pressTime === 0 ? '' : (el.pressTime ?? defaultPressTime)}
+                                                            onChange={e => updatePressTime(i, e.target.value === '' ? 0 : parseInt(e.target.value) || 0)}
                                                             min="0"
-                                                            className="inline-sleep-input"
+                                                            className="press-time-input"
                                                         />
-                                                        <span className="inline-sleep-suffix">ms</span>
+                                                        <span className="press-time-suffix">ms</span>
                                                     </div>
                                                 )}
+
+                                                <div className={`inline-sleep-container ${el.inlineSleep !== undefined ? 'expanded' : ''}`}>
+                                                    <div className="inline-sleep-inner">
+                                                        <div className="inline-sleep-fields">
+                                                            <input
+                                                                type="number"
+                                                                value={el.inlineSleep === 0 ? '' : (el.inlineSleep ?? '')}
+                                                                onChange={e => updateInlineSleep(i, e.target.value === '' ? 0 : parseInt(e.target.value) || 0)}
+                                                                min="0"
+                                                                className="inline-sleep-input"
+                                                            />
+                                                            <span className="inline-sleep-suffix">ms</span>
+                                                        </div>
+                                                        <button
+                                                            className={`btn-action-toggle btn-moon-toggle ${el.inlineSleep !== undefined ? 'active' : ''}`}
+                                                            onClick={() => toggleInlineSleep(i)}
+                                                            title="Add sleep after this action"
+                                                        >
+                                                            <MoonIcon />
+                                                        </button>
+                                                    </div>
+                                                </div>
                                             </>
                                         ) : (
                                             <div className="sleep-preview">

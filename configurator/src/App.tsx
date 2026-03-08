@@ -33,7 +33,7 @@ import './index.css';
 export type MacroAction = 'tap' | 'press' | 'release';
 
 export type MacroElement =
-  | { type: 'key'; key: number; action?: MacroAction; inlineSleep?: number }
+  | { type: 'key'; key: number; action?: MacroAction; inlineSleep?: number; pressTime?: number }
   | { type: 'sleep'; duration: number };
 
 export interface Macro {

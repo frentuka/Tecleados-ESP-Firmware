@@ -167,7 +167,7 @@ static bool execute_macro_cancellable(uint16_t macro_id, uint8_t depth,
       } else {
         kb_macro_process_action(val, true);
         kb_macro_send_report();
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(m->events[i].press_duration_ms));
         kb_macro_process_action(val, false);
         kb_macro_send_report();
       }

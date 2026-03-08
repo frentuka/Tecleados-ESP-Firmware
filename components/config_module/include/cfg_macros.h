@@ -36,6 +36,7 @@ typedef struct {
   cfg_macro_event_type_t type;
   uint32_t value; // Keycode or delay in ms
   uint32_t delay_ms; // Optional inline sleep after this event
+  uint32_t press_duration_ms; // Duration for MACRO_EVT_KEY_TAP
 } cfg_macro_event_t;
 
 typedef struct {
