@@ -159,8 +159,16 @@ class HIDService {
             });
 
             if (devices.length > 0) {
-                // Find the device with the vendor-defined collection (Comm interface)
-                const target = devices.find((d: any) => this.isCommInterface(d)) || devices[0];
+                // Highly specific filtering: look for the Vendor Defined Comm interface (Usage Page 0xFFFF)
+                const target = devices.find((d: any) => this.isCommInterface(d));
+
+                if (!target) {
+                    console.error('[HID Service] No valid Comm interface found among authorized devices.',
+                        devices.map((d: any) => ({ name: d.productName, collections: d.collections })));
+                    return false;
+                }
+
+                console.log(`[HID Service] Found target Comm interface on: ${target.productName}`);
                 this.wantConnection = true;
                 const ok = await this.openDevice(target);
                 if (!ok) {
@@ -317,9 +325,19 @@ class HIDService {
 
     /** Check if this HID interface is the Vendor Defined Comm interface */
     private isCommInterface(device: any): boolean {
+        if (!device || !device.collections || device.collections.length === 0) return false;
+
         // The Comm interface uses Usage Page 0xFFFF (Vendor Defined)
-        if (!device || !device.collections) return false;
-        return device.collections.some((c: any) => c.usagePage === 0xFFFF);
+        // We check all collections to see if any match our expected usage page
+        const hasCommUsage = device.collections.some((c: any) => c.usagePage === 0xFFFF);
+
+        // Debug info to help identify interface mismatches
+        if (!hasCommUsage) {
+            console.debug(`[HID Service] Interface "${device.productName}" collections:`,
+                device.collections.map((c: any) => `UP: 0x${c.usagePage.toString(16).toUpperCase()}, U: 0x${c.usage.toString(16).toUpperCase()}`));
+        }
+
+        return hasCommUsage;
     }
 
     // ══════════════════════════════════════════════════════════

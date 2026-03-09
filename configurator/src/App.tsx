@@ -96,7 +96,7 @@ function App() {
     const handler = (connected: boolean) => {
       setIsConnected(connected);
       if (!connected) setDeviceStatus(null);
-      setLogs(prev => [...prev, { id: Date.now() + Math.random(), timestamp: new Date(), data: new Uint8Array(0), text: connected ? "Device connected" : "Device disconnected" }]);
+      setLogs(prev => [...prev, { id: getNextLogId(), timestamp: new Date(), data: new Uint8Array(0), text: connected ? "Device connected" : "Device disconnected" }]);
     };
     hidService.onConnectionChange(handler);
 
@@ -125,6 +125,13 @@ function App() {
   const [isFetching, setIsFetching] = useState<boolean>(false);
 
   const logsEndRef = useRef<HTMLDivElement>(null);
+  const logIdCounter = useRef<number>(0);
+
+  const getNextLogId = useCallback(() => {
+    logIdCounter.current += 1;
+    return logIdCounter.current;
+  }, []);
+
 
   // logsEndRef kept for optional manual scroll, but no auto-scroll
 
@@ -209,7 +216,7 @@ function App() {
     const resp = await hidService.sendCommand(buf);
     if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
       try {
-        setLogs(prev => [...prev, { id: Date.now() + Math.random(), timestamp: new Date(), data: new Uint8Array(0), text: `Fetching details for macro ID ${id}...` }]);
+        setLogs(prev => [...prev, { id: getNextLogId(), timestamp: new Date(), data: new Uint8Array(0), text: `Fetching details for macro ID ${id}...` }]);
         const parsed = JSON.parse(resp.jsonText) as Macro;
         macroCache.current[id] = parsed; // Cache it
 
@@ -220,7 +227,7 @@ function App() {
         macrosRef.current = newList; // Synchronous update for microtask safety
         setMacros(newList);
 
-        setLogs(prev => [...prev, { id: Date.now() + Math.random(), timestamp: new Date(), data: new Uint8Array(0), text: `Details for macro "${parsed.name}" loaded.` }]);
+        setLogs(prev => [...prev, { id: getNextLogId(), timestamp: new Date(), data: new Uint8Array(0), text: `Details for macro "${parsed.name}" loaded.` }]);
 
         return parsed;
       } catch (e) {
@@ -249,7 +256,7 @@ function App() {
         } else if (parsed.macros && Array.isArray(parsed.macros)) {
           list = parsed.macros;
         }
-        setLogs(prev => [...prev, { id: Date.now() + Math.random(), timestamp: new Date(), data: new Uint8Array(0), text: `Found ${list.length} macros on device` }]);
+        setLogs(prev => [...prev, { id: getNextLogId(), timestamp: new Date(), data: new Uint8Array(0), text: `Found ${list.length} macros on device` }]);
 
         // Sort alphabetically by name before setting and fetching details
         list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
@@ -257,7 +264,7 @@ function App() {
         macrosRef.current = list;
         setMacros(list);
         macroCache.current = {}; // Reset cache on full list fetch
-        setLogs(prev => [...prev, { id: Date.now() + Math.random(), timestamp: new Date(), data: new Uint8Array(0), text: `Initialized ${list.length} macros. Fetching details...` }]);
+        setLogs(prev => [...prev, { id: getNextLogId(), timestamp: new Date(), data: new Uint8Array(0), text: `Initialized ${list.length} macros. Fetching details...` }]);
 
         // Sequentially fetch elements for each macro to respect USB limitations
         for (const m of list) {
@@ -335,7 +342,7 @@ function App() {
       setMacros(deduplicated);
 
       macroCache.current[macroToSave.id] = macroToSave; // Update cache gracefully
-      setLogs(prev => [...prev, { id: Date.now() + Math.random(), timestamp: new Date(), data: new Uint8Array(0), text: `Macro "${macroToSave.name}" saved to device (ID: ${macroToSave.id})` }]);
+      setLogs(prev => [...prev, { id: getNextLogId(), timestamp: new Date(), data: new Uint8Array(0), text: `Macro "${macroToSave.name}" saved to device (ID: ${macroToSave.id})` }]);
     } else {
       // ROLLBACK if it was a new reservation that failed
       if (isNew) {
@@ -344,7 +351,7 @@ function App() {
         setMacros(newList);
       }
       const errMsg = resp ? `Device error (0x${resp.status.toString(16).toUpperCase()})` : 'Device timeout';
-      setLogs(prev => [...prev, { id: Date.now() + Math.random(), timestamp: new Date(), data: new Uint8Array(0), text: `Failed to save macro: ${errMsg}` }]);
+      setLogs(prev => [...prev, { id: getNextLogId(), timestamp: new Date(), data: new Uint8Array(0), text: `Failed to save macro: ${errMsg}` }]);
       throw new Error(errMsg);
     }
   };
@@ -371,10 +378,10 @@ function App() {
       macrosRef.current = newList;
       setMacros(newList);
       delete macroCache.current[id]; // Remove from cache
-      setLogs(prev => [...prev, { id: Date.now() + Math.random(), timestamp: new Date(), data: new Uint8Array(0), text: `Macro deleted. ${macrosRef.current.length} remaining.` }]);
+      setLogs(prev => [...prev, { id: getNextLogId(), timestamp: new Date(), data: new Uint8Array(0), text: `Macro deleted. ${macrosRef.current.length} remaining.` }]);
     } else {
       const errMsg = resp ? `Device error (0x${resp.status.toString(16).toUpperCase()})` : 'Device timeout';
-      setLogs(prev => [...prev, { id: Date.now() + Math.random(), timestamp: new Date(), data: new Uint8Array(0), text: `Failed to delete macro: ${errMsg}` }]);
+      setLogs(prev => [...prev, { id: getNextLogId(), timestamp: new Date(), data: new Uint8Array(0), text: `Failed to delete macro: ${errMsg}` }]);
       throw new Error(errMsg);
     }
   };
@@ -422,7 +429,7 @@ function App() {
     setLogs((prev) => [
       ...prev,
       {
-        id: Date.now() + Math.random(),
+        id: getNextLogId(),
         timestamp: new Date(),
         data,
         text,
@@ -493,7 +500,7 @@ function App() {
     setLogs((prev) => [
       ...prev,
       {
-        id: Date.now() + Math.random(),
+        id: getNextLogId(),
         timestamp: new Date(),
         data: buf,
         text: `Sent [${modStr}] Cmd: ${cmdStr}, Key: ${keyStr}, Len: ${payloadBytes.length}`,
@@ -626,7 +633,7 @@ function App() {
               isConnected={isConnected}
               isDeveloperMode={isDeveloperMode}
               macros={macros}
-              onLog={(text: string) => setLogs(prev => [...prev, { id: Date.now() + Math.random(), timestamp: new Date(), data: new Uint8Array(0), text }])}
+              onLog={(text: string) => setLogs(prev => [...prev, { id: getNextLogId(), timestamp: new Date(), data: new Uint8Array(0), text }])}
             />
           </div>
 
