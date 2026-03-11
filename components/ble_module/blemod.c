@@ -21,6 +21,7 @@
 #include "cfg_ble.h"
 #include "host/ble_gap.h"
 #include "esp_timer.h"
+#include "store/config/ble_store_config.h"
 
 #define TAG "ble_hid_mod"
 
@@ -38,6 +39,9 @@ static int g_directed_profile = -1;
 // Cooldown timer to prevent instant reconnection loops after manual disconnect
 static esp_timer_handle_t s_adv_cooldown_timer;
 static void ble_hid_adv_timer_cb(void *arg);
+
+// Buffer to hold peer address during pairing until encryption is complete
+static ble_addr_t g_pending_addr;
 
 /* ========================================================================= */
 /* Forward Declarations                                                      */
@@ -77,20 +81,10 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
             ESP_LOGW(TAG, "Could not map connection to profile!");
         }
 
-        // If we are currently pairing to a profile, save its MAC
+        // If we are currently pairing to a profile, capture its MAC
         if (g_pairing_profile >= 0 && g_pairing_profile < CFG_BLE_MAX_PROFILES) {
-            ESP_LOGI(TAG, "Saving newly connected MAC to profile %d", g_pairing_profile);
-            
-            // Note: In a real scenario we might wait for pairing to complete,
-            // but for simplicity we save the MAC now. We'll mark it valid.
-            cfg_ble_state_t new_state = *cfg_ble_get_state();
-            new_state.profiles[g_pairing_profile].is_valid = true;
-            new_state.profiles[g_pairing_profile].addr_type = desc.peer_id_addr.type;
-            memcpy(new_state.profiles[g_pairing_profile].val, desc.peer_id_addr.val, 6);
-            new_state.selected_profile = g_pairing_profile;
-            cfg_ble_save_state(&new_state);
-            
-            g_pairing_profile = -1;
+            ESP_LOGI(TAG, "Connection established for pairing profile %d. Waiting for security...", g_pairing_profile);
+            g_pending_addr = desc.peer_id_addr;
         }
 
         // Always clear the directed/reconnect flag once connected
@@ -143,8 +137,24 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
     // Gives us information when encryption and pairing process is complete
     if (event->enc_change.status == 0) {
       ESP_LOGI(TAG, "Connection successfully encrypted (pairing complete)");
+
+      // If we were in pairing mode, NOW we save the credentials
+      if (g_pairing_profile >= 0 && g_pairing_profile < CFG_BLE_MAX_PROFILES) {
+          ESP_LOGI(TAG, "Saving newly connected MAC to profile %d", g_pairing_profile);
+          
+          cfg_ble_state_t new_state = *cfg_ble_get_state();
+          new_state.profiles[g_pairing_profile].is_valid = true;
+          new_state.profiles[g_pairing_profile].addr_type = g_pending_addr.type;
+          memcpy(new_state.profiles[g_pairing_profile].val, g_pending_addr.val, 6);
+          new_state.selected_profile = g_pairing_profile;
+          cfg_ble_save_state(&new_state);
+          
+          g_pairing_profile = -1;
+      }
     } else {
       ESP_LOGE(TAG, "Encryption failed, status=%d", event->enc_change.status);
+      // If encryption failed during pairing, we should probably clear the pairing state
+      g_pairing_profile = -1;
     }
     break;
 
@@ -385,6 +395,10 @@ void ble_hid_init(void) {
       BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
   ble_hs_cfg.sm_mitm = 0; // "Just Works" without MITM protection
   ble_hs_cfg.sm_sc = 1;   // Secure Connections (BLE 4.2+)
+
+  // Initialize bond storage (NVS) and register callbacks
+  ble_hs_cfg.store_read_cb = ble_store_config_read;
+  ble_hs_cfg.store_write_cb = ble_store_config_write;
 
   // 4. Register GATT services (you'll add your HID service here later)
   ble_svc_gap_init();
