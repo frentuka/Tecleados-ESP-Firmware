@@ -98,7 +98,7 @@ export function computeCrc8(data: Uint8Array): number {
 }
 
 export type ConnectionCallback = (connected: boolean) => void;
-export type StatusUpdateCallback = (status: { mode: number; profile: number; bitmap: number }) => void;
+export type StatusUpdateCallback = (status: { mode: number; profile: number; pairing: number; bitmap: number }) => void;
 
 class HIDService {
     private device: HIDDeviceMock | null = null;
@@ -703,7 +703,7 @@ class HIDService {
         return this.enqueueTask(() => this.sendCustomCommReport(payload));
     }
 
-    public async fetchStatus(): Promise<{ mode: number; profile: number; bitmap: number } | null> {
+    public async fetchStatus(): Promise<{ mode: number; profile: number; pairing: number; bitmap: number } | null> {
         if (!this.isConnected()) return null;
 
         // Command: [MODULE_STATUS]
@@ -714,7 +714,13 @@ class HIDService {
 
         if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
             try {
-                return JSON.parse(resp.jsonText);
+                const data = JSON.parse(resp.jsonText);
+                return {
+                    mode: data.mode,
+                    profile: data.profile,
+                    pairing: data.pairing ?? -1,
+                    bitmap: data.bitmap
+                };
             } catch (e) {
                 console.error('Failed to parse status JSON in fetchStatus:', e);
             }
@@ -830,8 +836,14 @@ class HIDService {
             // Catch unsolicited or pushed status updates
             if (module === MODULE_STATUS && jsonText) {
                 try {
-                    const status = JSON.parse(jsonText);
-                    this.statusUpdateCallbacks.forEach(cb => cb(status));
+                    const data = JSON.parse(jsonText);
+                    const normalizedStatus = {
+                        mode: data.mode,
+                        profile: data.profile,
+                        pairing: data.pairing ?? -1,
+                        bitmap: data.bitmap
+                    };
+                    this.statusUpdateCallbacks.forEach(cb => cb(normalizedStatus));
                 } catch (e) {
                     console.error('Failed to parse push status JSON:', e);
                 }

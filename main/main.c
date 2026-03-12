@@ -69,6 +69,5 @@ static void init_procedure(void) {
 }
 
 void app_main(void) {
-  printf("Hello world!!! :D\n");
   init_procedure();
 }

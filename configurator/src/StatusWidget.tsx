@@ -4,12 +4,13 @@ interface StatusWidgetProps {
   isConnected: boolean;
   transportMode: number; // 0: USB, 1: BLE
   selectedProfile: number; // 0-8 (displayed as 1-9)
+  pairingProfile: number; // 0-8, or -1 if none
   connectedBitmap: number; // 16-bit bitmap
   onExpandChange?: (isExpanded: boolean) => void;
   onOfflineClick?: () => void;
 }
 
-const StatusWidget: React.FC<StatusWidgetProps> = ({ isConnected, transportMode, selectedProfile, connectedBitmap, onExpandChange, onOfflineClick }) => {
+const StatusWidget: React.FC<StatusWidgetProps> = ({ isConnected, transportMode, selectedProfile, pairingProfile, connectedBitmap, onExpandChange, onOfflineClick }) => {
   const [isPersistent, setIsPersistent] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
   const isBle = transportMode === 1;
@@ -75,17 +76,18 @@ const StatusWidget: React.FC<StatusWidgetProps> = ({ isConnected, transportMode,
             <div className="status-section profiles-section">
               <div className="profiles-grid">
                 {profileRange.map((p) => {
-                  const isSelected = selectedProfile === p;
-                  const isConnectedProfile = (connectedBitmap & (1 << p)) !== 0;
-                  return (
-                    <div
-                      key={p}
-                      className={`profile-indicator ${isSelected ? 'selected' : ''} ${isConnectedProfile ? 'connected-p' : ''}`}
-                      title={`Profile ${p + 1}: ${isConnectedProfile ? 'Connected' : 'Disconnected'}${isSelected ? ' (Selected)' : ''}`}
-                    >
-                      {p + 1}
-                    </div>
-                  );
+                    const isSelected = selectedProfile === p;
+                    const isConnectedProfile = (connectedBitmap & (1 << p)) !== 0;
+                    const isPairing = pairingProfile === p;
+                    return (
+                      <div
+                        key={p}
+                        className={`profile-indicator ${isSelected ? 'selected' : ''} ${isConnectedProfile ? 'connected-p' : ''} ${isPairing ? 'pairing' : ''}`}
+                        title={`Profile ${p + 1}: ${isPairing ? 'Pairing...' : isConnectedProfile ? 'Connected' : 'Disconnected'}${isSelected ? ' (Selected)' : ''}`}
+                      >
+                        {p + 1}
+                      </div>
+                    );
                 })}
               </div>
             </div>
@@ -282,6 +284,28 @@ const StatusWidget: React.FC<StatusWidgetProps> = ({ isConnected, transportMode,
           color: #67ff95ff;
           background: #2ecc70a1;
           box-shadow: 0 0 8px rgba(46, 180, 204, 0.62);
+        }
+
+        .profile-indicator.pairing {
+          color: #fff;
+          background: rgba(88, 166, 255, 0.2);
+          border: 1px solid rgba(88, 166, 255, 0.5);
+          animation: profile-pulse 1.5s infinite ease-in-out;
+        }
+
+        @keyframes profile-pulse {
+          0% {
+            box-shadow: 0 0 0px rgba(88, 166, 255, 0.4);
+            border-color: rgba(88, 166, 255, 0.5);
+          }
+          50% {
+            box-shadow: 0 0 10px rgba(88, 166, 255, 0.8);
+            border-color: rgba(88, 166, 255, 1);
+          }
+          100% {
+            box-shadow: 0 0 0px rgba(88, 166, 255, 0.4);
+            border-color: rgba(88, 166, 255, 0.5);
+          }
         }
       `}</style>
     </div>

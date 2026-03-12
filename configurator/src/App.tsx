@@ -67,7 +67,7 @@ function getFlagsString(flags: number): string {
 
 function App() {
   const [isConnected, setIsConnected] = useState(false);
-  const [deviceStatus, setDeviceStatus] = useState<{ mode: number; profile: number; bitmap: number } | null>(null);
+  const [deviceStatus, setDeviceStatus] = useState<{ mode: number; profile: number; pairing: number; bitmap: number } | null>(null);
   const [controlsEnabled, setControlsEnabled] = useState(false);
   const [isDeveloperMode, setIsDeveloperMode] = useState<boolean>(() => {
     return localStorage.getItem('isDeveloperMode') === 'true';
@@ -101,7 +101,7 @@ function App() {
     hidService.onConnectionChange(handler);
 
     // Also listen for status updates (pushed from ESP)
-    const statusHandler = (status: { mode: number; profile: number; bitmap: number }) => {
+    const statusHandler = (status: { mode: number; profile: number; pairing: number; bitmap: number }) => {
       setDeviceStatus(status);
     };
     hidService.onStatusUpdate(statusHandler);
@@ -587,6 +587,7 @@ function App() {
             isConnected={isConnected}
             transportMode={deviceStatus?.mode ?? 0}
             selectedProfile={deviceStatus?.profile ?? 0}
+            pairingProfile={deviceStatus?.pairing ?? -1}
             connectedBitmap={deviceStatus?.bitmap ?? 0}
             onOfflineClick={handleConnect}
           />

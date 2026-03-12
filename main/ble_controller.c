@@ -21,15 +21,15 @@ static void on_kb_sys_action(uint16_t action_code, kb_action_ev_t event) {
 
         switch (event) {
             case KB_EV_HOLD:
-                ESP_LOGI(TAG, "BLE Profile %d: HOLD -> Pair new device", profile_id);
+                ESP_LOGI(TAG, "BLE: Pairing Mode (P%d)", profile_id);
                 ble_hid_profile_pair(profile_id);
                 break;
             case KB_EV_SINGLE_TAP:
-                ESP_LOGI(TAG, "BLE Profile %d: SINGLE TAP -> Select/Directed Connect", profile_id);
+                ESP_LOGI(TAG, "BLE: Connecting (P%d)", profile_id);
                 ble_hid_profile_connect_and_select(profile_id);
                 break;
             case KB_EV_DOUBLE_TAP:
-                ESP_LOGI(TAG, "BLE Profile %d: DOUBLE TAP -> Connect/Disconnect only", profile_id);
+                ESP_LOGI(TAG, "BLE: Toggling (P%d)", profile_id);
                 ble_hid_profile_toggle_connection(profile_id);
                 break;
             default:

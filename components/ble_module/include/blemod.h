@@ -16,3 +16,4 @@ void ble_hid_profile_toggle_connection(uint8_t profile_id);
 void ble_hid_set_routing_active(bool active);
 bool ble_hid_is_routing_active(void);
 uint16_t ble_hid_get_connected_profiles_bitmap(void);
+int ble_hid_get_pairing_profile(void);

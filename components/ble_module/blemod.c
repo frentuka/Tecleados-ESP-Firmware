@@ -43,6 +43,10 @@ static void ble_hid_adv_timer_cb(void *arg);
 // Buffer to hold peer address during pairing until encryption is complete
 static ble_addr_t g_pending_addr;
 
+// Master pairing timeout timer (absolute 60s)
+static esp_timer_handle_t s_pairing_timeout_timer;
+static void ble_hid_pairing_timeout_cb(void *arg);
+
 /* ========================================================================= */
 /* Forward Declarations                                                      */
 /* ========================================================================= */
@@ -96,6 +100,12 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
     } else {
       ESP_LOGI(TAG, "Connection failed (status %d)", event->connect.status);
       g_directed_profile = -1;
+      // If we were pairing, a failed connection should probably end pairing or we just let it time out.
+      // Crucially, we MUST NOT restart the 30s timer indefinitely here.
+      if (g_pairing_profile != -1) {
+          ESP_LOGW(TAG, "Connect failed during pairing. Stopping pairing mode.");
+          g_pairing_profile = -1;
+      }
       ble_hid_advertise();
     }
     break;
@@ -125,11 +135,8 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
 
   case BLE_GAP_EVENT_ADV_COMPLETE:
     ESP_LOGI(TAG, "Advertising complete event (timeout/stopped). Reason=%d", event->adv_complete.reason);
-    // If we were pairing, we likely timed out (30 seconds over). Stop pairing mode.
-    if (g_pairing_profile != -1) {
-        ESP_LOGW(TAG, "Pairing timed out for profile %d. Stopping pairing mode.", g_pairing_profile);
-        g_pairing_profile = -1;
-    }
+    // Note: We now rely more on the master s_pairing_timeout_timer for pairing state,
+    // but we still clear flags here for safety.
     g_directed_profile = -1;
     break;
 
@@ -150,11 +157,13 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
           cfg_ble_save_state(&new_state);
           
           g_pairing_profile = -1;
+          esp_timer_stop(s_pairing_timeout_timer);
       }
     } else {
       ESP_LOGE(TAG, "Encryption failed, status=%d", event->enc_change.status);
       // If encryption failed during pairing, we should probably clear the pairing state
       g_pairing_profile = -1;
+      esp_timer_stop(s_pairing_timeout_timer);
     }
     break;
 
@@ -339,10 +348,10 @@ static void ble_hid_advertise(void) {
       adv_params.itvl_max = 1600; // 1000ms
   }
 
-  // Duration: 15s for reconnection, 30s for pairing, else BLE_HS_FOREVER
+  // Duration: Use master timer for pairing, stack timer for reconnection
   int32_t duration_ms = BLE_HS_FOREVER;
   if (g_pairing_profile != -1) {
-      duration_ms = 30000;
+      duration_ms = 60000; // Match master timer
   } else if (g_directed_profile != -1) {
       duration_ms = 15000;
   }
@@ -422,8 +431,22 @@ void ble_hid_init(void) {
   };
   esp_timer_create(&timer_args, &s_adv_cooldown_timer);
 
+  const esp_timer_create_args_t pairing_timer_args = {
+      .callback = ble_hid_pairing_timeout_cb,
+      .name = "pairing_timeout"
+  };
+  esp_timer_create(&pairing_timer_args, &s_pairing_timeout_timer);
+
   // Note: BLE_MAX_CONNECTIONS is configured in menuconfig
   ESP_LOGI(TAG, "BLE HID initialization complete");
+}
+
+static void ble_hid_pairing_timeout_cb(void *arg) {
+    if (g_pairing_profile != -1) {
+        ESP_LOGW(TAG, "ABSOLUTE Pairing timeout for profile %d. Stopping pairing mode.", g_pairing_profile);
+        g_pairing_profile = -1;
+        ble_hid_advertise(); // Restart in background or stop
+    }
 }
 
 static void ble_hid_adv_timer_cb(void *arg) {
@@ -482,9 +505,15 @@ esp_err_t ble_hid_send_consumer_report(uint16_t media_keycode) {
 void ble_hid_profile_pair(uint8_t profile_id) {
     ESP_LOGI(TAG, "[BLE API] Handling HOLD (Pair) for profile %d", profile_id);
 
-    // Erase old credentials if valid
+    // Erase old credentials if valid and mark profile as invalid
     const cfg_ble_state_t *st = cfg_ble_get_state();
-    if (st->profiles[profile_id].is_valid) {
+    bool was_valid = st->profiles[profile_id].is_valid;
+    
+    cfg_ble_state_t new_state = *st;
+    new_state.profiles[profile_id].is_valid = false;
+    cfg_ble_save_state(&new_state);
+
+    if (was_valid) {
         ESP_LOGI(TAG, "[BLE API] Erasing old credentials for profile %d", profile_id);
         ble_addr_t old_addr;
         old_addr.type = st->profiles[profile_id].addr_type;
@@ -494,6 +523,10 @@ void ble_hid_profile_pair(uint8_t profile_id) {
     
     g_pairing_profile = profile_id;
     g_directed_profile = -1;
+
+    // Start absolute pairing timeout timer
+    esp_timer_stop(s_pairing_timeout_timer);
+    esp_timer_start_once(s_pairing_timeout_timer, 60000000); // 60 seconds
     
     if (g_conn_handles[profile_id] != BLE_HS_CONN_HANDLE_NONE) {
         ESP_LOGI(TAG, "[BLE API] Profile %d already connected (handle %d). Terminating for pairing.", profile_id, g_conn_handles[profile_id]);
@@ -509,11 +542,11 @@ void ble_hid_profile_connect_and_select(uint8_t profile_id) {
     ESP_LOGI(TAG, "[BLE API] Handling SINGLE TAP (Select/Connect) for profile %d", profile_id);
     const cfg_ble_state_t *st = cfg_ble_get_state();
     
-    cfg_ble_state_t new_state = *st;
-    new_state.selected_profile = profile_id;
-    cfg_ble_save_state(&new_state);
-
     if (st->profiles[profile_id].is_valid) {
+        cfg_ble_state_t new_state = *st;
+        new_state.selected_profile = profile_id;
+        cfg_ble_save_state(&new_state);
+
         if (g_conn_handles[profile_id] != BLE_HS_CONN_HANDLE_NONE) {
             ESP_LOGI(TAG, "[BLE API] Profile %d is already connected. Routing is now switched.", profile_id);
             // No need to terminate anything else. They can stay connected.
@@ -524,7 +557,7 @@ void ble_hid_profile_connect_and_select(uint8_t profile_id) {
             ble_hid_advertise(); 
         }
     } else {
-        ESP_LOGW(TAG, "[BLE API] Profile %d is not configured. Switching selection but not connecting.", profile_id);
+        ESP_LOGW(TAG, "[BLE API] Profile %d is not configured (unpaired). Ignoring selection request.", profile_id);
     }
 }
 
@@ -576,4 +609,8 @@ uint16_t ble_hid_get_connected_profiles_bitmap(void) {
         }
     }
     return bitmap;
+}
+
+int ble_hid_get_pairing_profile(void) {
+    return g_pairing_profile;
 }

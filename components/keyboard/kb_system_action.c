@@ -31,6 +31,16 @@ static kb_sys_action_cb_t s_action_cb = NULL;
 static TaskHandle_t s_task_handle = NULL;
 
 static void notify_event(uint16_t action_code, kb_action_ev_t event) {
+    const char *ev_str = "UNKNOWN";
+    switch (event) {
+        case KB_EV_PRESS:      ev_str = "PRESS"; break;
+        case KB_EV_RELEASE:    ev_str = "RELEASE"; break;
+        case KB_EV_SINGLE_TAP:  ev_str = "SINGLE_TAP"; break;
+        case KB_EV_DOUBLE_TAP: ev_str = "DOUBLE_TAP"; break;
+        case KB_EV_HOLD:       ev_str = "HOLD"; break;
+    }
+    ESP_LOGI(TAG, "Event: %s (Action: 0x%04X)", ev_str, action_code);
+
     if (s_action_cb) {
         s_action_cb(action_code, event);
     }
@@ -92,7 +102,7 @@ static void sys_action_task(void *arg) {
 void kb_system_action_init(void) {
     memset(s_trackers, 0, sizeof(s_trackers));
     if (s_task_handle == NULL) {
-        xTaskCreate(sys_action_task, "kb_sys_action", 4096, NULL, 5, &s_task_handle);
+        xTaskCreateWithCaps(sys_action_task, "kb_sys_action", 4096, NULL, 5, &s_task_handle, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     }
 }
 

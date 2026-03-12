@@ -264,9 +264,14 @@ void usb_callbacks_init(void) {
     return;
   }
 
-  // Create unified processing task
-  xTaskCreate(usb_processing_task, "usb_processing_task", 16384, NULL, 5,
-              NULL);
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_heap_caps.h" // Required for MALLOC_CAP_SPIRAM and xTaskCreateWithCaps (if using recent IDF) or caps
+
+// ... later in the code ...
+
+  // Create unified processing task in Internal RAM (required for NVS/Flash operations)
+  xTaskCreateWithCaps(usb_processing_task, "usb_processing_task", 8192, NULL, 5, NULL, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   
-  xTaskCreate(timeouts_task, "usb_cb_timeouts_task", 3072, NULL, 5, NULL);
+  xTaskCreateWithCaps(timeouts_task, "usb_cb_timeouts_task", 4096, NULL, 5, NULL, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 }

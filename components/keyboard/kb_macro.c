@@ -293,6 +293,7 @@ static void on_macros_updated(const char *key) {
 // Forward definitions from cfg_macros.c are now in cfg_macros.h
 
 void kb_macro_init(void) {
+  ESP_LOGI(TAG, "kb_macro_init: starting");
   memset(s_v_nkro, 0, sizeof(s_v_nkro));
   memset(s_rt_state, 0, sizeof(s_rt_state));
   s_active_layer = KB_LAYER_BASE;
@@ -303,11 +304,8 @@ void kb_macro_init(void) {
   cfgmod_register_kind(CFGMOD_KIND_MACRO, macros_default, macros_deserialize,
                        macros_serialize, on_macros_updated, sizeof(cfg_macro_list_t));
 
-  // Load initial macros
   macros_load_all(&s_macros);
-  ESP_LOGI(TAG, "Loaded %d macros from storage", (int)s_macros.count);
-
-  xTaskCreate(macro_task, "kb_macro", 4096, NULL, 4, NULL);
+  xTaskCreateWithCaps(macro_task, "kb_macro", 3072, NULL, 4, NULL, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   ESP_LOGI(TAG, "Macro engine initialized");
 }
 
@@ -411,9 +409,11 @@ static void process_system_action(uint16_t action, bool is_pressed) {
 }
 
 void kb_macro_process_action(uint16_t action_code, bool is_pressed) {
+  ESP_LOGI(TAG, "kb_macro_process_action: code 0x%04X, pressed: %d", action_code, is_pressed);
   if (action_code >= ACTION_CODE_HID_MIN &&
       action_code <= ACTION_CODE_HID_MAX) {
     // Standard HID key
+    ESP_LOGI(TAG, "Processing HID Key: 0x%02X (%s)", (uint8_t)action_code, is_pressed ? "DOWN" : "UP");
     if (is_pressed) {
       kb_macro_virtual_press((uint8_t)action_code);
     } else {

@@ -134,9 +134,10 @@ esp_err_t cfg_layout_load_all(void) {
     esp_err_t err = cfgmod_get_config(CFGMOD_KIND_LAYOUT, s_layer_keys[i], &tmp);
     if (err == ESP_OK) {
       s_cache[i] = tmp;
+      ESP_LOGI(TAG, "Layer %d loaded from NVS (first key: 0x%04X)", i, s_cache[i].keys[0][0]);
+    } else {
+      ESP_LOGW(TAG, "Layer %d loaded from DEFAULTS (first key: 0x%04X)", i, s_cache[i].keys[0][0]);
     }
-
-    ESP_LOGI(TAG, "Layer %d loaded (first key: 0x%04X)", i, s_cache[i].keys[0][0]);
   }
   return ESP_OK;
 }

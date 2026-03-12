@@ -389,6 +389,6 @@ void usb_tx_init(void)
 {
     tx_queue = xQueueCreate(TX_QUEUE_LENGTH, sizeof(tx_queue_item_t));
     tx_done_sem = xSemaphoreCreateBinary();
-    xTaskCreate(usb_tx_task, "usb_tx_task", 4096, NULL, 10, NULL); // Higher priority than RX/Status
+    xTaskCreateWithCaps(usb_tx_task, "usb_tx_task", 4096, NULL, 10, NULL, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT); // Higher priority than RX/Status
     ESP_LOGI(TAG, "USB TX Queuing System initialized");
 }
