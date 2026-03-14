@@ -23,9 +23,11 @@ import {
   CFG_KEY_MACROS,
   CFG_KEY_MACRO_LIMITS,
   CFG_KEY_MACRO_SINGLE,
+  type CustomKey,
 } from './HIDService';
 import KeyboardLayoutEditor from './KeyboardLayoutEditor';
 import MacrosDashboard from './MacrosDashboard';
+import CustomKeysDashboard from './CustomKeysDashboard';
 import StatusWidget from './StatusWidget';
 import { useConfirm } from './hooks/useConfirm';
 import './index.css';
@@ -77,6 +79,9 @@ function App() {
   const [macroLimits, setMacroLimits] = useState<{ maxEvents: number; maxMacros: number } | null>(null);
   const macroCache = useRef<Record<number, Macro>>({});
   const macrosRef = useRef<Macro[]>([]);
+
+  // Custom Keys state
+  const [customKeys, setCustomKeys] = useState<CustomKey[]>([]);
 
   // Sync macrosRef with macros state (backup)
   // This helps when macros is set from outside (like onReload)
@@ -386,12 +391,42 @@ function App() {
     }
   };
 
+  const handleSaveCustomKey = async (ckey: CustomKey): Promise<void> => {
+    let ckeyToSave = ckey;
+    if (ckey.id === -1) {
+      const usedIds = new Set(customKeys.map(k => k.id));
+      let nextId = 0;
+      while (usedIds.has(nextId)) nextId++;
+      if (nextId >= 32) throw new Error('Maximum number of custom keys (32) reached.');
+      ckeyToSave = { ...ckey, id: nextId };
+    }
+    const ok = await hidService.saveCustomKey(ckeyToSave);
+    if (!ok) throw new Error('Failed to save custom key to device');
+    setCustomKeys(prev => {
+      const filtered = prev.filter(k => k.id !== ckeyToSave.id);
+      return [...filtered, ckeyToSave].sort((a, b) => a.id - b.id);
+    });
+  };
+
+  const handleDeleteCustomKey = async (id: number): Promise<void> => {
+    const isConfirmed = await confirm(
+      'Delete Custom Key',
+      'Are you sure? Any keys mapped to this custom key will stop working.'
+    );
+    if (!isConfirmed) return;
+    const ok = await hidService.deleteCustomKey(id);
+    if (!ok) throw new Error('Failed to delete custom key from device');
+    setCustomKeys(prev => prev.filter(k => k.id !== id));
+  };
+
   useEffect(() => {
     if (isConnected) {
       fetchStatus();
       fetchMacroLimits();
+      hidService.fetchCustomKeys().then(setCustomKeys);
     }
   }, [isConnected, fetchStatus, fetchMacroLimits]);
+
 
   useEffect(() => {
     if (isConnected && controlsEnabled) {
@@ -634,6 +669,7 @@ function App() {
               isConnected={isConnected}
               isDeveloperMode={isDeveloperMode}
               macros={macros}
+              customKeys={customKeys}
               onLog={(text: string) => setLogs(prev => [...prev, { id: getNextLogId(), timestamp: new Date(), data: new Uint8Array(0), text }])}
             />
           </div>
@@ -647,6 +683,17 @@ function App() {
               onDeleteMacro={handleDeleteMacro}
               onReload={fetchMacros}
               onFetchSingleMacro={fetchSingleMacro}
+            />
+          </div>
+
+          <div className="glass-panel">
+            <CustomKeysDashboard
+              customKeys={customKeys}
+              macros={macros}
+              isDeveloperMode={isDeveloperMode}
+              onSave={handleSaveCustomKey}
+              onDelete={handleDeleteCustomKey}
+              onReload={() => hidService.fetchCustomKeys().then(setCustomKeys)}
             />
           </div>
 

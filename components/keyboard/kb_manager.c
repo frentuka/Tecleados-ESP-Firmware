@@ -15,6 +15,7 @@
 #include "kb_report.h"
 #include "kb_state.h"
 #include "kb_system_action.h"
+#include "kb_custom_key.h"
 
 #include "cfg_layouts.h"
 
@@ -276,6 +277,7 @@ void kb_manager_start(void) {
   kb_state_init();
   kb_macro_init();
   kb_system_action_init();
+  kb_custom_key_init();
   cfg_layout_load_all();
   memset(s_injected_matrix, 0, sizeof(s_injected_matrix));
   usbmod_register_callback(MODULE_SYSTEM, kb_system_usb_callback);

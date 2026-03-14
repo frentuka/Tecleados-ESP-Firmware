@@ -14,6 +14,7 @@
 #include "kb_layout.h"
 #include "kb_report.h"
 #include "kb_system_action.h"
+#include "kb_custom_key.h"
 
 static const char *TAG = "kb_macro";
 
@@ -24,9 +25,15 @@ static bool s_is_fn2_held = false;
 static SemaphoreHandle_t s_v_nkro_mutex = NULL;
 static QueueHandle_t s_macro_queue = NULL;
 
+/* Sentinel: a queue item with this macro_id is a "fire tap" request,
+ * not a real macro. Fields tap_action and tap_duration_ms carry the payload. */
+#define MACRO_ID_FIRE_TAP 0xFFFF
+
 typedef struct {
   uint16_t macro_id;
-  bool is_pressed;   // true=key down, false=key up
+  bool is_pressed;        // true=key down, false=key up
+  uint16_t tap_action;    // used when macro_id == MACRO_ID_FIRE_TAP
+  uint32_t tap_duration_ms; // used when macro_id == MACRO_ID_FIRE_TAP
 } macro_queue_item_t;
 
 // Per-macro runtime state for execution mode logic
@@ -212,6 +219,18 @@ static void macro_task(void *arg) {
   macro_queue_item_t item;
   while (1) {
     if (xQueueReceive(s_macro_queue, &item, portMAX_DELAY)) {
+
+      /* ---- Handle fire-tap sentinel ---- */
+      if (item.macro_id == MACRO_ID_FIRE_TAP) {
+        uint32_t dur = item.tap_duration_ms > 0 ? item.tap_duration_ms : 10;
+        kb_macro_process_action(item.tap_action, true);
+        kb_macro_send_report();
+        vTaskDelay(pdMS_TO_TICKS(dur));
+        kb_macro_process_action(item.tap_action, false);
+        kb_macro_send_report();
+        continue;
+      }
+
       if (!item.is_pressed) continue; // Release is handled inline below
 
       size_t idx = 0;
@@ -533,5 +552,20 @@ void kb_macro_process_action(uint16_t action_code, bool is_pressed) {
         break;
       }
     }
+  } else if (action_code >= ACTION_CODE_CKEY_MIN &&
+             action_code <= ACTION_CODE_CKEY_MAX) {
+    // Custom Key
+    kb_custom_key_process_action(action_code, is_pressed);
   }
+}
+
+void kb_macro_fire_tap(uint16_t action_code, uint32_t duration_ms) {
+  if (!s_macro_queue) return;
+  macro_queue_item_t item = {
+    .macro_id       = MACRO_ID_FIRE_TAP,
+    .is_pressed     = false, // unused
+    .tap_action     = action_code,
+    .tap_duration_ms= duration_ms,
+  };
+  xQueueSend(s_macro_queue, &item, 0);
 }

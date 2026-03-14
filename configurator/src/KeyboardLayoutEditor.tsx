@@ -6,6 +6,7 @@ import {
     CFG_CMD_SET,
     CFG_KEY_PHYSICAL_LAYOUT,
     CFG_KEY_LAYER_0,
+    type CustomKey,
 } from './HIDService';
 import {
     getKeyClass,
@@ -28,6 +29,7 @@ interface KeyboardLayoutEditorProps {
     isConnected: boolean;
     isDeveloperMode: boolean;
     macros: Macro[];
+    customKeys?: CustomKey[];
     onLog: (text: string) => void;
 }
 
@@ -209,7 +211,7 @@ function parseKleJson(kleText: string): PhysKey[][] | null {
 }
 
 
-export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, macros, onLog }: KeyboardLayoutEditorProps) {
+export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, macros, customKeys = [], onLog }: KeyboardLayoutEditorProps) {
     const [activeLayer, setActiveLayer] = useState(0);
     const [layers, setLayers] = useState<(LayerData | null)[]>([null, null, null, null]);
     const [layerStatus, setLayerStatus] = useState<('idle' | 'loading' | 'loaded' | 'error')[]>(['idle', 'idle', 'idle', 'idle']);
@@ -978,7 +980,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                                         title={isRowColEditMode ? `R${pk.row} C${pk.col}` : `[${pk.row},${pk.col}] = 0x${code.toString(16).toUpperCase().padStart(4, '0')}`}
                                                     >
                                                         <span className="key-label">
-                                                            {isRowColEditMode ? `R${pk.row} C${pk.col}` : getKeyName(code, macros)}
+                                                            {isRowColEditMode ? `R${pk.row} C${pk.col}` : getKeyName(code, macros, customKeys)}
                                                         </span>
                                                     </button>
                                                 );
@@ -1098,6 +1100,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                 <SearchableKeyModal
                                     currentValue={firstValue}
                                     macros={macros}
+                                    customKeys={customKeys}
                                     onSelect={(newValue: number) => {
                                         handleMultiKeyChange(newValue);
                                         setIsModalOpen(false);

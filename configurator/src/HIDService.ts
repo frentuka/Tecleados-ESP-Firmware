@@ -46,6 +46,38 @@ export const SYS_CMD_CLEAR_INJECTED = 0x02;
 
 export const MACRO_CODE_BASE = 0x4000;
 
+// ── Custom Keys ──────────────────────────────────────────────
+export const CFG_KEY_CKEYS       = 0x0A; // must match cfgmod_key_id_t
+export const CFG_KEY_CKEY_SINGLE = 0x0B; // must match cfgmod_key_id_t
+export const CKEY_CODE_BASE      = 0x3000;
+export const CKEY_MAX_COUNT      = 32;
+
+export interface CustomKeyPR {
+    pressAction:     number;
+    releaseAction:   number;
+    pressDuration:   number;
+    releaseDuration: number;
+}
+
+export interface CustomKeyMA {
+    tapAction:          number;
+    doubleTapAction:    number;
+    holdAction:         number;
+    doubleTapThreshold: number;
+    holdThreshold:      number;
+    tapDuration:        number;
+    doubleTapDuration:  number;
+    holdDuration:       number;
+}
+
+export interface CustomKey {
+    id:   number;
+    name: string;
+    mode: number; // 0 = PressRelease, 1 = MultiAction
+    pr?:  CustomKeyPR;
+    ma?:  CustomKeyMA;
+}
+
 export type LogCallback = (logData: Uint8Array) => void;
 export type RawPacketCallback = (data: Uint8Array, direction: 'rx' | 'tx') => void;
 
@@ -861,6 +893,84 @@ class HIDService {
     public offLogReceived(callback: LogCallback): void { this.logCallbacks.delete(callback); }
     public onRawPacket(callback: RawPacketCallback): void { this.rawPacketCallbacks.add(callback); }
     public offRawPacket(callback: RawPacketCallback): void { this.rawPacketCallbacks.delete(callback); }
+
+    // ── Custom Keys ─────────────────────────────────────────────────────────
+
+    /** Fetch the outline list of all custom keys (id + name + mode only). */
+    public async fetchCustomKeys(): Promise<CustomKey[]> {
+        if (!this.isConnected()) return [];
+        const buf = new Uint8Array([MODULE_CONFIG, CFG_CMD_GET, CFG_KEY_CKEYS]);
+        const resp = await this.sendCommand(buf, 5000);
+        if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
+            try {
+                const data = JSON.parse(resp.jsonText);
+                return (data.customKeys ?? []) as CustomKey[];
+            } catch (e) {
+                console.error('[HID] fetchCustomKeys parse error:', e);
+            }
+        }
+        return [];
+    }
+
+    /** Fetch the full definition of a single custom key by ID. */
+    public async fetchCustomKeySingle(id: number): Promise<CustomKey | null> {
+        if (!this.isConnected()) return null;
+        const requestJson = JSON.stringify({ id });
+        const jsonBytes = new TextEncoder().encode(requestJson);
+        const buf = new Uint8Array([MODULE_CONFIG, CFG_CMD_GET, CFG_KEY_CKEY_SINGLE, ...jsonBytes]);
+        const resp = await this.sendCommand(buf, 5000);
+        if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
+            try {
+                return JSON.parse(resp.jsonText) as CustomKey;
+            } catch (e) {
+                console.error('[HID] fetchCustomKeySingle parse error:', e);
+            }
+        }
+        return null;
+    }
+
+    /** Create or update a custom key on the device. */
+    public async saveCustomKey(ckey: CustomKey): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        // Map TS interface to firmware JSON field names
+        const payload: Record<string, unknown> = {
+            id:   ckey.id,
+            name: ckey.name,
+            mode: ckey.mode,
+        };
+        if (ckey.mode === 0 && ckey.pr) {
+            payload.pr = {
+                pressAction:     ckey.pr.pressAction,
+                releaseAction:   ckey.pr.releaseAction,
+                pressDuration:   ckey.pr.pressDuration,
+                releaseDuration: ckey.pr.releaseDuration,
+            };
+        } else if (ckey.mode === 1 && ckey.ma) {
+            payload.ma = {
+                tapAction:          ckey.ma.tapAction,
+                doubleTapAction:    ckey.ma.doubleTapAction,
+                holdAction:         ckey.ma.holdAction,
+                doubleTapThreshold: ckey.ma.doubleTapThreshold,
+                holdThreshold:      ckey.ma.holdThreshold,
+                tapDuration:        ckey.ma.tapDuration,
+                doubleTapDuration:  ckey.ma.doubleTapDuration,
+                holdDuration:       ckey.ma.holdDuration,
+            };
+        }
+        const jsonBytes = new TextEncoder().encode(JSON.stringify(payload));
+        const buf = new Uint8Array([MODULE_CONFIG, CFG_CMD_SET, CFG_KEY_CKEY_SINGLE, ...jsonBytes]);
+        const resp = await this.sendCommand(buf, 10000);
+        return resp !== null && resp.status === 0;
+    }
+
+    /** Delete a custom key by ID. */
+    public async deleteCustomKey(id: number): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        const jsonBytes = new TextEncoder().encode(JSON.stringify({ delete: id }));
+        const buf = new Uint8Array([MODULE_CONFIG, CFG_CMD_SET, CFG_KEY_CKEY_SINGLE, ...jsonBytes]);
+        const resp = await this.sendCommand(buf, 5000);
+        return resp !== null && resp.status === 0;
+    }
 }
 
 export const hidService = new HIDService();

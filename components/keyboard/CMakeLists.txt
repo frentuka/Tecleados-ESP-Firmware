@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "kb_system_action.c" "kb_macro.c" "kb_layout.c" "kb_manager.c" "kb_matrix.c" "kb_report.c" "kb_state.c"
+    SRCS "kb_custom_key.c" "kb_system_action.c" "kb_macro.c" "kb_layout.c" "kb_manager.c" "kb_matrix.c" "kb_report.c" "kb_state.c"
     INCLUDE_DIRS "." "include"
     REQUIRES esp_timer driver freertos tinyusb usb_module ble_module rgb_module config_module
 )

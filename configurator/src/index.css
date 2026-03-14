@@ -2414,3 +2414,398 @@ h3 {
   color: var(--text-primary);
   border-color: rgba(255, 255, 255, 0.25);
 }
+
+/* ═══════════════════════════════════════════════
+   KEY TYPE: MACRO & CUSTOM KEY colours
+   ═══════════════════════════════════════════════ */
+
+.key-macro {
+  background: rgba(246, 173, 85, 0.13);
+  border-color: rgba(246, 173, 85, 0.35);
+}
+
+.key-option.key-macro {
+  border-left: 3px solid #f6ad55;
+}
+
+.key-ckey {
+  background: rgba(104, 211, 145, 0.13);
+  border-color: rgba(104, 211, 145, 0.35);
+}
+
+.key-option.key-ckey {
+  border-left: 3px solid #68d391;
+}
+
+/* ═══════════════════════════════════════════════
+   CUSTOM KEYS DASHBOARD
+   ═══════════════════════════════════════════════ */
+
+.ckey-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.ckey-dashboard-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.ckey-count-badge {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 0.2rem 0.65rem;
+}
+
+.ckey-list-full {
+  margin-top: 0.5rem;
+}
+
+/* ── Custom Key Card ── */
+
+.ckey-card {
+  position: relative;
+  padding: 1.15rem 1.25rem;
+  background: rgba(22, 27, 34, 0.4);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  border-left: 3px solid transparent;
+}
+
+.ckey-card:hover {
+  border-color: var(--accent-color);
+  background: rgba(88, 166, 255, 0.05);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+}
+
+.ckey-card-selected {
+  border-color: var(--accent-color);
+  border-left-color: var(--accent-color);
+  background: rgba(88, 166, 255, 0.08) !important;
+}
+
+.ckey-card-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ckey-card-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.ckey-card-header h4 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ckey-card-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 6px;
+  text-transform: uppercase;
+}
+
+.badge-pr {
+  background: rgba(88, 166, 255, 0.15);
+  color: #58a6ff;
+  border: 1px solid rgba(88, 166, 255, 0.3);
+}
+
+.badge-ma {
+  background: rgba(104, 211, 145, 0.15);
+  color: #68d391;
+  border: 1px solid rgba(104, 211, 145, 0.3);
+}
+
+.ckey-card-id-dev {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  color: var(--text-secondary);
+  opacity: 0.45;
+  margin-top: 2px;
+}
+
+/* ── Preview sequence ── */
+
+.ck-preview-seq {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ck-preview-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+}
+
+.ck-preview-label {
+  font-weight: 700;
+  color: var(--text-secondary);
+  opacity: 0.6;
+  font-family: 'JetBrains Mono', monospace;
+  min-width: 24px;
+}
+
+.ck-preview-val {
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.9;
+}
+
+/* ── Editor Modal ── */
+
+.ckey-editor-modal {
+  max-width: 600px !important;
+}
+
+.ckey-editor-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+  background: linear-gradient(90deg, #68d391 0%, #58a6ff 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.ckey-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 1.25rem;
+}
+
+.ckey-field-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+  opacity: 0.8;
+}
+
+.ckey-field-input {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  color: var(--text-primary);
+  padding: 0.65rem 1rem;
+  font-size: 0.95rem;
+  font-family: inherit;
+  transition: all 0.2s;
+}
+
+.ckey-field-input:focus {
+  outline: none;
+  border-color: var(--accent-color);
+  background: rgba(88, 166, 255, 0.05);
+  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.1);
+}
+
+/* Mode selector */
+
+.ckey-mode-selector {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.ckey-mode-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.25rem;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+  transition: all 0.2s;
+  font-family: inherit;
+}
+
+.ckey-mode-btn:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.ckey-mode-btn.active {
+  background: rgba(88, 166, 255, 0.1);
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+  font-weight: 600;
+}
+
+.mode-icon {
+  font-size: 1.1rem;
+}
+
+/* Section */
+
+.ckey-section {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  padding: 1.25rem;
+  margin-bottom: 1rem;
+}
+
+.ckey-section-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent-color);
+  margin-bottom: 1rem;
+  opacity: 0.8;
+}
+
+.ckey-action-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.ckey-threshold-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+/* Action slot */
+
+.ckey-action-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.ckey-slot-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  opacity: 0.7;
+  text-transform: uppercase;
+}
+
+.ckey-slot-btn {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  cursor: pointer;
+  padding: 0.55rem 0.85rem;
+  text-align: left;
+  font-family: inherit;
+  transition: all 0.2s;
+  width: 100%;
+}
+
+.ckey-slot-btn:hover {
+  border-color: var(--accent-color);
+  background: rgba(88, 166, 255, 0.05);
+}
+
+.key-chip {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.key-chip-active {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* Duration row */
+
+.ckey-duration-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 0.5rem 0.85rem;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.ckey-duration-row label {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.ckey-duration-row input[type="number"] {
+  width: 80px;
+  padding: 0.35rem 0.6rem;
+  background: #000;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  font-family: 'JetBrains Mono', monospace;
+  text-align: right;
+  transition: border-color 0.2s;
+}
+
+.ckey-duration-row input[type="number"]:focus {
+  outline: none;
+  border-color: var(--accent-color);
+}
+
+.ckey-error {
+  background: rgba(248, 81, 73, 0.08);
+  border: 1px solid rgba(248, 81, 73, 0.3);
+  border-radius: 10px;
+  padding: 0.75rem 1.25rem;
+  color: #ff7b72;
+  font-size: 0.88rem;
+  margin-bottom: 1.25rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.ckey-hint {
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  background: rgba(88, 166, 255, 0.05);
+  border: 1px solid rgba(88, 166, 255, 0.15);
+  border-radius: 10px;
+  padding: 0.85rem 1.15rem;
+  margin-top: 1rem;
+}
+
+.ckey-hint strong {
+  color: var(--accent-color);
+}
+

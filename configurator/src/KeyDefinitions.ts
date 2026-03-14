@@ -39,12 +39,14 @@ export const SYSTEM_ACTION_NAMES: Record<number, string> = {
 };
 
 export const TRANSPARENT = 0xFFFF;
-export const MACRO_BASE = 0x4000;
+export const MACRO_BASE  = 0x4000;
+export const CKEY_BASE   = 0x3000;
 
 export function getKeyClass(code: number): string {
     if (code === TRANSPARENT) return 'key-transparent';
     if (code === 0) return 'key-none';
     if (code >= 0x2000 && code <= 0x20FF) return 'key-system';
+    if (code >= CKEY_BASE  && code <= 0x3FFF) return 'key-ckey';
     if (code >= MACRO_BASE && code <= 0x40FF) return 'key-macro';
     const isModifier = code >= 0xE0 && code <= 0xE7;
     const isAction = (code >= 0x28 && code <= 0x2B) || // Enter, Esc, Bksp, Tab
@@ -139,9 +141,18 @@ export const BROWSER_CODE_TO_HID: Record<string, number> = {
     'ControlRight': 0xE4, 'ShiftRight': 0xE5, 'AltRight': 0xE6, 'MetaRight': 0xE7,
 };
 
-export function getKeyName(code: number, macros?: { id: number, name: string }[]): string {
+export function getKeyName(
+    code: number,
+    macros?: { id: number, name: string }[],
+    customKeys?: { id: number, name: string }[]
+): string {
     if (code === TRANSPARENT) return '▽';
     if (code === 0) return '';
+    if (code >= CKEY_BASE && code <= 0x3FFF) {
+        const id = code - CKEY_BASE;
+        const ck = customKeys?.find(k => k.id === id);
+        return ck ? `CK:${ck.name}` : `CK[${id}]`;
+    }
     if (code >= MACRO_BASE && code <= 0x40FF) {
         const macro = macros?.find(m => (MACRO_BASE + m.id) === code);
         return macro ? macro.name : `M${code - MACRO_BASE}`;
@@ -155,5 +166,12 @@ export function getMacroKeyOptions(macros: { id: number, name: string }[]) {
     return macros.map(m => ({
         label: m.name,
         value: MACRO_BASE + m.id
+    }));
+}
+
+export function getCKeyOptions(customKeys: { id: number, name: string }[]) {
+    return customKeys.map(ck => ({
+        label: `CK: ${ck.name}`,
+        value: CKEY_BASE + ck.id
     }));
 }
