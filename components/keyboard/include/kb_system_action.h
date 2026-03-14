@@ -46,6 +46,13 @@ void kb_system_action_init(void);
 void kb_system_action_register_cb(kb_sys_action_cb_t cb);
 
 /**
+ * @brief Get the currently registered system action callback.
+ * 
+ * @return The registered callback function, or NULL if none.
+ */
+kb_sys_action_cb_t kb_system_action_get_cb(void);
+
+/**
  * @brief Process a raw system action press/release from the keyboard matrix.
  * Uses the engine's global default timing thresholds.
  *

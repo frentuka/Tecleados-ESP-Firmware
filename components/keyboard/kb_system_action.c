@@ -127,6 +127,10 @@ void kb_system_action_register_cb(kb_sys_action_cb_t cb) {
     s_action_cb = cb;
 }
 
+kb_sys_action_cb_t kb_system_action_get_cb(void) {
+    return s_action_cb;
+}
+
 /* ---- Core state-machine (shared by both public entry points) ---- */
 
 static void process_action(uint16_t action_code, bool is_pressed,

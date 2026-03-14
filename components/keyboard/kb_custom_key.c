@@ -161,8 +161,7 @@ void kb_custom_key_init(void) {
     /* Chain-install our event callback AFTER the system-action engine has been
      * set up by kb_macro_init() (which calls kb_system_action_register_cb()).
      * We save the previous callback and forward non-CKey events to it. */
-    s_prev_action_cb = NULL; /* kb_macro.c does not expose a getter — we NULL it
-                               * and rely on kb_manager calling us last. */
+    s_prev_action_cb = kb_system_action_get_cb();
     kb_system_action_register_cb(ckey_action_event_cb);
 
     /* Load initial table */
