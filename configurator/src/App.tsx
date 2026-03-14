@@ -23,16 +23,19 @@ import {
   CFG_KEY_MACROS,
   CFG_KEY_MACRO_LIMITS,
   CFG_KEY_MACRO_SINGLE,
+  type CustomKey,
 } from './HIDService';
 import KeyboardLayoutEditor from './KeyboardLayoutEditor';
 import MacrosDashboard from './MacrosDashboard';
+import CustomKeysDashboard from './CustomKeysDashboard';
+import StatusWidget from './StatusWidget';
 import { useConfirm } from './hooks/useConfirm';
 import './index.css';
 
 export type MacroAction = 'tap' | 'press' | 'release';
 
 export type MacroElement =
-  | { type: 'key'; key: number; action?: MacroAction; inlineSleep?: number }
+  | { type: 'key'; key: number; action?: MacroAction; inlineSleep?: number; pressTime?: number }
   | { type: 'sleep'; duration: number };
 
 export interface Macro {
@@ -66,6 +69,7 @@ function getFlagsString(flags: number): string {
 
 function App() {
   const [isConnected, setIsConnected] = useState(false);
+  const [deviceStatus, setDeviceStatus] = useState<{ mode: number; profile: number; pairing: number; bitmap: number } | null>(null);
   const [controlsEnabled, setControlsEnabled] = useState(false);
   const [isDeveloperMode, setIsDeveloperMode] = useState<boolean>(() => {
     return localStorage.getItem('isDeveloperMode') === 'true';
@@ -74,6 +78,16 @@ function App() {
   const [macros, setMacros] = useState<Macro[]>([]);
   const [macroLimits, setMacroLimits] = useState<{ maxEvents: number; maxMacros: number } | null>(null);
   const macroCache = useRef<Record<number, Macro>>({});
+  const macrosRef = useRef<Macro[]>([]);
+
+  // Custom Keys state
+  const [customKeys, setCustomKeys] = useState<CustomKey[]>([]);
+
+  // Sync macrosRef with macros state (backup)
+  // This helps when macros is set from outside (like onReload)
+  useEffect(() => {
+    macrosRef.current = macros;
+  }, [macros]);
 
   const { confirm } = useConfirm();
 
@@ -84,10 +98,26 @@ function App() {
 
   // Subscribe to HIDService connection state (auto-reconnect, disconnect detection)
   useEffect(() => {
-    const handler = (connected: boolean) => setIsConnected(connected);
+    const handler = (connected: boolean) => {
+      setIsConnected(connected);
+      if (!connected) setDeviceStatus(null);
+      setLogs(prev => [...prev, { id: getNextLogId(), timestamp: new Date(), data: new Uint8Array(0), text: connected ? "Device connected" : "Device disconnected" }]);
+    };
     hidService.onConnectionChange(handler);
-    return () => hidService.offConnectionChange(handler);
+
+    // Also listen for status updates (pushed from ESP)
+    const statusHandler = (status: { mode: number; profile: number; pairing: number; bitmap: number }) => {
+      setDeviceStatus(status);
+    };
+    hidService.onStatusUpdate(statusHandler);
+
+    return () => {
+      hidService.offConnectionChange(handler);
+      hidService.offStatusUpdate(statusHandler);
+    };
   }, []);
+
+  // Remove polling logic (no longer needed with push updates)
 
   const [selectedModule, setSelectedModule] = useState<number>(MODULE_CONFIG);
   // Default to SET because the dynamic UI implicitly wants to SET what the GET retrieved.
@@ -100,6 +130,13 @@ function App() {
   const [isFetching, setIsFetching] = useState<boolean>(false);
 
   const logsEndRef = useRef<HTMLDivElement>(null);
+  const logIdCounter = useRef<number>(0);
+
+  const getNextLogId = useCallback(() => {
+    logIdCounter.current += 1;
+    return logIdCounter.current;
+  }, []);
+
 
   // logsEndRef kept for optional manual scroll, but no auto-scroll
 
@@ -132,6 +169,14 @@ function App() {
     setIsFetching(false);
   }, [isConnected]);
 
+  const fetchStatus = useCallback(async () => {
+    if (!isConnected) return;
+    const status = await hidService.fetchStatus();
+    if (status) {
+      setDeviceStatus(status);
+    }
+  }, [isConnected]);
+
   const fetchMacroLimits = useCallback(async () => {
     if (!isConnected) return;
 
@@ -158,8 +203,11 @@ function App() {
     if (!isConnected) return null;
     if (macroCache.current[id]) {
       // Hydrate from cache if we somehow have it
-      setMacros(prev => prev.map(m => m.id === id ? macroCache.current[id] : m));
-      return macroCache.current[id];
+      const cached = macroCache.current[id];
+      const newList = macrosRef.current.map(m => m.id === id ? cached : m);
+      macrosRef.current = newList;
+      setMacros(newList);
+      return cached;
     }
 
     const jsonStr = JSON.stringify({ id });
@@ -173,11 +221,18 @@ function App() {
     const resp = await hidService.sendCommand(buf);
     if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
       try {
+        setLogs(prev => [...prev, { id: getNextLogId(), timestamp: new Date(), data: new Uint8Array(0), text: `Fetching details for macro ID ${id}...` }]);
         const parsed = JSON.parse(resp.jsonText) as Macro;
         macroCache.current[id] = parsed; // Cache it
 
         // Update state to hydrate UI elements
-        setMacros(prev => prev.map(m => m.id === id ? parsed : m));
+        const base = macrosRef.current;
+        const newList = base.map(m => m.id === id ? parsed : m);
+
+        macrosRef.current = newList; // Synchronous update for microtask safety
+        setMacros(newList);
+
+        setLogs(prev => [...prev, { id: getNextLogId(), timestamp: new Date(), data: new Uint8Array(0), text: `Details for macro "${parsed.name}" loaded.` }]);
 
         return parsed;
       } catch (e) {
@@ -206,16 +261,35 @@ function App() {
         } else if (parsed.macros && Array.isArray(parsed.macros)) {
           list = parsed.macros;
         }
+        setLogs(prev => [...prev, { id: getNextLogId(), timestamp: new Date(), data: new Uint8Array(0), text: `Found ${list.length} macros on device` }]);
 
         // Sort alphabetically by name before setting and fetching details
-        list.sort((a, b) => a.name.localeCompare(b.name));
+        list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
+        macrosRef.current = list;
         setMacros(list);
         macroCache.current = {}; // Reset cache on full list fetch
+        setLogs(prev => [...prev, { id: getNextLogId(), timestamp: new Date(), data: new Uint8Array(0), text: `Initialized ${list.length} macros. Fetching details...` }]);
 
         // Sequentially fetch elements for each macro to respect USB limitations
         for (const m of list) {
-          await fetchSingleMacro(m.id);
+          let retries = 3;
+          let success = false;
+          while (retries > 0 && !success) {
+            const result = await fetchSingleMacro(m.id);
+            if (result) {
+              success = true;
+            } else {
+              retries--;
+              if (retries > 0) {
+                console.warn(`[App] Macro ID ${m.id} fetch failed, retrying... (${retries} left)`);
+                // Wait a bit longer on retry
+                await new Promise(r => setTimeout(r, 1000));
+              } else {
+                console.error(`[App] Macro ID ${m.id} failed to fetch after multiple attempts.`);
+              }
+            }
+          }
         }
 
       } catch (e) {
@@ -231,8 +305,8 @@ function App() {
     const maxAllowedId = macroLimits ? macroLimits.maxMacros - 1 : 31;
 
     if (newMacro.id === -1) {
-      // Find the smallest available ID
-      const existingIds = new Set(macros.map(m => m.id));
+      // Find the smallest available ID using the ref (latest state)
+      const existingIds = new Set(macrosRef.current.map(m => m.id));
       let nextId = 0;
       while (existingIds.has(nextId)) nextId++;
 
@@ -242,6 +316,11 @@ function App() {
 
       macroToSave = { ...newMacro, id: nextId };
       isNew = true;
+
+      // OPTIMISTIC RESERVATION: Update ref and state IMMEDIATELY to prevent collisions in sequential calls
+      const newList = [...macrosRef.current, macroToSave];
+      macrosRef.current = newList;
+      setMacros(newList);
     } else {
       if (macroToSave.id > maxAllowedId) {
         throw new Error(`Macro ID ${macroToSave.id} exceeds maximum allowed ID of ${maxAllowedId}.`);
@@ -259,16 +338,25 @@ function App() {
 
     const resp = await hidService.sendCommand(buf);
     if (resp && resp.status === 0) {
-      if (isNew) {
-        setMacros(prev => [...prev, macroToSave]);
-      } else {
-        setMacros(prev => prev.map(m => m.id === macroToSave.id ? macroToSave : m));
-      }
+      // Final merge: ensure the specific card is updated and deduplicated by ID
+      const currentList = macrosRef.current;
+      const newList = currentList.map(m => m.id === macroToSave.id ? macroToSave : m);
+      const deduplicated = Array.from(new Map(newList.map(m => [m.id, m])).values());
+
+      macrosRef.current = deduplicated;
+      setMacros(deduplicated);
+
       macroCache.current[macroToSave.id] = macroToSave; // Update cache gracefully
-      setLogs(prev => [...prev, { id: Date.now(), timestamp: new Date(), data: new Uint8Array(0), text: `Macro "${macroToSave.name}" saved to device` }]);
+      setLogs(prev => [...prev, { id: getNextLogId(), timestamp: new Date(), data: new Uint8Array(0), text: `Macro "${macroToSave.name}" saved to device (ID: ${macroToSave.id})` }]);
     } else {
+      // ROLLBACK if it was a new reservation that failed
+      if (isNew) {
+        const newList = macrosRef.current.filter(m => m.id !== macroToSave.id);
+        macrosRef.current = newList;
+        setMacros(newList);
+      }
       const errMsg = resp ? `Device error (0x${resp.status.toString(16).toUpperCase()})` : 'Device timeout';
-      setLogs(prev => [...prev, { id: Date.now(), timestamp: new Date(), data: new Uint8Array(0), text: `Failed to save macro: ${errMsg}` }]);
+      setLogs(prev => [...prev, { id: getNextLogId(), timestamp: new Date(), data: new Uint8Array(0), text: `Failed to save macro: ${errMsg}` }]);
       throw new Error(errMsg);
     }
   };
@@ -291,21 +379,54 @@ function App() {
 
     const resp = await hidService.sendCommand(buf);
     if (resp && resp.status === 0) {
-      setMacros(prev => prev.filter(m => m.id !== id));
+      const newList = macrosRef.current.filter(m => m.id !== id);
+      macrosRef.current = newList;
+      setMacros(newList);
       delete macroCache.current[id]; // Remove from cache
-      setLogs(prev => [...prev, { id: Date.now(), timestamp: new Date(), data: new Uint8Array(0), text: `Macro deleted. ${macros.length - 1} remaining.` }]);
+      setLogs(prev => [...prev, { id: getNextLogId(), timestamp: new Date(), data: new Uint8Array(0), text: `Macro deleted. ${macrosRef.current.length} remaining.` }]);
     } else {
       const errMsg = resp ? `Device error (0x${resp.status.toString(16).toUpperCase()})` : 'Device timeout';
-      setLogs(prev => [...prev, { id: Date.now(), timestamp: new Date(), data: new Uint8Array(0), text: `Failed to delete macro: ${errMsg}` }]);
+      setLogs(prev => [...prev, { id: getNextLogId(), timestamp: new Date(), data: new Uint8Array(0), text: `Failed to delete macro: ${errMsg}` }]);
       throw new Error(errMsg);
     }
   };
 
+  const handleSaveCustomKey = async (ckey: CustomKey): Promise<void> => {
+    let ckeyToSave = ckey;
+    if (ckey.id === -1) {
+      const usedIds = new Set(customKeys.map(k => k.id));
+      let nextId = 0;
+      while (usedIds.has(nextId)) nextId++;
+      if (nextId >= 32) throw new Error('Maximum number of custom keys (32) reached.');
+      ckeyToSave = { ...ckey, id: nextId };
+    }
+    const ok = await hidService.saveCustomKey(ckeyToSave);
+    if (!ok) throw new Error('Failed to save custom key to device');
+    setCustomKeys(prev => {
+      const filtered = prev.filter(k => k.id !== ckeyToSave.id);
+      return [...filtered, ckeyToSave].sort((a, b) => a.id - b.id);
+    });
+  };
+
+  const handleDeleteCustomKey = async (id: number): Promise<void> => {
+    const isConfirmed = await confirm(
+      'Delete Custom Key',
+      'Are you sure? Any keys mapped to this custom key will stop working.'
+    );
+    if (!isConfirmed) return;
+    const ok = await hidService.deleteCustomKey(id);
+    if (!ok) throw new Error('Failed to delete custom key from device');
+    setCustomKeys(prev => prev.filter(k => k.id !== id));
+  };
+
   useEffect(() => {
     if (isConnected) {
+      fetchStatus();
       fetchMacroLimits();
+      hidService.fetchCustomKeys().then(setCustomKeys);
     }
-  }, [isConnected, fetchMacroLimits]);
+  }, [isConnected, fetchStatus, fetchMacroLimits]);
+
 
   useEffect(() => {
     if (isConnected && controlsEnabled) {
@@ -343,7 +464,7 @@ function App() {
     setLogs((prev) => [
       ...prev,
       {
-        id: Date.now() + Math.random(),
+        id: getNextLogId(),
         timestamp: new Date(),
         data,
         text,
@@ -414,7 +535,7 @@ function App() {
     setLogs((prev) => [
       ...prev,
       {
-        id: Date.now() + Math.random(),
+        id: getNextLogId(),
         timestamp: new Date(),
         data: buf,
         text: `Sent [${modStr}] Cmd: ${cmdStr}, Key: ${keyStr}, Len: ${payloadBytes.length}`,
@@ -479,22 +600,44 @@ function App() {
 
   return (
     <div className="app-container">
-      <h1 className="title">Tecleados Runtime Configurator</h1>
+      <header className="main-header">
+        <div className="header-left">
+          {!isConnected ? (
+            <button className="btn btn-success header-btn" onClick={handleConnect}>
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+              </svg>
+              Connect
+            </button>
+          ) : (
+            <button className="btn btn-danger header-btn" onClick={handleDisconnect}>
+              Disconnect
+            </button>
+          )}
+        </div>
 
-      <div className="glass-panel">
-        <h2>Connection Status</h2>
-        <div style={{ display: 'flex', alignItems: 'center', marginBottom: '1rem', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center' }}>
-            <span className={`status-indicator ${isConnected ? 'status-connected' : 'status-disconnected'}`}></span>
-            <span>{isConnected ? 'Device connected' : 'No device connected'}</span>
-          </div>
+        <div className="header-center">
+          <StatusWidget
+            isConnected={isConnected}
+            transportMode={deviceStatus?.mode ?? 0}
+            selectedProfile={deviceStatus?.profile ?? 0}
+            pairingProfile={deviceStatus?.pairing ?? -1}
+            connectedBitmap={deviceStatus?.bitmap ?? 0}
+            onOfflineClick={handleConnect}
+          />
+        </div>
 
-          <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', cursor: 'pointer', userSelect: 'none' }} title="Enable developer options">
+        <div className="header-right">
+          <div
+            className="header-dev-toggle"
+            onClick={() => setIsDeveloperMode(!isDeveloperMode)}
+            title="Enable developer options"
+          >
             <span style={{ fontSize: '0.75rem', fontWeight: 600, color: isDeveloperMode ? 'var(--accent-color)' : 'var(--text-secondary)' }}>
               DEV MODE
             </span>
             <div
-              onClick={() => setIsDeveloperMode(!isDeveloperMode)}
               style={{
                 width: '32px',
                 height: '16px',
@@ -515,23 +658,9 @@ function App() {
                 transition: 'all 0.2s',
               }} />
             </div>
-          </label>
+          </div>
         </div>
-
-        {!isConnected ? (
-          <button className="btn btn-success" onClick={handleConnect}>
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-            </svg>
-            Connect Device
-          </button>
-        ) : (
-          <button className="btn btn-danger" onClick={handleDisconnect}>
-            Disconnect
-          </button>
-        )}
-      </div>
+      </header>
 
       {isConnected && (
         <>
@@ -540,7 +669,8 @@ function App() {
               isConnected={isConnected}
               isDeveloperMode={isDeveloperMode}
               macros={macros}
-              onLog={(text: string) => setLogs(prev => [...prev, { id: Date.now() + Math.random(), timestamp: new Date(), data: new Uint8Array(0), text }])}
+              customKeys={customKeys}
+              onLog={(text: string) => setLogs(prev => [...prev, { id: getNextLogId(), timestamp: new Date(), data: new Uint8Array(0), text }])}
             />
           </div>
 
@@ -553,6 +683,17 @@ function App() {
               onDeleteMacro={handleDeleteMacro}
               onReload={fetchMacros}
               onFetchSingleMacro={fetchSingleMacro}
+            />
+          </div>
+
+          <div className="glass-panel">
+            <CustomKeysDashboard
+              customKeys={customKeys}
+              macros={macros}
+              isDeveloperMode={isDeveloperMode}
+              onSave={handleSaveCustomKey}
+              onDelete={handleDeleteCustomKey}
+              onReload={() => hidService.fetchCustomKeys().then(setCustomKeys)}
             />
           </div>
 

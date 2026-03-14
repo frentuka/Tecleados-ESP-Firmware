@@ -14,6 +14,7 @@
 #include "kb_layout.h"
 #include "kb_report.h"
 #include "kb_system_action.h"
+#include "kb_custom_key.h"
 
 static const char *TAG = "kb_macro";
 
@@ -24,9 +25,15 @@ static bool s_is_fn2_held = false;
 static SemaphoreHandle_t s_v_nkro_mutex = NULL;
 static QueueHandle_t s_macro_queue = NULL;
 
+/* Sentinel: a queue item with this macro_id is a "fire tap" request,
+ * not a real macro. Fields tap_action and tap_duration_ms carry the payload. */
+#define MACRO_ID_FIRE_TAP 0xFFFF
+
 typedef struct {
   uint16_t macro_id;
-  bool is_pressed;   // true=key down, false=key up
+  bool is_pressed;        // true=key down, false=key up
+  uint16_t tap_action;    // used when macro_id == MACRO_ID_FIRE_TAP
+  uint32_t tap_duration_ms; // used when macro_id == MACRO_ID_FIRE_TAP
 } macro_queue_item_t;
 
 // Per-macro runtime state for execution mode logic
@@ -167,7 +174,7 @@ static bool execute_macro_cancellable(uint16_t macro_id, uint8_t depth,
       } else {
         kb_macro_process_action(val, true);
         kb_macro_send_report();
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(m->events[i].press_duration_ms));
         kb_macro_process_action(val, false);
         kb_macro_send_report();
       }
@@ -212,6 +219,18 @@ static void macro_task(void *arg) {
   macro_queue_item_t item;
   while (1) {
     if (xQueueReceive(s_macro_queue, &item, portMAX_DELAY)) {
+
+      /* ---- Handle fire-tap sentinel ---- */
+      if (item.macro_id == MACRO_ID_FIRE_TAP) {
+        uint32_t dur = item.tap_duration_ms > 0 ? item.tap_duration_ms : 10;
+        kb_macro_process_action(item.tap_action, true);
+        kb_macro_send_report();
+        vTaskDelay(pdMS_TO_TICKS(dur));
+        kb_macro_process_action(item.tap_action, false);
+        kb_macro_send_report();
+        continue;
+      }
+
       if (!item.is_pressed) continue; // Release is handled inline below
 
       size_t idx = 0;
@@ -293,6 +312,7 @@ static void on_macros_updated(const char *key) {
 // Forward definitions from cfg_macros.c are now in cfg_macros.h
 
 void kb_macro_init(void) {
+  ESP_LOGI(TAG, "kb_macro_init: starting");
   memset(s_v_nkro, 0, sizeof(s_v_nkro));
   memset(s_rt_state, 0, sizeof(s_rt_state));
   s_active_layer = KB_LAYER_BASE;
@@ -303,11 +323,8 @@ void kb_macro_init(void) {
   cfgmod_register_kind(CFGMOD_KIND_MACRO, macros_default, macros_deserialize,
                        macros_serialize, on_macros_updated, sizeof(cfg_macro_list_t));
 
-  // Load initial macros
   macros_load_all(&s_macros);
-  ESP_LOGI(TAG, "Loaded %d macros from storage", (int)s_macros.count);
-
-  xTaskCreate(macro_task, "kb_macro", 4096, NULL, 4, NULL);
+  xTaskCreateWithCaps(macro_task, "kb_macro", 3072, NULL, 4, NULL, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   ESP_LOGI(TAG, "Macro engine initialized");
 }
 
@@ -382,7 +399,6 @@ static void process_system_action(uint16_t action, bool is_pressed) {
     case SYS_ACTION_BLE_7:
     case SYS_ACTION_BLE_8:
     case SYS_ACTION_BLE_9:
-    case SYS_ACTION_BLE_10:
       kb_system_action_process(action, true);
       break;
 
@@ -412,9 +428,11 @@ static void process_system_action(uint16_t action, bool is_pressed) {
 }
 
 void kb_macro_process_action(uint16_t action_code, bool is_pressed) {
+  ESP_LOGI(TAG, "kb_macro_process_action: code 0x%04X, pressed: %d", action_code, is_pressed);
   if (action_code >= ACTION_CODE_HID_MIN &&
       action_code <= ACTION_CODE_HID_MAX) {
     // Standard HID key
+    ESP_LOGI(TAG, "Processing HID Key: 0x%02X (%s)", (uint8_t)action_code, is_pressed ? "DOWN" : "UP");
     if (is_pressed) {
       kb_macro_virtual_press((uint8_t)action_code);
     } else {
@@ -427,7 +445,7 @@ void kb_macro_process_action(uint16_t action_code, bool is_pressed) {
     
     // Also dispatch release events for BLE keys to the tap/hold engine
     if (!is_pressed) {
-      if ((action_code >= SYS_ACTION_BLE_ON && action_code <= SYS_ACTION_BLE_10) ||
+      if ((action_code >= SYS_ACTION_BLE_ON && action_code <= SYS_ACTION_BLE_9) ||
            action_code == SYS_ACTION_BLE_TOGGLE) {
         kb_system_action_process(action_code, false);
       }
@@ -534,5 +552,20 @@ void kb_macro_process_action(uint16_t action_code, bool is_pressed) {
         break;
       }
     }
+  } else if (action_code >= ACTION_CODE_CKEY_MIN &&
+             action_code <= ACTION_CODE_CKEY_MAX) {
+    // Custom Key
+    kb_custom_key_process_action(action_code, is_pressed);
   }
+}
+
+void kb_macro_fire_tap(uint16_t action_code, uint32_t duration_ms) {
+  if (!s_macro_queue) return;
+  macro_queue_item_t item = {
+    .macro_id       = MACRO_ID_FIRE_TAP,
+    .is_pressed     = false, // unused
+    .tap_action     = action_code,
+    .tap_duration_ms= duration_ms,
+  };
+  xQueueSend(s_macro_queue, &item, 0);
 }

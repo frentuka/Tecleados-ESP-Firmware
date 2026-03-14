@@ -17,6 +17,7 @@ typedef enum cfgmod_kind : uint8_t {
   CFGMOD_KIND_CONNECTION,
   CFGMOD_KIND_SYSTEM,
   CFGMOD_KIND_PHYSICAL,  // Raw blob kind — not registered, uses direct NVS read/write
+  CFGMOD_KIND_CKEY,      // Custom Keys
   CFGMOD_KIND_MAX
 } cfgmod_kind_t;
 
@@ -31,6 +32,8 @@ typedef enum cfgmod_key_id : uint8_t {
   CFG_KEY_MACROS,
   CFG_KEY_MACRO_LIMITS,
   CFG_KEY_MACRO_SINGLE,
+  CFG_KEY_CKEYS,        // Custom Keys outline (all names/IDs)
+  CFG_KEY_CKEY_SINGLE,  // Single Custom Key GET / SET / DELETE
   CFG_KEY_MAX
 } cfgmod_key_id_t;
 

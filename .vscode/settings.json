@@ -1,5 +1,5 @@
 {
-  "idf.portWin": "COM3",
+  "idf.portWin": "COM4",
   "idf.customExtraVars": {
     "IDF_TARGET": "esp32s3"
   },
@@ -27,11 +27,11 @@
   },
   "cmake.configureOnOpen": false,
   "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json",
-  "idf.currentSetup": "X:/appcrap/Espressif/frameworks/esp-idf-v5.5.3/",
   "[c]": {
     "editor.formatOnSave": false
   },
   "[cpp]": {
     "editor.formatOnSave": false
-  }
+  },
+  "idf.currentSetup": "C:\\appcrap\\Espressif\\v5.5.3\\esp-idf"
 }

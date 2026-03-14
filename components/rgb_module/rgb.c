@@ -98,9 +98,9 @@ int rgb_init(gpio_num_t data_gpio)
     ESP_RETURN_ON_FALSE(s_q != NULL, ESP_ERR_NO_MEM, TAG, "queue");
 
     // Stack generoso para evitar desbordes en refresh
-    BaseType_t ok = xTaskCreate(
+    BaseType_t ok = xTaskCreateWithCaps(
         rgb_worker_task, "rgb_worker",
-        3072, NULL, 5, &s_worker);
+        4096, NULL, 5, &s_worker, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     ESP_RETURN_ON_FALSE(ok == pdPASS, ESP_ERR_NO_MEM, TAG, "worker");
 
     s_on = false;

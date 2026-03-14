@@ -98,7 +98,7 @@ void button_init(button_callback_t on_single_press, button_callback_t on_double_
 
     // Cola y tarea de manejo
     gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
-    xTaskCreate(button_task, "button_task", 4096, NULL, 10, NULL);
+    xTaskCreate(button_task, "button_task", 2048, NULL, 10, NULL);
 
     // Servicio ISR y registro del handler
     ESP_ERROR_CHECK(gpio_install_isr_service(0));

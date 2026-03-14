@@ -67,6 +67,13 @@ bool macros_deserialize(cJSON *root, void *out_struct) {
           cJSON *inline_sleep = cJSON_GetObjectItem(el, "inlineSleep");
           if (cJSON_IsNumber(inline_sleep)) m->events[m->event_count].delay_ms = inline_sleep->valueint;
           
+          cJSON *press_time = cJSON_GetObjectItem(el, "pressTime");
+          if (cJSON_IsNumber(press_time)) {
+              m->events[m->event_count].press_duration_ms = press_time->valueint;
+          } else {
+              m->events[m->event_count].press_duration_ms = 10; // Default 10ms if missing
+          }
+          
           m->event_count++;
         } else if (strcmp(type->valuestring, "sleep") == 0) {
           m->events[m->event_count].type = MACRO_EVT_DELAY_MS;
@@ -113,6 +120,9 @@ static cJSON *serialize_single_macro_to_json(const cfg_macro_t *m) {
               cJSON_AddStringToObject(el, "action", "release");
           } else {
               cJSON_AddStringToObject(el, "action", "tap");
+          }
+          if (m->events[j].type == MACRO_EVT_KEY_TAP) {
+              cJSON_AddNumberToObject(el, "pressTime", m->events[j].press_duration_ms);
           }
           if (m->events[j].delay_ms > 0) {
               cJSON_AddNumberToObject(el, "inlineSleep", m->events[j].delay_ms);

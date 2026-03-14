@@ -5,7 +5,7 @@
 
 // ============ RX Buffer ============
 
-#define RX_TIMEOUT_MS 100 // max timeout for incoming sequential packets
+#define RX_TIMEOUT_MS 1000 // max timeout for incoming sequential packets
 #define MAX_RX_BUF_SIZE 21500 // 21.5KB -> 43(payload size) * 100(polling rate) * 5(seconds)
 #define MAX_RX_BUF_SIZE_IN_PAYLOADS (MAX_RX_BUF_SIZE / MAX_PAYLOAD_LENGTH)
 
@@ -20,6 +20,7 @@ uint64_t rx_get_last_packet_timestamp_us();
 
 // Blast mode API
 bool rx_blast_active();
+void rx_blast_update_activity();
 void rx_blast_receive_packet(const usb_packet_msg_t *msg);
 void rx_blast_build_bitmap_response(usb_packet_msg_t *out_msg);
 bool rx_blast_commit(const usb_packet_msg_t *last_msg);

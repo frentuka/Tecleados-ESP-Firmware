@@ -64,6 +64,11 @@ bool rx_blast_active()
     return rx_blast_mode_flag;
 }
 
+void rx_blast_update_activity()
+{
+    rx_last_packet_timestamp_us = esp_timer_get_time();
+}
+
 void rx_blast_receive_packet(const usb_packet_msg_t *msg)
 {
     // Calculate index from remaining_packets: index = total - 1 - rem

@@ -162,7 +162,7 @@ void usb_init() {
 
   ESP_ERROR_CHECK(tinyusb_driver_install(&tusb_cfg));
 
-  xTaskCreatePinnedToCore(usb_task, "usb_task", 4096, NULL, 5, NULL, 1);
+  xTaskCreatePinnedToCoreWithCaps(usb_task, "usb_task", 4096, NULL, 5, NULL, 1, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 
   usb_callbacks_init();
 

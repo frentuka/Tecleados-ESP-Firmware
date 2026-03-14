@@ -15,6 +15,7 @@
 #include "kb_report.h"
 #include "kb_state.h"
 #include "kb_system_action.h"
+#include "kb_custom_key.h"
 
 #include "cfg_layouts.h"
 
@@ -133,7 +134,7 @@ static void kb_manager_task(void *arg) {
 
   uint16_t s_active_action_codes[KB_MATRIX_ROW_COUNT][KB_MATRIX_COL_COUNT];
   memset(s_active_action_codes, 0, sizeof(s_active_action_codes));
-
+  
   while (1) {
     // benchmark
     int64_t now_us = esp_timer_get_time();
@@ -273,16 +274,21 @@ static void kb_manager_task(void *arg) {
 }
 
 void kb_manager_start(void) {
-  ESP_LOGI(TAG, "Starting keyboard manager...");
   kb_state_init();
   kb_macro_init();
   kb_system_action_init();
+  kb_custom_key_init();
   cfg_layout_load_all();
   memset(s_injected_matrix, 0, sizeof(s_injected_matrix));
   usbmod_register_callback(MODULE_SYSTEM, kb_system_usb_callback);
   kb_matrix_gpio_init();
   vTaskDelay(pdMS_TO_TICKS(500));
-  xTaskCreatePinnedToCore(kb_manager_task, "kb_mgr", 4096, NULL, 5, NULL, 1);
+  
+  // Create kb_mgr task in Internal RAM
+  BaseType_t ret = xTaskCreateWithCaps(kb_manager_task, "kb_mgr", 4096, NULL, 5, NULL, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  if (ret != pdPASS) {
+      ESP_LOGE(TAG, "FAILED TO CREATE kb_manager_task! Error: %d", (int)ret);
+  }
 }
 
 void kb_manager_test_nkro_keypress(uint8_t row, uint8_t col) {

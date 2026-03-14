@@ -1,16 +1,18 @@
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { ALL_KEYS, getKeyClass, TRANSPARENT, getMacroKeyOptions, MACRO_BASE } from './KeyDefinitions';
+import { ALL_KEYS, getKeyClass, TRANSPARENT, getMacroKeyOptions, getCKeyOptions, MACRO_BASE, CKEY_BASE } from './KeyDefinitions';
 import type { Macro } from './App';
+import type { CustomKey } from './HIDService';
 
 interface SearchableKeyModalProps {
     currentValue: number;
     macros: Macro[];
+    customKeys?: CustomKey[];
     onSelect: (value: number) => void;
     onClose: () => void;
 }
 
-export default function SearchableKeyModal({ currentValue, macros, onSelect, onClose }: SearchableKeyModalProps) {
+export default function SearchableKeyModal({ currentValue, macros, customKeys = [], onSelect, onClose }: SearchableKeyModalProps) {
     const [searchTerm, setSearchTerm] = useState('');
     const inputRef = useRef<HTMLInputElement>(null);
 
@@ -19,7 +21,8 @@ export default function SearchableKeyModal({ currentValue, macros, onSelect, onC
     }, []);
 
     const macroOptions = getMacroKeyOptions(macros);
-    const combinedKeys = [...ALL_KEYS, ...macroOptions];
+    const ckeyOptions  = getCKeyOptions(customKeys);
+    const combinedKeys = [...ALL_KEYS, ...macroOptions, ...ckeyOptions];
 
     const filteredKeys = combinedKeys.filter(k =>
         k.label.toLowerCase().includes(searchTerm.toLowerCase())
@@ -27,15 +30,16 @@ export default function SearchableKeyModal({ currentValue, macros, onSelect, onC
 
     // Grouping for a better UX
     const CATEGORIES = [
-        { name: 'Macros', filter: (v: number) => v >= MACRO_BASE && v <= 0x40FF },
-        { name: 'Special', filter: (v: number) => v === TRANSPARENT || v === 0 },
-        { name: 'Letters', filter: (v: number) => v >= 0x04 && v <= 0x1D },
-        { name: 'Numbers', filter: (v: number) => (v >= 0x1E && v <= 0x27) },
-        { name: 'Symbols', filter: (v: number) => (v >= 0x2D && v <= 0x38) || (v >= 0x28 && v <= 0x2C) },
-        { name: 'Navigation', filter: (v: number) => (v >= 0x46 && v <= 0x52) || v === 0x65 || v === 0x39 },
-        { name: 'F-Keys', filter: (v: number) => v >= 0x3A && v <= 0x45 },
-        { name: 'Modifiers', filter: (v: number) => v >= 0xE0 && v <= 0xE7 },
-        { name: 'System / BLE', filter: (v: number) => v >= 0x2000 && v <= 0x20FF },
+        { name: 'Custom Keys', filter: (v: number) => v >= CKEY_BASE && v <= 0x3FFF },
+        { name: 'Macros',      filter: (v: number) => v >= MACRO_BASE && v <= 0x40FF },
+        { name: 'Special',     filter: (v: number) => v === TRANSPARENT || v === 0 },
+        { name: 'Letters',     filter: (v: number) => v >= 0x04 && v <= 0x1D },
+        { name: 'Numbers',     filter: (v: number) => (v >= 0x1E && v <= 0x27) },
+        { name: 'Symbols',     filter: (v: number) => (v >= 0x2D && v <= 0x38) || (v >= 0x28 && v <= 0x2C) },
+        { name: 'Navigation',  filter: (v: number) => (v >= 0x46 && v <= 0x52) || v === 0x65 || v === 0x39 },
+        { name: 'F-Keys',      filter: (v: number) => v >= 0x3A && v <= 0x45 },
+        { name: 'Modifiers',   filter: (v: number) => v >= 0xE0 && v <= 0xE7 },
+        { name: 'System / BLE',filter: (v: number) => v >= 0x2000 && v <= 0x20FF },
     ];
 
     const [mouseDownOnOverlay, setMouseDownOnOverlay] = useState(false);

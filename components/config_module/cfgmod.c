@@ -7,6 +7,7 @@
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "cfg_macros.h"
+#include "cfg_custom_keys.h"
 #include "esp_heap_caps.h"
 
 static cfg_macro_list_t *s_macro_scratch = NULL;
@@ -17,6 +18,8 @@ extern void cfg_macros_register(void);
 extern void cfg_system_register(void);
 extern void cfg_physical_register(void);
 extern void cfg_ble_init(void);
+#include "kb_custom_key.h"
+// extern void cfg_custom_keys_register(void); <-- Removed legacy extern
 
 #include "esp_log.h"
 
@@ -74,6 +77,8 @@ static const cfgmod_key_map_t s_key_map[CFG_KEY_MAX] = {
    [CFG_KEY_MACROS]  = { CFGMOD_KIND_MACRO, "macros" },
    [CFG_KEY_MACRO_LIMITS] = { CFGMOD_KIND_MACRO, "macros" },
    [CFG_KEY_MACRO_SINGLE] = { CFGMOD_KIND_MACRO, "macros" },
+   [CFG_KEY_CKEYS]        = { CFGMOD_KIND_CKEY, "ckeys" },
+   [CFG_KEY_CKEY_SINGLE]  = { CFGMOD_KIND_CKEY, "ckeys" },
 };
 
 esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
@@ -282,6 +287,129 @@ esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
     }
     memcpy(out_payload, &status, status_size);
 
+
+  // ---- Custom Key handling ----
+  } else if (hdr.key_id == CFG_KEY_CKEYS && hdr.cmd == CFG_CMD_GET) {
+    // Return outline of all custom keys (id + name + mode)
+    cfg_ckey_index_t ck_idx = {0};
+    size_t ck_idx_len = sizeof(ck_idx);
+    cfgmod_read_storage(CFGMOD_KIND_CKEY, "ck_idx", &ck_idx, &ck_idx_len);
+
+    cJSON *outline = ckeys_serialize_outline(&ck_idx);
+    if (outline) {
+      char *json_str = cJSON_PrintUnformatted(outline);
+      cJSON_Delete(outline);
+      if (json_str) {
+        size_t json_len = strlen(json_str) + 1;
+        if (json_len <= out_payload_max - status_size) {
+          memcpy(out_payload + status_size, json_str, json_len);
+          actual_payload_len = status_size + json_len;
+          status = ESP_OK;
+        } else {
+          status = ESP_ERR_NO_MEM;
+          actual_payload_len = status_size;
+        }
+        free(json_str);
+      } else {
+        status = ESP_ERR_NO_MEM;
+        actual_payload_len = status_size;
+      }
+    } else {
+      status = ESP_ERR_NO_MEM;
+      actual_payload_len = status_size;
+    }
+    memcpy(out_payload, &status, status_size);
+
+  } else if (hdr.key_id == CFG_KEY_CKEY_SINGLE && hdr.cmd == CFG_CMD_GET) {
+    // Expect incoming JSON: { "id": N }
+    char *temp_json = malloc(data_in_len + 1);
+    cJSON *root = NULL;
+    uint16_t requested_id = 0xFFFF;
+    if (temp_json) {
+      memcpy(temp_json, data_in, data_in_len);
+      temp_json[data_in_len] = '\0';
+      root = cJSON_Parse(temp_json);
+      free(temp_json);
+      if (root) {
+        cJSON *id_item = cJSON_GetObjectItem(root, "id");
+        if (cJSON_IsNumber(id_item)) {
+          requested_id = (uint16_t)id_item->valueint;
+        }
+        cJSON_Delete(root);
+      }
+    }
+
+    if (requested_id != 0xFFFF) {
+      cfg_ckey_index_t ck_idx = {0};
+      size_t ck_idx_len = sizeof(ck_idx);
+      cfgmod_read_storage(CFGMOD_KIND_CKEY, "ck_idx", &ck_idx, &ck_idx_len);
+
+      cJSON *single_ck = ckeys_serialize_single(requested_id, &ck_idx);
+      if (single_ck) {
+        char *json_str = cJSON_PrintUnformatted(single_ck);
+        cJSON_Delete(single_ck);
+        if (json_str) {
+          size_t json_len = strlen(json_str) + 1;
+          if (json_len <= out_payload_max - status_size) {
+            memcpy(out_payload + status_size, json_str, json_len);
+            actual_payload_len = status_size + json_len;
+            status = ESP_OK;
+          } else {
+            status = ESP_ERR_NO_MEM;
+            actual_payload_len = status_size;
+          }
+          free(json_str);
+        } else {
+          status = ESP_ERR_NO_MEM;
+          actual_payload_len = status_size;
+        }
+      } else {
+        status = ESP_ERR_NO_MEM;
+        actual_payload_len = status_size;
+      }
+    } else {
+      status = ESP_ERR_INVALID_ARG;
+      actual_payload_len = status_size;
+    }
+    memcpy(out_payload, &status, status_size);
+
+  } else if (hdr.key_id == CFG_KEY_CKEY_SINGLE && hdr.cmd == CFG_CMD_SET) {
+    // Parse incoming JSON ({ "id":N, ... } for upsert, or { "delete": N } for delete)
+    char *temp_json = malloc(data_in_len + 1);
+    cJSON *root = NULL;
+    if (temp_json) {
+      memcpy(temp_json, data_in, data_in_len);
+      temp_json[data_in_len] = '\0';
+      root = cJSON_Parse(temp_json);
+      free(temp_json);
+    }
+
+    if (root) {
+      cfg_ckey_index_t ck_idx = {0};
+      size_t ck_idx_len = sizeof(ck_idx);
+      cfgmod_read_storage(CFGMOD_KIND_CKEY, "ck_idx", &ck_idx, &ck_idx_len);
+
+      cJSON *del = cJSON_GetObjectItem(root, "delete");
+      if (cJSON_IsNumber(del)) {
+        status = ckeys_delete_single((uint16_t)del->valueint, &ck_idx);
+      } else {
+        status = ckeys_upsert_single(root, &ck_idx);
+      }
+
+      if (status != ESP_OK) {
+        ESP_LOGE(TAG, "Custom key NVS write failed: 0x%X", (unsigned)status);
+      } else {
+        if (s_registry[CFGMOD_KIND_CKEY].update_fn) {
+          s_registry[CFGMOD_KIND_CKEY].update_fn("ckeys");
+        }
+      }
+      cJSON_Delete(root);
+    } else {
+      status = ESP_ERR_INVALID_ARG;
+    }
+    memcpy(out_payload, &status, status_size);
+    actual_payload_len = status_size;
+
   // ---- Generic GET/SET handlers ----
   } else if (hdr.cmd == CFG_CMD_GET) {
     ESP_LOGI(TAG, "Received GET message for %s (kind=%d, key_id=%d)", key, kind, (int)hdr.key_id);
@@ -487,6 +615,7 @@ esp_err_t cfg_init(void) {
 
     cfg_layouts_register();
     cfg_macros_register();
+    cfg_custom_keys_register(kb_custom_key_reload);
     cfg_system_register();
     cfg_physical_register();
     cfg_ble_init();

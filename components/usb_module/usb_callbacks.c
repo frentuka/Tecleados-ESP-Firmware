@@ -24,7 +24,7 @@
 
 // ============ Packet processing queues ============
 
-#define PROCESS_QUEUE_LENGTH 64
+#define PROCESS_QUEUE_LENGTH 128
 static QueueHandle_t usb_processing_queue = NULL;
 
 // ============ Callbacks ============
@@ -122,6 +122,7 @@ static void process_incoming_packet(usb_packet_msg_t msg) {
 
   // --- Blast reconcile: STATUS_REQ (sender asking for our bitmap) ---
   if (msg.flags == PAYLOAD_FLAG_STATUS_REQ) {
+    rx_blast_update_activity();
     if (rx_blast_active()) {
       ESP_LOGI(TAG, "STATUS_REQ: sending RX bitmap");
       usb_packet_msg_t bitmap_msg = {0};
@@ -136,6 +137,7 @@ static void process_incoming_packet(usb_packet_msg_t msg) {
   // --- Blast reconcile: BITMAP response (receiver telling us what it got) ---
   // --- Blast reconcile: BITMAP response (receiver telling us what it got) ---
   if (msg.flags == PAYLOAD_FLAG_BITMAP) {
+    rx_blast_update_activity();
     ESP_LOGI(TAG, "BITMAP: routing to TX blast handler");
     process_tx_response(msg);
     return;
@@ -252,6 +254,8 @@ bool execute_callback(usb_msg_module_t callback_module, uint8_t const *data,
 }
 
 void usb_callbacks_init(void) {
+  usb_tx_init(); // Initialize the TX queue and task
+  
   usb_processing_queue =
       xQueueCreate(PROCESS_QUEUE_LENGTH, sizeof(usb_packet_msg_t));
 
@@ -260,9 +264,14 @@ void usb_callbacks_init(void) {
     return;
   }
 
-  // Create unified processing task
-  xTaskCreate(usb_processing_task, "usb_processing_task", 16384, NULL, 5,
-              NULL);
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_heap_caps.h" // Required for MALLOC_CAP_SPIRAM and xTaskCreateWithCaps (if using recent IDF) or caps
+
+// ... later in the code ...
+
+  // Create unified processing task in Internal RAM (required for NVS/Flash operations)
+  xTaskCreateWithCaps(usb_processing_task, "usb_processing_task", 8192, NULL, 5, NULL, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   
-  xTaskCreate(timeouts_task, "usb_cb_timeouts_task", 3072, NULL, 5, NULL);
+  xTaskCreateWithCaps(timeouts_task, "usb_cb_timeouts_task", 4096, NULL, 5, NULL, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 }

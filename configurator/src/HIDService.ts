@@ -22,6 +22,7 @@ export const PAYLOAD_FLAG_ABORT = 0x01;
 // Module IDs
 export const MODULE_CONFIG = 0x00;
 export const MODULE_SYSTEM = 0x01;
+export const MODULE_STATUS = 0x03;
 
 // Config Commands
 export const CFG_CMD_GET = 0x00;
@@ -44,6 +45,38 @@ export const SYS_CMD_INJECT_KEY = 0x01;
 export const SYS_CMD_CLEAR_INJECTED = 0x02;
 
 export const MACRO_CODE_BASE = 0x4000;
+
+// ── Custom Keys ──────────────────────────────────────────────
+export const CFG_KEY_CKEYS       = 0x0A; // must match cfgmod_key_id_t
+export const CFG_KEY_CKEY_SINGLE = 0x0B; // must match cfgmod_key_id_t
+export const CKEY_CODE_BASE      = 0x3000;
+export const CKEY_MAX_COUNT      = 32;
+
+export interface CustomKeyPR {
+    pressAction:     number;
+    releaseAction:   number;
+    pressDuration:   number;
+    releaseDuration: number;
+}
+
+export interface CustomKeyMA {
+    tapAction:          number;
+    doubleTapAction:    number;
+    holdAction:         number;
+    doubleTapThreshold: number;
+    holdThreshold:      number;
+    tapDuration:        number;
+    doubleTapDuration:  number;
+    holdDuration:       number;
+}
+
+export interface CustomKey {
+    id:   number;
+    name: string;
+    mode: number; // 0 = PressRelease, 1 = MultiAction
+    pr?:  CustomKeyPR;
+    ma?:  CustomKeyMA;
+}
 
 export type LogCallback = (logData: Uint8Array) => void;
 export type RawPacketCallback = (data: Uint8Array, direction: 'rx' | 'tx') => void;
@@ -97,12 +130,14 @@ export function computeCrc8(data: Uint8Array): number {
 }
 
 export type ConnectionCallback = (connected: boolean) => void;
+export type StatusUpdateCallback = (status: { mode: number; profile: number; pairing: number; bitmap: number }) => void;
 
 class HIDService {
     private device: HIDDeviceMock | null = null;
     private logCallbacks: Set<LogCallback> = new Set();
     private rawPacketCallbacks: Set<RawPacketCallback> = new Set();
     private connectionCallbacks: Set<ConnectionCallback> = new Set();
+    private statusUpdateCallbacks: Set<StatusUpdateCallback> = new Set();
     private reconnectTimer: ReturnType<typeof setInterval> | null = null;
     private wantConnection = false; // true after user clicks Connect
 
@@ -116,7 +151,9 @@ class HIDService {
     } | null = null;
     private pendingResolve: ((resp: CommandResponse | null) => void) | null = null;
 
-    // ── Generic flag-based response waiting ──
+    // ── Universal Task Queue ──
+    private taskQueue: Array<{ task: () => Promise<any>; resolve: (val: any) => void; reject: (err: any) => void }> = [];
+    private isProcessingQueue = false;
     private flagWaiters: Map<number, (msg: { flags: number; remaining: number; payloadLen: number; payload: Uint8Array }) => void> = new Map();
 
     // ── Blast receive state (for ESP→Website direction) ──
@@ -154,8 +191,23 @@ class HIDService {
             });
 
             if (devices.length > 0) {
+                // Highly specific filtering: look for the Vendor Defined Comm interface (Usage Page 0xFFFF)
+                const target = devices.find((d: any) => this.isCommInterface(d));
+
+                if (!target) {
+                    console.error('[HID Service] No valid Comm interface found among authorized devices.',
+                        devices.map((d: any) => ({ name: d.productName, collections: d.collections })));
+                    return false;
+                }
+
+                console.log(`[HID Service] Found target Comm interface on: ${target.productName}`);
                 this.wantConnection = true;
-                return await this.openDevice(devices[0]);
+                const ok = await this.openDevice(target);
+                if (!ok) {
+                    console.warn('[HID Service] Initial open failed, starting auto-reconnect polling');
+                    this.startReconnectPolling();
+                }
+                return ok;
             }
             return false;
         } catch (error) {
@@ -182,8 +234,10 @@ class HIDService {
         }
     }
 
-    public async disconnect(): Promise<void> {
-        this.wantConnection = false;
+    public async disconnect(forceReset: boolean = false): Promise<void> {
+        if (forceReset) {
+            this.wantConnection = false;
+        }
         this.stopReconnectPolling();
         if (this.device) {
             this.device.removeEventListener('inputreport', this.handleInputReport as EventListener);
@@ -215,6 +269,15 @@ class HIDService {
         this.connectionCallbacks.forEach(cb => cb(connected));
     }
 
+    // ── Status update observers ──
+    public onStatusUpdate(callback: StatusUpdateCallback): void {
+        this.statusUpdateCallbacks.add(callback);
+    }
+
+    public offStatusUpdate(callback: StatusUpdateCallback): void {
+        this.statusUpdateCallbacks.delete(callback);
+    }
+
     // ── Disconnect handler ──
     private handleDisconnect(event: any): void {
         const disconnectedDevice = event.device;
@@ -231,10 +294,10 @@ class HIDService {
                 this.pendingResponse = null;
             }
 
-            // Flush command queue
-            while (this.commandQueue.length > 0) {
-                const cmd = this.commandQueue.shift()!;
-                cmd.resolve(null);
+            // Flush task queue
+            while (this.taskQueue.length > 0) {
+                const item = this.taskQueue.shift()!;
+                item.resolve(null);
             }
             this.isProcessingQueue = false;
 
@@ -281,7 +344,7 @@ class HIDService {
             // getDevices() returns previously authorized devices without user prompt
             const devices = await nav.hid.getDevices();
             const target = devices.find(
-                (d: any) => d.vendorId === VENDOR_ID && d.productId === PRODUCT_ID
+                (d: any) => d.vendorId === VENDOR_ID && d.productId === PRODUCT_ID && this.isCommInterface(d)
             );
             if (target) {
                 console.log('Found previously authorized device, reopening...');
@@ -290,6 +353,23 @@ class HIDService {
         } catch (error) {
             // to-do
         }
+    }
+
+    /** Check if this HID interface is the Vendor Defined Comm interface */
+    private isCommInterface(device: any): boolean {
+        if (!device || !device.collections || device.collections.length === 0) return false;
+
+        // The Comm interface uses Usage Page 0xFFFF (Vendor Defined)
+        // We check all collections to see if any match our expected usage page
+        const hasCommUsage = device.collections.some((c: any) => c.usagePage === 0xFFFF);
+
+        // Debug info to help identify interface mismatches
+        if (!hasCommUsage) {
+            console.debug(`[HID Service] Interface "${device.productName}" collections:`,
+                device.collections.map((c: any) => `UP: 0x${c.usagePage.toString(16).toUpperCase()}, U: 0x${c.usage.toString(16).toUpperCase()}`));
+        }
+
+        return hasCommUsage;
     }
 
     // ══════════════════════════════════════════════════════════
@@ -322,16 +402,32 @@ class HIDService {
     // ── Low-level send helpers ──
     // ══════════════════════════════════════════════════════════
 
-    public async sendResponse(flags: number, data?: Uint8Array): Promise<boolean> {
-        if (!this.isConnected()) return false;
+    /** Wrapper for device.sendReport to catch fatal browser/HID errors */
+    private async safeSendReport(reportId: number, data: Uint8Array): Promise<boolean> {
+        if (!this.device || !this.device.opened) return false;
         try {
-            const reportData = this.buildCommPacket(flags, 0, data || new Uint8Array(0));
-            await this.device!.sendReport(COMM_REPORT_ID, reportData);
+            await this.device.sendReport(reportId, data);
             return true;
-        } catch (error) {
-            console.error('Error sending response COMM report:', error);
+        } catch (error: any) {
+            console.error(`[HID Service] Fatal send error: ${error.name}: ${error.message}`);
+            // NotAllowedError often happens when the device is gone or permission is revoked mid-flow
+            if (error.name === 'NotAllowedError' || error.name === 'InvalidStateError' || error.name === 'NotFoundError') {
+                this.handleFatalError(error);
+            }
             return false;
         }
+    }
+
+    private handleFatalError(error: any): void {
+        console.warn('[HID Service] Handling fatal error, forcing cleanup...', error);
+        // forceReset = false keeps wantConnection = true so we auto-reconnect
+        this.disconnect(false);
+    }
+
+    public async sendResponse(flags: number, data?: Uint8Array): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        const reportData = this.buildCommPacket(flags, 0, data || new Uint8Array(0));
+        return await this.safeSendReport(COMM_REPORT_ID, reportData);
     }
 
     // ══════════════════════════════════════════════════════════
@@ -367,12 +463,7 @@ class HIDService {
         else flags = PAYLOAD_FLAG_MID;
 
         const reportData = this.buildCommPacket(flags, remaining, chunk);
-        try {
-            await this.device!.sendReport(COMM_REPORT_ID, reportData);
-            return true;
-        } catch {
-            return false;
-        }
+        return await this.safeSendReport(COMM_REPORT_ID, reportData);
     }
 
     /** Parse a bitmap response to find missing packet indices */
@@ -454,8 +545,7 @@ class HIDService {
             if (totalPackets === 1) {
                 const flags = PAYLOAD_FLAG_FIRST | PAYLOAD_FLAG_LAST;
                 const reportData = this.buildCommPacket(flags, 0, data);
-                await this.device!.sendReport(COMM_REPORT_ID, reportData);
-                return true;
+                return await this.safeSendReport(COMM_REPORT_ID, reportData);
             }
 
             console.log(`[Blast TX] Starting: ${totalPackets} packets for ${data.length} bytes`);
@@ -489,7 +579,11 @@ class HIDService {
                 // Send STATUS_REQ
                 const bitmapPromise = this.waitForFlag(PAYLOAD_FLAG_BITMAP, 3000);
                 const statusPacket = this.buildCommPacket(PAYLOAD_FLAG_STATUS_REQ, 0, new Uint8Array(0));
-                await this.device!.sendReport(COMM_REPORT_ID, statusPacket);
+                if (!await this.safeSendReport(COMM_REPORT_ID, statusPacket)) {
+                    console.error(`[Blast TX] Failed to send STATUS_REQ (round ${round})`);
+                    if (round === MAX_RECONCILE_ROUNDS - 1) return false;
+                    continue;
+                }
 
                 const bitmapResp = await bitmapPromise;
                 if (!bitmapResp) {
@@ -536,12 +630,42 @@ class HIDService {
     }
 
     // ══════════════════════════════════════════════════════════
-    // ── High-level API: sendCommand (serial queue) ──
+    // ── Serial Task Queue Mechanism ──
     // ══════════════════════════════════════════════════════════
 
-    // Command queue to prevent concurrent sendCommand calls from interfering
-    private commandQueue: Array<{ payload: Uint8Array; timeoutMs: number; resolve: (resp: CommandResponse | null) => void }> = [];
-    private isProcessingQueue = false;
+    /**
+     * Enqueue an async task to be executed serially.
+     * Use this for ALL HID transmission to prevent protocol overlap.
+     */
+    public enqueueTask<T>(task: () => Promise<T>): Promise<T> {
+        return new Promise<T>((resolve, reject) => {
+            this.taskQueue.push({ task, resolve, reject });
+            this.processNextTask();
+        });
+    }
+
+    private async processNextTask(): Promise<void> {
+        if (this.isProcessingQueue || this.taskQueue.length === 0) return;
+
+        this.isProcessingQueue = true;
+        const { task, resolve, reject } = this.taskQueue.shift()!;
+
+        try {
+            const result = await task();
+            resolve(result);
+        } catch (err) {
+            console.error('[HID Queue] Task failed:', err);
+            reject(err);
+        } finally {
+            // Inter-task settle time: 50ms (Optimized for performance while maintaining NVS stability)
+            // We must keep isProcessingQueue = true until the timeout fires to prevent
+            // the next task from jumping the gun.
+            setTimeout(() => {
+                this.isProcessingQueue = false;
+                this.processNextTask();
+            }, 50);
+        }
+    }
 
     /**
      * Send a command and wait for the complete response.
@@ -553,91 +677,93 @@ class HIDService {
     public sendCommand(payload: Uint8Array, timeoutMs?: number): Promise<CommandResponse | null> {
         if (!this.isConnected()) return Promise.resolve(null);
 
-        // Scale timeout based on payload size: base 5s + 5ms per byte for large payloads
         const effectiveTimeout = timeoutMs ?? Math.max(5000, 5000 + payload.length * 5);
+        const cmdHex = Array.from(payload.slice(0, Math.min(4, payload.length)))
+            .map(b => b.toString(16).padStart(2, '0')).join(' ');
 
-        return new Promise<CommandResponse | null>((resolve) => {
-            this.commandQueue.push({ payload, timeoutMs: effectiveTimeout, resolve });
-            this.processNextCommand();
-        });
-    }
+        return this.enqueueTask(async () => {
+            console.log(`[HID Queue] Sending command: ${cmdHex} (${payload.length} bytes)`);
 
-    private async processNextCommand(): Promise<void> {
-        if (this.isProcessingQueue) return; // already processing
-        if (this.commandQueue.length === 0) return;
+            let timer: any;
+            const promise = new Promise<CommandResponse | null>((resolve) => {
+                timer = setTimeout(() => {
+                    if (this.pendingResolve) {
+                        console.warn(`[HID Queue] Command timed out after ${effectiveTimeout}ms: ${cmdHex}`);
+                        this.pendingResolve = null;
+                        this.pendingResponse = null;
+                        this.blastRxReset();
+                        resolve(null);
+                    }
+                }, effectiveTimeout);
 
-        this.isProcessingQueue = true;
-        const { payload, timeoutMs, resolve } = this.commandQueue.shift()!;
+                this.pendingResolve = (resp) => {
+                    clearTimeout(timer);
+                    this.pendingResolve = null;
+                    resolve(resp);
+                };
+            });
 
-        // Log the command being processed
-        const cmdHex = Array.from(payload.slice(0, Math.min(4, payload.length))).map(b => b.toString(16).padStart(2, '0')).join(' ');
-        console.log(`[HID Queue] Processing command: ${cmdHex} (${payload.length} bytes, queue remaining: ${this.commandQueue.length})`);
-
-        if (!this.isConnected()) {
-            console.warn('[HID Queue] Not connected, skipping command');
-            resolve(null);
-            this.isProcessingQueue = false;
-            this.processNextCommand();
-            return;
-        }
-
-        // Set up response handler
-        const result = await new Promise<CommandResponse | null>(async (innerResolve) => {
-            this.pendingResolve = innerResolve;
-
-            const timeout = setTimeout(() => {
-                if (this.pendingResolve === innerResolve) {
-                    console.warn(`[HID Queue] Command timed out after ${timeoutMs}ms: ${cmdHex}`);
+            try {
+                const success = await this.sendCustomCommReport(payload);
+                if (!success) {
+                    clearTimeout(timer);
                     this.pendingResolve = null;
                     this.pendingResponse = null;
-                    innerResolve(null);
+                    this.blastRxReset();
+                    return null;
                 }
-            }, timeoutMs);
-
-            // Wrap to clear timeout on success
-            this.pendingResolve = (resp) => {
-                clearTimeout(timeout);
-                innerResolve(resp);
-            };
-
-            await this.sendCustomCommReport(payload);
+                return await promise;
+            } catch (err) {
+                clearTimeout(timer);
+                this.pendingResolve = null;
+                this.pendingResponse = null;
+                this.blastRxReset();
+                throw err;
+            }
         });
-
-        console.log(`[HID Queue] Command ${cmdHex} completed:`, result ? `status=${result.status}, keyId=${result.keyId}, jsonLen=${result.jsonText.length}` : 'NULL');
-        resolve(result);
-
-        this.isProcessingQueue = false;
-        this.processNextCommand(); // process next in queue
     }
-
-    // ══════════════════════════════════════════════════════════
-    // ── System API (Key Test Mode) ──
-    // ══════════════════════════════════════════════════════════
 
     public async sendInjectKey(row: number, col: number, state: boolean): Promise<boolean> {
         if (!this.isConnected()) return false;
-
-        // Payload: [CMD, row, col, state]
         const payload = new Uint8Array([MODULE_SYSTEM, SYS_CMD_INJECT_KEY, row, col, state ? 1 : 0]);
-        return this.sendCustomCommReport(payload);
+        return this.enqueueTask(() => this.sendCustomCommReport(payload));
     }
 
     public async clearInjectedKeys(): Promise<boolean> {
         if (!this.isConnected()) return false;
-
-        // Payload: [CMD]
         const payload = new Uint8Array([MODULE_SYSTEM, SYS_CMD_CLEAR_INJECTED]);
-        return this.sendCustomCommReport(payload);
+        return this.enqueueTask(() => this.sendCustomCommReport(payload));
     }
 
-    // ══════════════════════════════════════════════════════════
-    // ── Incoming packet handler (auto-ACK + reassembly) ──
-    // ══════════════════════════════════════════════════════════
+    public async fetchStatus(): Promise<{ mode: number; profile: number; pairing: number; bitmap: number } | null> {
+        if (!this.isConnected()) return null;
 
-    private handleInputReport(event: any): void {
+        // Command: [MODULE_STATUS]
+        const buf = new Uint8Array([MODULE_STATUS]);
+
+        // sendCommand handles multi-packet assembly and timeout
+        const resp = await this.sendCommand(buf, 2000);
+
+        if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
+            try {
+                const data = JSON.parse(resp.jsonText);
+                return {
+                    mode: data.mode,
+                    profile: data.profile,
+                    pairing: data.pairing ?? -1,
+                    bitmap: data.bitmap
+                };
+            } catch (e) {
+                console.error('Failed to parse status JSON in fetchStatus:', e);
+            }
+        }
+        return null;
+    }
+
+    // ── Incoming packet handler ──
+    private async handleInputReport(event: any): Promise<void> {
         if (event.reportId !== COMM_REPORT_ID) return;
         const data = new Uint8Array(event.data.buffer);
-
         if (data.length < 63) return;
 
         const flags = data[0];
@@ -645,78 +771,66 @@ class HIDService {
         const safeLen = Math.min(data[3], 58);
         const payloadBytes = data.slice(4, 4 + safeLen);
 
-        // --- Blast check ---
         const isBlastPacket = (flags & PAYLOAD_FLAG_MID) || (flags & PAYLOAD_FLAG_LAST);
         const isHandshake = (flags & PAYLOAD_FLAG_FIRST) && remaining > 0;
 
-        // Broadcast raw data and logs ONLY for non-blast payload packets or handshakes
-        // This avoids 500+ callbacks during a 258-packet blast
         if (!this.blastRx.active || isHandshake || !isBlastPacket) {
             this.logCallbacks.forEach(cb => cb(data));
             this.rawPacketCallbacks.forEach(cb => cb(data, 'rx'));
         }
 
-        // ── Check flag waiters (blast protocol responses) ──
-        // Check exact flag match first (for BITMAP, STATUS_REQ)
         if (this.flagWaiters.has(flags)) {
             this.flagWaiters.get(flags)!({ flags, remaining, payloadLen: safeLen, payload: payloadBytes });
             return;
         }
-        // Check partial flag match for ACK (ACK may be combined with OK)
+
         if ((flags & PAYLOAD_FLAG_ACK) && this.flagWaiters.has(PAYLOAD_FLAG_ACK)) {
             this.flagWaiters.get(PAYLOAD_FLAG_ACK)!({ flags, remaining, payloadLen: safeLen, payload: payloadBytes });
             return;
         }
 
-        // ── Blast reconcile: STATUS_REQ from ESP (ESP asking for our bitmap) ──
         if (flags === PAYLOAD_FLAG_STATUS_REQ && this.blastRx.active) {
-            console.log('[Blast RX] STATUS_REQ received, sending bitmap');
             const bitmapPacket = this.blastRxBuildBitmapPacket();
-            this.device?.sendReport(COMM_REPORT_ID, bitmapPacket);
+            this.safeSendReport(COMM_REPORT_ID, bitmapPacket);
             return;
         }
 
-        // ── Skip pure ACK/NAK/OK/ERR/ABORT when not caught by flag waiters ──
         const isResponsePacket = (flags & PAYLOAD_FLAG_ACK) || (flags & PAYLOAD_FLAG_NAK) ||
             (flags & PAYLOAD_FLAG_OK) || (flags & PAYLOAD_FLAG_ERR) || (flags & PAYLOAD_FLAG_ABORT);
         if (isResponsePacket) return;
 
-        // ── Blast receive mode: ESP → Website multi-packet ──
         if ((flags & PAYLOAD_FLAG_FIRST) && remaining > 0 && safeLen >= 7) {
-            // Enter blast receive mode 
             const totalPackets = remaining + 1;
-            console.log(`[Blast RX] Entering blast mode: ${totalPackets} packets`);
+            if (totalPackets > 5000) {
+                console.error(`[Blast RX] ABORTING: Ridiculous packet count (${totalPackets})`);
+                this.sendResponse(PAYLOAD_FLAG_ABORT);
+                return;
+            }
             this.blastRx.active = true;
             this.blastRx.totalPackets = totalPackets;
             this.blastRx.buffer = new Uint8Array(totalPackets * 58);
             this.blastRx.bitmap = new Uint8Array(Math.ceil(totalPackets / 8));
             this.blastRx.payloadLens = new Uint8Array(totalPackets);
-
-            // Store FIRST packet
             this.blastRxReceivePacket(0, payloadBytes, safeLen);
-
-            // Send ACK (handshake)
             this.sendResponse(PAYLOAD_FLAG_ACK);
             return;
         }
 
-        // Blast RX: MID packets (silent absorb)
         if (this.blastRx.active && (flags & PAYLOAD_FLAG_MID)) {
             const index = this.blastRx.totalPackets - 1 - remaining;
+            if (index < 0 || index >= this.blastRx.totalPackets) {
+                console.error(`[Blast RX] Index OOB: ${index}`);
+                this.blastRxReset();
+                return;
+            }
             this.blastRxReceivePacket(index, payloadBytes, safeLen);
             return;
         }
 
-        // Blast RX: LAST packet (commit)
         if (this.blastRx.active && (flags & PAYLOAD_FLAG_LAST)) {
             const lastIndex = this.blastRx.totalPackets - 1;
             this.blastRxReceivePacket(lastIndex, payloadBytes, safeLen);
-
-            // Assemble full payload and process
             const fullPayload = this.blastRxAssemblePayload();
-            console.log(`[Blast RX] Committed: ${this.blastRx.totalPackets} packets, ${fullPayload.length} bytes`);
-
-            // Process assembled response (same as the original multi-packet handling)
             if (fullPayload.length >= 7) {
                 const module = fullPayload[0];
                 const cmd = fullPayload[1];
@@ -724,14 +838,12 @@ class HIDService {
                 const status = (fullPayload[3] | (fullPayload[4] << 8) | (fullPayload[5] << 16) | (fullPayload[6] << 24));
                 const jsonText = new TextDecoder().decode(fullPayload.slice(7)).replace(/\0/g, '');
                 this.pendingResponse = { module, cmd, keyId, status, jsonText };
-                this.sendAckAndFinish(true);
+                await this.sendAckAndFinish(true);
             }
-
             this.blastRxReset();
             return;
         }
 
-        // ── Legacy single-packet response (FIRST|LAST with remaining=0) ──
         if ((flags & PAYLOAD_FLAG_FIRST) && (flags & PAYLOAD_FLAG_LAST) && safeLen >= 7) {
             const module = payloadBytes[0];
             const cmd = payloadBytes[1];
@@ -739,57 +851,125 @@ class HIDService {
             const status = (payloadBytes[3] | (payloadBytes[4] << 8) | (payloadBytes[5] << 16) | (payloadBytes[6] << 24));
             const jsonText = new TextDecoder().decode(payloadBytes.slice(7)).replace(/\0/g, '');
             this.pendingResponse = { module, cmd, keyId, status, jsonText };
-            this.sendAckAndFinish(true);
+            await this.sendAckAndFinish(true);
         }
     }
 
-    /**
-     * Send ACK (with optional OK) and resolve the pending command immediately.
-     * Fire-and-forget: don't await the sendReport — let the OS queue it.
-     */
-    private sendAckAndFinish(isLast: boolean): void {
-        if (isLast) {
-            this.sendResponse(PAYLOAD_FLAG_ACK | PAYLOAD_FLAG_OK);
-        } else {
-            this.sendResponse(PAYLOAD_FLAG_ACK);
-        }
-
+    private async sendAckAndFinish(isLast: boolean): Promise<void> {
+        if (isLast) await this.sendResponse(PAYLOAD_FLAG_ACK | PAYLOAD_FLAG_OK);
+        else await this.sendResponse(PAYLOAD_FLAG_ACK);
         this.finishResponse();
     }
 
     private finishResponse(): void {
-        if (!this.pendingResponse) return;
+        if (this.pendingResponse) {
+            const { module, jsonText } = this.pendingResponse;
 
-        const response: CommandResponse = { ...this.pendingResponse };
+            // Catch unsolicited or pushed status updates
+            if (module === MODULE_STATUS && jsonText) {
+                try {
+                    const data = JSON.parse(jsonText);
+                    const normalizedStatus = {
+                        mode: data.mode,
+                        profile: data.profile,
+                        pairing: data.pairing ?? -1,
+                        bitmap: data.bitmap
+                    };
+                    this.statusUpdateCallbacks.forEach(cb => cb(normalizedStatus));
+                } catch (e) {
+                    console.error('Failed to parse push status JSON:', e);
+                }
+            }
 
-        if (this.pendingResolve) {
-            this.pendingResolve(response);
-            this.pendingResolve = null;
+            if (this.pendingResolve) {
+                this.pendingResolve(this.pendingResponse);
+                this.pendingResolve = null;
+            }
+            this.pendingResponse = null;
         }
-
-        this.pendingResponse = null;
     }
 
-    // ══════════════════════════════════════════════════════════
-    // ── Callback registration ──
-    // ══════════════════════════════════════════════════════════
+    public onLogReceived(callback: LogCallback): void { this.logCallbacks.add(callback); }
+    public offLogReceived(callback: LogCallback): void { this.logCallbacks.delete(callback); }
+    public onRawPacket(callback: RawPacketCallback): void { this.rawPacketCallbacks.add(callback); }
+    public offRawPacket(callback: RawPacketCallback): void { this.rawPacketCallbacks.delete(callback); }
 
-    /** Register for raw packet data (legacy — prefer sendCommand) */
-    public onLogReceived(callback: LogCallback): void {
-        this.logCallbacks.add(callback);
+    // ── Custom Keys ─────────────────────────────────────────────────────────
+
+    /** Fetch the outline list of all custom keys (id + name + mode only). */
+    public async fetchCustomKeys(): Promise<CustomKey[]> {
+        if (!this.isConnected()) return [];
+        const buf = new Uint8Array([MODULE_CONFIG, CFG_CMD_GET, CFG_KEY_CKEYS]);
+        const resp = await this.sendCommand(buf, 5000);
+        if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
+            try {
+                const data = JSON.parse(resp.jsonText);
+                return (data.customKeys ?? []) as CustomKey[];
+            } catch (e) {
+                console.error('[HID] fetchCustomKeys parse error:', e);
+            }
+        }
+        return [];
     }
 
-    public offLogReceived(callback: LogCallback): void {
-        this.logCallbacks.delete(callback);
+    /** Fetch the full definition of a single custom key by ID. */
+    public async fetchCustomKeySingle(id: number): Promise<CustomKey | null> {
+        if (!this.isConnected()) return null;
+        const requestJson = JSON.stringify({ id });
+        const jsonBytes = new TextEncoder().encode(requestJson);
+        const buf = new Uint8Array([MODULE_CONFIG, CFG_CMD_GET, CFG_KEY_CKEY_SINGLE, ...jsonBytes]);
+        const resp = await this.sendCommand(buf, 5000);
+        if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
+            try {
+                return JSON.parse(resp.jsonText) as CustomKey;
+            } catch (e) {
+                console.error('[HID] fetchCustomKeySingle parse error:', e);
+            }
+        }
+        return null;
     }
 
-    /** Register for raw packet events with direction info (for debug UI) */
-    public onRawPacket(callback: RawPacketCallback): void {
-        this.rawPacketCallbacks.add(callback);
+    /** Create or update a custom key on the device. */
+    public async saveCustomKey(ckey: CustomKey): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        // Map TS interface to firmware JSON field names
+        const payload: Record<string, unknown> = {
+            id:   ckey.id,
+            name: ckey.name,
+            mode: ckey.mode,
+        };
+        if (ckey.mode === 0 && ckey.pr) {
+            payload.pr = {
+                pressAction:     ckey.pr.pressAction,
+                releaseAction:   ckey.pr.releaseAction,
+                pressDuration:   ckey.pr.pressDuration,
+                releaseDuration: ckey.pr.releaseDuration,
+            };
+        } else if (ckey.mode === 1 && ckey.ma) {
+            payload.ma = {
+                tapAction:          ckey.ma.tapAction,
+                doubleTapAction:    ckey.ma.doubleTapAction,
+                holdAction:         ckey.ma.holdAction,
+                doubleTapThreshold: ckey.ma.doubleTapThreshold,
+                holdThreshold:      ckey.ma.holdThreshold,
+                tapDuration:        ckey.ma.tapDuration,
+                doubleTapDuration:  ckey.ma.doubleTapDuration,
+                holdDuration:       ckey.ma.holdDuration,
+            };
+        }
+        const jsonBytes = new TextEncoder().encode(JSON.stringify(payload));
+        const buf = new Uint8Array([MODULE_CONFIG, CFG_CMD_SET, CFG_KEY_CKEY_SINGLE, ...jsonBytes]);
+        const resp = await this.sendCommand(buf, 10000);
+        return resp !== null && resp.status === 0;
     }
 
-    public offRawPacket(callback: RawPacketCallback): void {
-        this.rawPacketCallbacks.delete(callback);
+    /** Delete a custom key by ID. */
+    public async deleteCustomKey(id: number): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        const jsonBytes = new TextEncoder().encode(JSON.stringify({ delete: id }));
+        const buf = new Uint8Array([MODULE_CONFIG, CFG_CMD_SET, CFG_KEY_CKEY_SINGLE, ...jsonBytes]);
+        const resp = await this.sendCommand(buf, 5000);
+        return resp !== null && resp.status === 0;
     }
 }
 
