@@ -67,20 +67,17 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
       ESP_LOGI(TAG, "Device connected, handle=%d", event->connect.conn_handle);
       struct ble_gap_conn_desc desc;
       if (ble_gap_conn_find(event->connect.conn_handle, &desc) == 0) {
-        int profile = -1;
-        if (g_pairing_profile != -1) {
-            profile = g_pairing_profile;
-        } else if (g_directed_profile != -1) {
-            profile = g_directed_profile;
-        } else if (desc.our_id_addr.type == BLE_ADDR_RANDOM) {
-            uint8_t base_mac[6] = {0};
-            ble_hs_id_copy_addr(BLE_ADDR_PUBLIC, base_mac, NULL);
-            profile = (desc.our_id_addr.val[0] - base_mac[0]) & 0xFF;
+        int profile = (arg != NULL) ? (int)(intptr_t)arg - 1 : -1;
+        
+        // Fallback for safety (though arg should be reliable if started via our advertise func)
+        if (profile == -1) {
+            if (g_pairing_profile != -1) profile = g_pairing_profile;
+            else if (g_directed_profile != -1) profile = g_directed_profile;
         }
 
         if (profile >= 0 && profile < CFG_BLE_MAX_PROFILES) {
             g_conn_handles[profile] = event->connect.conn_handle;
-            ESP_LOGI(TAG, "Mapped connection %d to profile %d", event->connect.conn_handle, profile);
+            ESP_LOGI(TAG, "Mapped connection %d to profile %d (via arg)", event->connect.conn_handle, profile);
         } else {
             ESP_LOGW(TAG, "Could not map connection to profile!");
         }
@@ -100,13 +97,10 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
     } else {
       ESP_LOGI(TAG, "Connection failed (status %d)", event->connect.status);
       g_directed_profile = -1;
-      // If we were pairing, a failed connection should probably end pairing or we just let it time out.
-      // Crucially, we MUST NOT restart the 30s timer indefinitely here.
-      if (g_pairing_profile != -1) {
-          ESP_LOGW(TAG, "Connect failed during pairing. Stopping pairing mode.");
-          g_pairing_profile = -1;
-      }
-      ble_hid_advertise();
+      // We rely on the DISCONNECT event (which usually follows a failed connect attempt 
+      // if it got as far as a handle assignment) or the user/timeout to restart.
+      // Crucially, we do NOT call ble_hid_advertise() here to avoid tight loops 
+      // with persistent phone connection attempts.
     }
     break;
 
@@ -126,8 +120,13 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
     }
 
     if (reason == BLE_ERR_REM_USER_CONN_TERM || reason == BLE_ERR_CONN_TERM_LOCAL) {
-        ESP_LOGI(TAG, "Manual disconnect detected (normalized reason %d). Starting 10s cooldown.", reason);
-        esp_timer_start_once(s_adv_cooldown_timer, 10000000); // 10 seconds
+        if (g_pairing_profile != -1) {
+            ESP_LOGI(TAG, "Manual disconnect during pairing. Restarting pairing advertisement immediately.");
+            ble_hid_advertise();
+        } else {
+            ESP_LOGI(TAG, "Manual disconnect detected (normalized reason %d). Starting 10s cooldown.", reason);
+            esp_timer_start_once(s_adv_cooldown_timer, 10000000); // 10 seconds
+        }
     } else {
         ble_hid_advertise();
     }
@@ -161,12 +160,13 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
           new_state.selected_profile = g_pairing_profile;
           cfg_ble_save_state(&new_state);
           
+          ESP_LOGI(TAG, "Pairing success. Clearing g_pairing_profile.");
           g_pairing_profile = -1;
           esp_timer_stop(s_pairing_timeout_timer);
       }
     } else {
       ESP_LOGE(TAG, "Encryption failed, status=%d", event->enc_change.status);
-      // If encryption failed during pairing, we should probably clear the pairing state
+      ESP_LOGI(TAG, "Pairing failed. Clearing g_pairing_profile.");
       g_pairing_profile = -1;
       esp_timer_stop(s_pairing_timeout_timer);
     }
@@ -300,7 +300,9 @@ static void ble_hid_advertise(void) {
   uint8_t rand_addr[6];
   memcpy(rand_addr, base_mac, 6);
   rand_addr[5] |= 0xC0; // Set highest 2 bits of MSB for Static Random Address
-  rand_addr[0] = (rand_addr[0] + active_profile) & 0xFF; // Vary LSB 
+  
+  // Rotate LSB based on profile ID AND nonce to change identity on re-pair
+  rand_addr[0] = (rand_addr[0] + active_profile + st->profiles[active_profile].addr_nonce) & 0xFF; 
   
   rc = ble_hs_id_set_rnd(rand_addr);
   if (rc != 0) {
@@ -366,7 +368,7 @@ static void ble_hid_advertise(void) {
            (long)duration_ms, active_profile, 
            (g_pairing_profile != -1) ? "PAIRING" : (g_directed_profile != -1 ? "RECONNECTING" : "BACKGROUND"));
 
-  rc = ble_gap_adv_start(BLE_OWN_ADDR_RANDOM, NULL, duration_ms, &adv_params, ble_hid_gap_event, NULL);
+  rc = ble_gap_adv_start(BLE_OWN_ADDR_RANDOM, NULL, duration_ms, &adv_params, ble_hid_gap_event, (void*)(intptr_t)(active_profile + 1));
   if (rc != 0) {
     ESP_LOGE(TAG, "ble_gap_adv_start failed: %d", rc);
     return;
@@ -516,6 +518,8 @@ void ble_hid_profile_pair(uint8_t profile_id) {
     
     cfg_ble_state_t new_state = *st;
     new_state.profiles[profile_id].is_valid = false;
+    // Rotate the address nonce so we appear as a new device to the phone
+    new_state.profiles[profile_id].addr_nonce++;
     cfg_ble_save_state(&new_state);
 
     if (was_valid) {
@@ -523,9 +527,13 @@ void ble_hid_profile_pair(uint8_t profile_id) {
         ble_addr_t old_addr;
         old_addr.type = st->profiles[profile_id].addr_type;
         memcpy(old_addr.val, st->profiles[profile_id].val, 6);
-        ble_store_util_delete_peer(&old_addr);
+        int rc = ble_store_util_delete_peer(&old_addr);
+        if (rc != 0) {
+            ESP_LOGW(TAG, "[BLE API] ble_store_util_delete_peer failed: %d", rc);
+        }
     }
     
+    ESP_LOGI(TAG, "[BLE API] Setting g_pairing_profile = %d", profile_id);
     g_pairing_profile = profile_id;
     g_directed_profile = -1;
 
@@ -557,7 +565,10 @@ void ble_hid_profile_connect_and_select(uint8_t profile_id) {
             // No need to terminate anything else. They can stay connected.
         } else {
             ESP_LOGI(TAG, "[BLE API] Profile %d not currently connected. Starting reconnection advertisement.", profile_id);
-            g_pairing_profile = -1;
+            if (g_pairing_profile != -1) {
+                ESP_LOGI(TAG, "[BLE API] Clearing g_pairing_profile due to manual select.");
+                g_pairing_profile = -1;
+            }
             g_directed_profile = profile_id;
             ble_hid_advertise(); 
         }
@@ -575,7 +586,10 @@ void ble_hid_profile_toggle_connection(uint8_t profile_id) {
         const cfg_ble_state_t *st = cfg_ble_get_state();
         if (st->profiles[profile_id].is_valid) {
             ESP_LOGI(TAG, "[BLE API] Not connected. Attempting reconnection advertising for profile %d.", profile_id);
-            g_pairing_profile = -1;
+            if (g_pairing_profile != -1) {
+                ESP_LOGI(TAG, "[BLE API] Clearing g_pairing_profile due to manual toggle.");
+                g_pairing_profile = -1;
+            }
             g_directed_profile = profile_id;
             ble_hid_advertise(); 
         } else {

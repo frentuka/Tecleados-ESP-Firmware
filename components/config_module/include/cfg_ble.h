@@ -10,6 +10,7 @@ typedef struct {
     uint8_t addr_type; // e.g. BLE_ADDR_PUBLIC or BLE_ADDR_RANDOM
     uint8_t val[6];    // 6-byte MAC address
     bool is_valid;
+    uint8_t addr_nonce; // Incremented on each re-pair to rotate MAC
 } cfg_ble_profile_t;
 
 typedef struct {

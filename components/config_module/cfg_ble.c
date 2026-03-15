@@ -59,6 +59,9 @@ static bool ble_deserialize(cJSON *json, void *dest) {
                         st->profiles[i].val[j] = (uint8_t)cJSON_GetArrayItem(j_mac, j)->valueint;
                     }
                 }
+
+                cJSON *j_nonce = cJSON_GetObjectItemCaseSensitive(p, "nonce");
+                if (cJSON_IsNumber(j_nonce)) st->profiles[i].addr_nonce = (uint8_t)j_nonce->valueint;
             }
         }
     }
@@ -94,6 +97,8 @@ static cJSON *ble_serialize(const void *src) {
                 cJSON_AddItemToArray(j_mac, cJSON_CreateNumber(st->profiles[i].val[j]));
             }
             cJSON_AddItemToObject(p, "mac", j_mac);
+
+            cJSON_AddNumberToObject(p, "nonce", st->profiles[i].addr_nonce);
         } else {
             cJSON_AddBoolToObject(p, "valid", false);
         }
