@@ -138,6 +138,11 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
     // Note: We now rely more on the master s_pairing_timeout_timer for pairing state,
     // but we still clear flags here for safety.
     g_directed_profile = -1;
+    // Fallback to background advertising if routing is still active and we didn't just stop it manually
+    if (ble_hid_is_routing_active() && event->adv_complete.reason == BLE_HS_ETIMEOUT) {
+        ESP_LOGI(TAG, "Advertising timed out. Restarting in background mode.");
+        ble_hid_advertise();
+    }
     break;
 
   case BLE_GAP_EVENT_ENC_CHANGE:
@@ -580,11 +585,20 @@ void ble_hid_profile_toggle_connection(uint8_t profile_id) {
 }
 
 void ble_hid_set_routing_active(bool active) {
+    bool was_active = ble_hid_is_routing_active();
+    
     cfg_ble_state_t new_state = *cfg_ble_get_state();
     new_state.ble_routing_enabled = active;
     cfg_ble_save_state(&new_state);
 
-    if (!active) {
+    if (active) {
+        if (!was_active) {
+            ESP_LOGI(TAG, "BLE Routing enabled. Triggering snappy reconnection.");
+            // Set directed profile to currently selected for a fast reconnection attempt
+            g_directed_profile = new_state.selected_profile;
+            ble_hid_advertise();
+        }
+    } else {
         ESP_LOGI(TAG, "BLE Routing disabled. Terminating all connections and stopping advertising.");
         for (int i = 0; i < CFG_BLE_MAX_PROFILES; i++) {
             if (g_conn_handles[i] != BLE_HS_CONN_HANDLE_NONE) {
