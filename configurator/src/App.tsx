@@ -391,6 +391,52 @@ function App() {
     }
   };
 
+  const fetchSingleCustomKey = useCallback(async (id: number): Promise<CustomKey | null> => {
+    if (!isConnected) return null;
+    try {
+      const detail = await hidService.fetchCustomKeySingle(id);
+      if (detail) {
+        setCustomKeys(prev => {
+          const newList = prev.map(k => k.id === id ? detail : k);
+          return [...newList].sort((a, b) => a.id - b.id);
+        });
+        return detail;
+      }
+    } catch (e) {
+      console.error(`[App] Failed to fetch custom key ${id}:`, e);
+    }
+    return null;
+  }, [isConnected]);
+
+  const fetchCustomKeys = useCallback(async () => {
+    if (!isConnected) return;
+    setIsFetching(true);
+    try {
+      const outline = await hidService.fetchCustomKeys();
+      setCustomKeys(outline.sort((a, b) => a.id - b.id));
+      
+      setLogs(prev => [...prev, { id: getNextLogId(), timestamp: new Date(), data: new Uint8Array(0), text: `Found ${outline.length} custom keys. Fetching details...` }]);
+
+      // Sequentially fetch details for each custom key
+      for (const k of outline) {
+        await fetchSingleCustomKey(k.id);
+      }
+      setLogs(prev => [...prev, { id: getNextLogId(), timestamp: new Date(), data: new Uint8Array(0), text: `All custom key details loaded.` }]);
+    } catch (e) {
+      console.error('[App] Failed to fetch custom keys:', e);
+    }
+    setIsFetching(false);
+  }, [isConnected, fetchSingleCustomKey]);
+
+  useEffect(() => {
+    if (isConnected) {
+      fetchStatus();
+      fetchMacroLimits();
+      fetchCustomKeys();
+    }
+  }, [isConnected, fetchStatus, fetchMacroLimits, fetchCustomKeys]);
+
+
   const handleSaveCustomKey = async (ckey: CustomKey): Promise<void> => {
     let ckeyToSave = ckey;
     if (ckey.id === -1) {
@@ -418,14 +464,6 @@ function App() {
     if (!ok) throw new Error('Failed to delete custom key from device');
     setCustomKeys(prev => prev.filter(k => k.id !== id));
   };
-
-  useEffect(() => {
-    if (isConnected) {
-      fetchStatus();
-      fetchMacroLimits();
-      hidService.fetchCustomKeys().then(setCustomKeys);
-    }
-  }, [isConnected, fetchStatus, fetchMacroLimits]);
 
 
   useEffect(() => {
@@ -693,7 +731,7 @@ function App() {
               isDeveloperMode={isDeveloperMode}
               onSave={handleSaveCustomKey}
               onDelete={handleDeleteCustomKey}
-              onReload={() => hidService.fetchCustomKeys().then(setCustomKeys)}
+              onReload={fetchCustomKeys}
             />
           </div>
 

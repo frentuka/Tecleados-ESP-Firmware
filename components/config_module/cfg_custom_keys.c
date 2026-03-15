@@ -25,11 +25,13 @@ static bool deserialize_pr(cJSON *pr_obj, cfg_ckey_pr_t *pr) {
     cJSON *ra = cJSON_GetObjectItem(pr_obj, "releaseAction");
     cJSON *pd = cJSON_GetObjectItem(pr_obj, "pressDuration");
     cJSON *rd = cJSON_GetObjectItem(pr_obj, "releaseDuration");
+    cJSON *wf = cJSON_GetObjectItem(pr_obj, "waitForFinish");
 
     pr->press_action                = cJSON_IsNumber(pa) ? (uint32_t)pa->valuedouble   : 0;
     pr->release_action              = cJSON_IsNumber(ra) ? (uint32_t)ra->valuedouble   : 0;
     pr->press_tap_release_delay_ms  = cJSON_IsNumber(pd) ? (uint32_t)pd->valuedouble   : 20;
     pr->release_tap_release_delay_ms= cJSON_IsNumber(rd) ? (uint32_t)rd->valuedouble   : 20;
+    pr->wait_for_finish             = cJSON_IsTrue(wf);
     return true;
 }
 
@@ -99,6 +101,7 @@ static cJSON *serialize_pr(const cfg_ckey_pr_t *pr) {
     cJSON_AddNumberToObject(obj, "releaseAction",   (double)pr->release_action);
     cJSON_AddNumberToObject(obj, "pressDuration",   (double)pr->press_tap_release_delay_ms);
     cJSON_AddNumberToObject(obj, "releaseDuration", (double)pr->release_tap_release_delay_ms);
+    cJSON_AddBoolToObject(obj, "waitForFinish",     pr->wait_for_finish);
     return obj;
 }
 

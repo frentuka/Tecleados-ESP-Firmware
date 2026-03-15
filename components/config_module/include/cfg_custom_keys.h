@@ -31,6 +31,7 @@ typedef struct {
     uint32_t release_action;
     uint32_t press_tap_release_delay_ms;
     uint32_t release_tap_release_delay_ms;
+    bool     wait_for_finish;
 } cfg_ckey_pr_t;
 
 /**

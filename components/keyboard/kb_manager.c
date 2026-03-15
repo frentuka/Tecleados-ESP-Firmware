@@ -285,7 +285,7 @@ void kb_manager_start(void) {
   vTaskDelay(pdMS_TO_TICKS(500));
   
   // Create kb_mgr task in Internal RAM
-  BaseType_t ret = xTaskCreateWithCaps(kb_manager_task, "kb_mgr", 4096, NULL, 5, NULL, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  BaseType_t ret = xTaskCreateWithCaps(kb_manager_task, "kb_mgr", 6144, NULL, 5, NULL, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   if (ret != pdPASS) {
       ESP_LOGE(TAG, "FAILED TO CREATE kb_manager_task! Error: %d", (int)ret);
   }

@@ -1030,7 +1030,23 @@ h3 {
   opacity: 0.6;
 }
 
-.preview-sleep-icon {
+/* Custom Key specific preview tints */
+.preview-el-tap {
+  border-color: rgba(88, 166, 255, 0.15);
+  color: rgba(180, 210, 255, 0.85);
+}
+
+.preview-el-dtap {
+  border-color: rgba(104, 211, 145, 0.15);
+  color: rgba(180, 255, 210, 0.85);
+}
+
+.preview-el-hold {
+  border-color: rgba(163, 113, 247, 0.15);
+  color: rgba(210, 190, 255, 0.85);
+}
+
+village .preview-sleep-icon {
   font-size: 0.5rem;
   line-height: 1;
 }
@@ -2471,35 +2487,38 @@ h3 {
 
 .ckey-card {
   position: relative;
-  padding: 1.15rem 1.25rem;
-  background: rgba(22, 27, 34, 0.4);
-  border: 1px solid var(--border-color);
-  border-radius: 14px;
-  cursor: pointer;
-  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  padding: 1rem 1.15rem;
+  background: rgba(22, 27, 34, 0.5);
   display: flex;
   flex-direction: column;
-  gap: 0.85rem;
-  border-left: 3px solid transparent;
+  border: 1px solid var(--border-color);
+  transition: all 0.2s;
+  border-radius: 12px;
+  min-height: 170px;
+  max-height: 170px;
+  overflow: hidden;
+  cursor: pointer;
 }
 
 .ckey-card:hover {
   border-color: var(--accent-color);
-  background: rgba(88, 166, 255, 0.05);
   transform: translateY(-2px);
-  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+  background: rgba(88, 166, 255, 0.05);
 }
 
 .ckey-card-selected {
   border-color: var(--accent-color);
-  border-left-color: var(--accent-color);
   background: rgba(88, 166, 255, 0.08) !important;
+  box-shadow: 0 0 15px rgba(88, 166, 255, 0.1), inset 0 0 10px rgba(88, 166, 255, 0.05);
 }
 
-.ckey-card-header {
+village .ckey-card-header {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+  flex-shrink: 0;
+  padding-right: 2.5rem;
 }
 
 .ckey-card-title-row {
@@ -2511,47 +2530,82 @@ h3 {
 .ckey-card-header h4 {
   margin: 0;
   font-size: 1rem;
-  font-weight: 600;
   color: var(--text-primary);
+  flex: 1;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .ckey-card-badge {
-  font-size: 0.65rem;
-  font-weight: 700;
-  padding: 2px 8px;
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  height: 22px;
+  min-width: 44px;
   border-radius: 6px;
-  text-transform: uppercase;
+  font-size: 0.85rem;
+  font-weight: 800;
+  box-sizing: border-box;
 }
 
 .badge-pr {
-  background: rgba(88, 166, 255, 0.15);
-  color: #58a6ff;
+  background: rgba(88, 166, 255, 0.12);
   border: 1px solid rgba(88, 166, 255, 0.3);
+  color: #58a6ff;
 }
 
 .badge-ma {
-  background: rgba(104, 211, 145, 0.15);
-  color: #68d391;
+  background: rgba(104, 211, 145, 0.12);
   border: 1px solid rgba(104, 211, 145, 0.3);
+  color: #68d391;
 }
 
-.ckey-card-id-dev {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.65rem;
-  color: var(--text-secondary);
-  opacity: 0.45;
-  margin-top: 2px;
+.ckey-id {
+  position: absolute;
+  bottom: 0.75rem;
+  left: 1.15rem;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.8rem;
+  color: var(--accent-color);
+  background: rgba(88, 166, 255, 0.1);
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  pointer-events: none;
 }
 
 /* ── Preview sequence ── */
 
 .ck-preview-seq {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
   gap: 6px;
+  align-content: flex-start;
+  margin-top: 0.25rem;
+}
+
+.ck-preview-seq .preview-el {
+  font-size: 0.85rem;
+  padding: 0.3rem 0.65rem;
+  border-radius: 6px;
+  gap: 4px;
+  border-width: 1px;
+}
+
+.ck-preview-seq .preview-el-action {
+  font-size: 0.7rem;
+  font-weight: 800;
+  opacity: 0.6;
+}
+
+.ck-preview-seq .preview-el-sleep {
+  font-size: 0.6rem;
+  margin-left: 1px;
 }
 
 .ck-preview-item {
@@ -2758,9 +2812,79 @@ h3 {
   border: 1px solid rgba(255, 255, 255, 0.04);
 }
 
-.ckey-duration-row label {
-  font-size: 0.82rem;
+.ckey-duration-row-inline {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding-bottom: 2px;
+}
+
+.ckey-inline-group {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.75rem;
+}
+
+.ckey-inline-group .ckey-action-slot {
+  flex: 1;
+}
+
+.ckey-duration-icon-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   color: var(--text-secondary);
+  cursor: help;
+  transition: all 0.2s;
+}
+
+.ckey-duration-icon-wrapper:hover {
+  background: rgba(88, 166, 255, 0.1);
+  border-color: rgba(88, 166, 255, 0.3);
+  color: var(--accent-color);
+}
+
+.ckey-duration-input {
+  width: 65px;
+  padding: 0.35rem 0.5rem;
+  background: rgba(13, 17, 23, 0.85) !important;
+  border: 1px solid rgba(88, 166, 255, 0.25) !important;
+  border-radius: 6px;
+  color: var(--accent-color);
+  font-size: 0.9rem;
+  font-weight: 600;
+  font-family: 'JetBrains Mono', 'Monaco', monospace;
+  text-align: center;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  outline: none;
+}
+
+.ckey-duration-input:hover {
+  border-color: rgba(88, 166, 255, 0.45) !important;
+  background: rgba(13, 17, 23, 0.95) !important;
+}
+
+.ckey-duration-input:focus {
+  border-color: var(--accent-color) !important;
+  background: #000 !important;
+  box-shadow: 0 0 12px rgba(88, 166, 255, 0.15);
+}
+
+/* Hide number spinners */
+.ckey-duration-input::-webkit-outer-spin-button,
+.ckey-duration-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.ckey-duration-input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
 }
 
 .ckey-duration-row input[type="number"] {
@@ -2808,4 +2932,41 @@ h3 {
 .ckey-hint strong {
   color: var(--accent-color);
 }
-
+
+/* Custom Key Toggle Inline */
+.ckey-toggle-inline {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-left: 0.5rem;
+    padding: 0.2rem 0.5rem;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 6px;
+    cursor: pointer;
+    user-select: none;
+    transition: all 0.2s;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.ckey-toggle-inline:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.ckey-toggle-inline input {
+    cursor: pointer;
+    accent-color: #4CAF50;
+    margin: 0;
+}
+
+.ckey-toggle-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #8b949e;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.ckey-toggle-inline input:checked + .ckey-toggle-label {
+    color: #4CAF50;
+}

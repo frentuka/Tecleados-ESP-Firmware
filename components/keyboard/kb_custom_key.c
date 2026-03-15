@@ -5,6 +5,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_heap_caps.h"
 
 #include "cfg_custom_keys.h"
 #include "kb_layout.h"
@@ -15,8 +16,9 @@ static const char *TAG = "kb_ckey";
 
 /* ---- Runtime state ---- */
 
-static cfg_custom_key_t s_ckeys[CFG_CKEYS_MAX_COUNT];
 static size_t           s_ckey_count = 0;
+static cfg_custom_key_t *s_ckeys = NULL;
+static TickType_t       *s_press_end_tick = NULL;
 
 /* ---- Lookup ---- */
 
@@ -32,37 +34,27 @@ static const cfg_custom_key_t *find_ckey(uint16_t id) {
    PressRelease mode
    ================================================================ */
 
-typedef struct {
-    uint16_t action_code;
-    uint32_t duration_ms;
-} ckey_tap_item_t;
-
-/* A small dedicated queue for PR taps so we never block kb_manager_task */
-static QueueHandle_t s_pr_queue      = NULL;
-static TaskHandle_t  s_pr_task_handle = NULL;
-
-static void pr_tap_task(void *arg) {
-    ckey_tap_item_t item;
-    while (1) {
-        if (xQueueReceive(s_pr_queue, &item, portMAX_DELAY)) {
-            kb_macro_fire_tap(item.action_code, item.duration_ms);
-        }
-    }
-}
-
-static void fire_pr_tap(uint16_t action_code, uint32_t duration_ms) {
-    if (!s_pr_queue) return;
-    ckey_tap_item_t item = { .action_code = action_code, .duration_ms = duration_ms };
-    xQueueSend(s_pr_queue, &item, 0);
+static void fire_pr_tap(uint16_t action_code, uint32_t duration_ms, uint32_t delay_ms) {
+    kb_macro_fire_tap(action_code, duration_ms, delay_ms);
 }
 
 static void process_pr(const cfg_custom_key_t *ck, bool is_pressed) {
+    uint16_t id = ck->id;
     if (is_pressed) {
-        fire_pr_tap((uint16_t)ck->rules.pr.press_action,
-                    ck->rules.pr.press_tap_release_delay_ms);
+        uint32_t dur = ck->rules.pr.press_tap_release_delay_ms;
+        s_press_end_tick[id] = xTaskGetTickCount() + pdMS_TO_TICKS(dur);
+        fire_pr_tap((uint16_t)ck->rules.pr.press_action, dur, 0);
     } else {
+        uint32_t delay = 0;
+        if (ck->rules.pr.wait_for_finish) {
+            TickType_t now = xTaskGetTickCount();
+            if (now < s_press_end_tick[id]) {
+                delay = pdTICKS_TO_MS(s_press_end_tick[id] - now);
+            }
+        }
         fire_pr_tap((uint16_t)ck->rules.pr.release_action,
-                    ck->rules.pr.release_tap_release_delay_ms);
+                    ck->rules.pr.release_tap_release_delay_ms,
+                    delay);
     }
 }
 
@@ -106,15 +98,15 @@ static void ckey_action_event_cb(uint16_t action_code, kb_action_ev_t event) {
     switch (event) {
     case KB_EV_SINGLE_TAP:
         fire_pr_tap((uint16_t)ck->rules.ma.tap_action,
-                    ck->rules.ma.tap_release_delay_ms);
+                    ck->rules.ma.tap_release_delay_ms, 0);
         break;
     case KB_EV_DOUBLE_TAP:
         fire_pr_tap((uint16_t)ck->rules.ma.double_tap_action,
-                    ck->rules.ma.double_tap_release_delay_ms);
+                    ck->rules.ma.double_tap_release_delay_ms, 0);
         break;
     case KB_EV_HOLD:
         fire_pr_tap((uint16_t)ck->rules.ma.hold_action,
-                    ck->rules.ma.hold_release_delay_ms);
+                    ck->rules.ma.hold_release_delay_ms, 0);
         break;
     default:
         break;
@@ -149,21 +141,26 @@ void kb_custom_key_reload(const char *key) {
 }
 
 void kb_custom_key_init(void) {
-    /* Create the PR tap dispatch queue + task */
-    s_pr_queue = xQueueCreate(16, sizeof(ckey_tap_item_t));
-    if (!s_pr_queue) {
-        ESP_LOGE(TAG, "Failed to create PR tap queue");
+    /* Allocate runtime state in PSRAM */
+    s_ckeys = heap_caps_malloc(sizeof(cfg_custom_key_t) * CFG_CKEYS_MAX_COUNT, MALLOC_CAP_SPIRAM);
+    s_press_end_tick = heap_caps_malloc(sizeof(TickType_t) * CFG_CKEYS_MAX_COUNT, MALLOC_CAP_SPIRAM);
+
+    if (!s_ckeys || !s_press_end_tick) {
+        ESP_LOGE(TAG, "Failed to allocate custom key memory in PSRAM");
+        if (!s_ckeys) s_ckeys = malloc(sizeof(cfg_custom_key_t) * CFG_CKEYS_MAX_COUNT);
+        if (!s_press_end_tick) s_press_end_tick = malloc(sizeof(TickType_t) * CFG_CKEYS_MAX_COUNT);
     }
-    xTaskCreateWithCaps(pr_tap_task, "kb_ck_pr", 4096, NULL, 4,
-                        &s_pr_task_handle,
-                        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+
+    if (s_press_end_tick) {
+        memset(s_press_end_tick, 0, sizeof(TickType_t) * CFG_CKEYS_MAX_COUNT);
+    }
 
     /* Chain-install our event callback AFTER the system-action engine has been
      * set up by kb_macro_init() (which calls kb_system_action_register_cb()).
      * We save the previous callback and forward non-CKey events to it. */
     s_prev_action_cb = kb_system_action_get_cb();
     kb_system_action_register_cb(ckey_action_event_cb);
-
+ 
     /* Load initial table */
     kb_custom_key_reload("init");
 }

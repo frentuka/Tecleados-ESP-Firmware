@@ -1,6 +1,7 @@
 #include "kb_macro.h"
 
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
@@ -24,6 +25,7 @@ static bool s_is_fn1_held = false;
 static bool s_is_fn2_held = false;
 static SemaphoreHandle_t s_v_nkro_mutex = NULL;
 static QueueHandle_t s_macro_queue = NULL;
+static QueueHandle_t s_tap_queue = NULL;
 
 /* Sentinel: a queue item with this macro_id is a "fire tap" request,
  * not a real macro. Fields tap_action and tap_duration_ms carry the payload. */
@@ -34,6 +36,7 @@ typedef struct {
   bool is_pressed;        // true=key down, false=key up
   uint16_t tap_action;    // used when macro_id == MACRO_ID_FIRE_TAP
   uint32_t tap_duration_ms; // used when macro_id == MACRO_ID_FIRE_TAP
+  uint32_t tap_delay_ms;    // used when macro_id == MACRO_ID_FIRE_TAP
 } macro_queue_item_t;
 
 // Per-macro runtime state for execution mode logic
@@ -47,7 +50,7 @@ typedef struct {
 } macro_rt_state_t;
 
 static macro_rt_state_t s_rt_state[CFG_MACROS_MAX_COUNT];
-static cfg_macro_list_t s_macros;
+static cfg_macro_list_t *s_macros = NULL;
 
 static inline void set_bit(uint8_t *bitmap, size_t bit_index) {
   bitmap[bit_index >> 3] |= (uint8_t)(1U << (bit_index & 7U));
@@ -106,9 +109,9 @@ static bool execute_macro_cancellable(uint16_t macro_id, uint8_t depth,
   }
 
   const cfg_macro_t *m = NULL;
-  for (size_t i = 0; i < s_macros.count; i++) {
-    if (s_macros.macros[i].id == macro_id) {
-      m = &s_macros.macros[i];
+  for (size_t i = 0; i < s_macros->count; i++) {
+    if (s_macros->macros[i].id == macro_id) {
+      m = &s_macros->macros[i];
       break;
     }
   }
@@ -206,10 +209,10 @@ static bool execute_macro_cancellable(uint16_t macro_id, uint8_t depth,
 
 // Find a macro's config and its runtime state index
 static const cfg_macro_t *find_macro(uint16_t macro_id, size_t *out_idx) {
-  for (size_t i = 0; i < s_macros.count; i++) {
-    if (s_macros.macros[i].id == macro_id) {
+  for (size_t i = 0; i < s_macros->count; i++) {
+    if (s_macros->macros[i].id == macro_id) {
       if (out_idx) *out_idx = i;
-      return &s_macros.macros[i];
+      return &s_macros->macros[i];
     }
   }
   return NULL;
@@ -219,18 +222,6 @@ static void macro_task(void *arg) {
   macro_queue_item_t item;
   while (1) {
     if (xQueueReceive(s_macro_queue, &item, portMAX_DELAY)) {
-
-      /* ---- Handle fire-tap sentinel ---- */
-      if (item.macro_id == MACRO_ID_FIRE_TAP) {
-        uint32_t dur = item.tap_duration_ms > 0 ? item.tap_duration_ms : 10;
-        kb_macro_process_action(item.tap_action, true);
-        kb_macro_send_report();
-        vTaskDelay(pdMS_TO_TICKS(dur));
-        kb_macro_process_action(item.tap_action, false);
-        kb_macro_send_report();
-        continue;
-      }
-
       if (!item.is_pressed) continue; // Release is handled inline below
 
       size_t idx = 0;
@@ -301,10 +292,27 @@ static void macro_task(void *arg) {
   }
 }
 
+static void tap_worker_task(void *arg) {
+  macro_queue_item_t item;
+  while (1) {
+    if (xQueueReceive(s_tap_queue, &item, portMAX_DELAY)) {
+      if (item.tap_delay_ms > 0) {
+        vTaskDelay(pdMS_TO_TICKS(item.tap_delay_ms));
+      }
+      uint32_t dur = item.tap_duration_ms > 0 ? item.tap_duration_ms : 10;
+      kb_macro_process_action(item.tap_action, true);
+      kb_macro_send_report();
+      vTaskDelay(pdMS_TO_TICKS(dur));
+      kb_macro_process_action(item.tap_action, false);
+      kb_macro_send_report();
+    }
+  }
+}
+
 // Reload macros from storage
 static void on_macros_updated(const char *key) {
     ESP_LOGI(TAG, "Reloading macros from storage...");
-    macros_load_all(&s_macros);
+    macros_load_all(s_macros);
     // Reset all runtime state on reload
     memset(s_rt_state, 0, sizeof(s_rt_state));
 }
@@ -318,13 +326,36 @@ void kb_macro_init(void) {
   s_active_layer = KB_LAYER_BASE;
   s_v_nkro_mutex = xSemaphoreCreateMutex();
   s_macro_queue = xQueueCreate(32, sizeof(macro_queue_item_t)); // Reverted to 32 to prevent massive "trailing" execution 
+  s_tap_queue = xQueueCreate(32, sizeof(macro_queue_item_t));
   
+  // Allocate macro cache in PSRAM
+  s_macros = heap_caps_malloc(sizeof(cfg_macro_list_t), MALLOC_CAP_SPIRAM);
+  if (!s_macros) {
+    ESP_LOGE(TAG, "Failed to allocate macro cache in PSRAM! Falling back to internal RAM.");
+    s_macros = malloc(sizeof(cfg_macro_list_t));
+  }
+  
+  if (s_macros) {
+    memset(s_macros, 0, sizeof(cfg_macro_list_t));
+    macros_load_all(s_macros);
+  } else {
+    ESP_LOGE(TAG, "FATAL: Could not allocate macro memory anywhere!");
+  }
+
   // Re-register macro handler with our update callback
   cfgmod_register_kind(CFGMOD_KIND_MACRO, macros_default, macros_deserialize,
                        macros_serialize, on_macros_updated, sizeof(cfg_macro_list_t));
-
-  macros_load_all(&s_macros);
-  xTaskCreateWithCaps(macro_task, "kb_macro", 3072, NULL, 4, NULL, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  
+  // Main macro task
+  xTaskCreateWithCaps(macro_task, "kb_macro", 5120, NULL, 4, NULL, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  
+  // Fire-tap workers (4 to allow some parallelism during delays)
+  for (int i = 0; i < 4; i++) {
+    char name[12];
+    snprintf(name, sizeof(name), "kb_tap_%d", i);
+    xTaskCreateWithCaps(tap_worker_task, name, 3072, NULL, 4, NULL, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  }
+  
   ESP_LOGI(TAG, "Macro engine initialized");
 }
 
@@ -559,13 +590,14 @@ void kb_macro_process_action(uint16_t action_code, bool is_pressed) {
   }
 }
 
-void kb_macro_fire_tap(uint16_t action_code, uint32_t duration_ms) {
-  if (!s_macro_queue) return;
+void kb_macro_fire_tap(uint16_t action_code, uint32_t duration_ms, uint32_t delay_ms) {
+  if (!s_tap_queue) return;
   macro_queue_item_t item = {
     .macro_id       = MACRO_ID_FIRE_TAP,
     .is_pressed     = false, // unused
     .tap_action     = action_code,
     .tap_duration_ms= duration_ms,
+    .tap_delay_ms   = delay_ms,
   };
-  xQueueSend(s_macro_queue, &item, 0);
+  xQueueSend(s_tap_queue, &item, 0);
 }

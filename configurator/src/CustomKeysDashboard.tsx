@@ -24,6 +24,7 @@ function makeDefaultPR(): CustomKeyPR {
         releaseAction:   0,
         pressDuration:   20,
         releaseDuration: 20,
+        waitForFinish:   false,
     };
 }
 
@@ -43,6 +44,14 @@ function makeDefaultMA(): CustomKeyMA {
 function makeNewCKey(id: number = -1): CustomKey {
     return { id, name: '', mode: 0, pr: makeDefaultPR() };
 }
+
+// ── Icons ───────────────────────────────────────────────────────────────────
+const ClockIcon = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="ckey-svg-icon">
+        <circle cx="12" cy="12" r="10" />
+        <polyline points="12 6 12 12 16 14" />
+    </svg>
+);
 
 // ── Action slot button ─────────────────────────────────────────────────────────
 
@@ -88,13 +97,15 @@ function CKeyPreviewSequence({ ck, macros }: { ck: CustomKey, macros: Macro[] })
     if (ck.mode === 0 && ck.pr) {
         return (
             <div className="ck-preview-seq">
-                <div className="ck-preview-item" title="Press">
-                    <span className="ck-preview-label">P:</span>
-                    <span className="ck-preview-val">{getKeyName(ck.pr.pressAction, macros)}</span>
+                <div className="preview-el preview-el-press" title="Press Action">
+                    <span className="preview-el-action">P</span>
+                    {getKeyName(ck.pr.pressAction, macros)}
+                    {ck.pr.pressDuration > 0 && <span className="preview-el-sleep">({ck.pr.pressDuration}ms)</span>}
                 </div>
-                <div className="ck-preview-item" title="Release">
-                    <span className="ck-preview-label">R:</span>
-                    <span className="ck-preview-val">{getKeyName(ck.pr.releaseAction, macros)}</span>
+                <div className="preview-el preview-el-release" title="Release Action">
+                    <span className="preview-el-action">R</span>
+                    {getKeyName(ck.pr.releaseAction, macros)}
+                    {ck.pr.releaseDuration > 0 && <span className="preview-el-sleep">({ck.pr.releaseDuration}ms)</span>}
                 </div>
             </div>
         );
@@ -102,17 +113,20 @@ function CKeyPreviewSequence({ ck, macros }: { ck: CustomKey, macros: Macro[] })
     if (ck.mode === 1 && ck.ma) {
         return (
             <div className="ck-preview-seq">
-                 <div className="ck-preview-item" title="Tap">
-                    <span className="ck-preview-label">T:</span>
-                    <span className="ck-preview-val">{getKeyName(ck.ma.tapAction, macros)}</span>
+                <div className="preview-el preview-el-tap" title="Tap Action">
+                    <span className="preview-el-action">T</span>
+                    {getKeyName(ck.ma.tapAction, macros)}
+                    {ck.ma.tapDuration > 0 && <span className="preview-el-sleep">({ck.ma.tapDuration}ms)</span>}
                 </div>
-                <div className="ck-preview-item" title="Double Tap">
-                    <span className="ck-preview-label">2T:</span>
-                    <span className="ck-preview-val">{getKeyName(ck.ma.doubleTapAction, macros)}</span>
+                <div className="preview-el preview-el-dtap" title="Double Tap Action">
+                    <span className="preview-el-action">2T</span>
+                    {getKeyName(ck.ma.doubleTapAction, macros)}
+                    {ck.ma.doubleTapDuration > 0 && <span className="preview-el-sleep">({ck.ma.doubleTapDuration}ms)</span>}
                 </div>
-                <div className="ck-preview-item" title="Hold">
-                    <span className="ck-preview-label">H:</span>
-                    <span className="ck-preview-val">{getKeyName(ck.ma.holdAction, macros)}</span>
+                <div className="preview-el preview-el-hold" title="Hold Action">
+                    <span className="preview-el-action">H</span>
+                    {getKeyName(ck.ma.holdAction, macros)}
+                    {ck.ma.holdDuration > 0 && <span className="preview-el-sleep">({ck.ma.holdDuration}ms)</span>}
                 </div>
             </div>
         );
@@ -132,22 +146,23 @@ function CKeyCard({ ck, isSelected, onClick, macros, isDeveloperMode }: {
             className={`ckey-card glass-panel ${isSelected ? 'ckey-card-selected' : ''}`}
             onClick={onClick}
         >
+            <span className={`ckey-card-badge ${ck.mode === 0 ? 'badge-pr' : 'badge-ma'}`}>
+                {ck.mode === 0 ? 'PR' : 'MA'}
+            </span>
+
             <div className="ckey-card-header">
-                <div className="ckey-card-title-row">
-                    <h4>{ck.name || `CK[${ck.id}]`}</h4>
-                    <span className={`ckey-card-badge ${ck.mode === 0 ? 'badge-pr' : 'badge-ma'}`}>
-                        {ck.mode === 0 ? 'PR' : 'MA'}
-                    </span>
-                </div>
-                {isDeveloperMode && (
-                    <div className="ckey-card-id-dev">
-                        ID: 0x{(CKEY_BASE + ck.id).toString(16).toUpperCase()}
-                    </div>
-                )}
+                <h4>{ck.name || `CK[${ck.id}]`}</h4>
             </div>
+
             <div className="ckey-card-body">
                 <CKeyPreviewSequence ck={ck} macros={macros} />
             </div>
+
+            {isDeveloperMode && (
+                <div className="ckey-id">
+                    ID: 0x{(CKEY_BASE + ck.id).toString(16).toUpperCase()}
+                </div>
+            )}
         </div>
     );
 }
@@ -220,33 +235,51 @@ function CKeyEditorModal({ ckey, macros, isSaving, error, onSave, onDelete, onCl
                         <div className="ckey-section">
                             <h4 className="ckey-section-title">Actions</h4>
                             <div className="ckey-action-grid">
-                                <ActionSlot
-                                    label="On Press"
-                                    value={local.pr?.pressAction || 0}
-                                    macros={macros}
-                                    onChange={v => handlePR('pressAction', v)}
-                                />
-                                <div className="ckey-duration-row">
-                                    <label>Action Duration (ms)</label>
-                                    <input
-                                        type="number"
-                                        value={local.pr?.pressDuration || 20}
-                                        onChange={e => handlePR('pressDuration', parseInt(e.target.value) || 0)}
+                                <div className="ckey-inline-group">
+                                    <ActionSlot
+                                        label="On Press"
+                                        value={local.pr?.pressAction || 0}
+                                        macros={macros}
+                                        onChange={v => handlePR('pressAction', v)}
                                     />
+                                    <div className="ckey-duration-row-inline">
+                                        <div className="ckey-duration-icon-wrapper" title="Press Duration">
+                                            <ClockIcon />
+                                        </div>
+                                        <input
+                                            type="number"
+                                            className="ckey-duration-input"
+                                            value={local.pr?.pressDuration || 20}
+                                            onChange={e => handlePR('pressDuration', parseInt(e.target.value) || 0)}
+                                        />
+                                    </div>
                                 </div>
-                                <ActionSlot
-                                    label="On Release"
-                                    value={local.pr?.releaseAction || 0}
-                                    macros={macros}
-                                    onChange={v => handlePR('releaseAction', v)}
-                                />
-                                <div className="ckey-duration-row">
-                                    <label>Action Duration (ms)</label>
-                                    <input
-                                        type="number"
-                                        value={local.pr?.releaseDuration || 20}
-                                        onChange={e => handlePR('releaseDuration', parseInt(e.target.value) || 0)}
+                                <div className="ckey-inline-group">
+                                    <ActionSlot
+                                        label="On Release"
+                                        value={local.pr?.releaseAction || 0}
+                                        macros={macros}
+                                        onChange={v => handlePR('releaseAction', v)}
                                     />
+                                    <div className="ckey-duration-row-inline">
+                                        <div className="ckey-duration-icon-wrapper" title="Press Duration">
+                                            <ClockIcon />
+                                        </div>
+                                        <input
+                                            type="number"
+                                            className="ckey-duration-input"
+                                            value={local.pr?.releaseDuration || 20}
+                                            onChange={e => handlePR('releaseDuration', parseInt(e.target.value) || 0)}
+                                        />
+                                        <label className="ckey-toggle-inline" title="Wait for press action to finish">
+                                            <input 
+                                                type="checkbox" 
+                                                checked={local.pr?.waitForFinish || false}
+                                                onChange={e => handlePR('waitForFinish', e.target.checked)}
+                                            />
+                                            <span className="ckey-toggle-label">Wait</span>
+                                        </label>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -256,24 +289,63 @@ function CKeyEditorModal({ ckey, macros, isSaving, error, onSave, onDelete, onCl
                         <div className="ckey-section">
                             <h4 className="ckey-section-title">Actions</h4>
                             <div className="ckey-action-grid">
-                                <ActionSlot
-                                    label="Single Tap"
-                                    value={local.ma?.tapAction || 0}
-                                    macros={macros}
-                                    onChange={v => handleMA('tapAction', v)}
-                                />
-                                <ActionSlot
-                                    label="Double Tap"
-                                    value={local.ma?.doubleTapAction || 0}
-                                    macros={macros}
-                                    onChange={v => handleMA('doubleTapAction', v)}
-                                />
-                                <ActionSlot
-                                    label="Hold"
-                                    value={local.ma?.holdAction || 0}
-                                    macros={macros}
-                                    onChange={v => handleMA('holdAction', v)}
-                                />
+                                <div className="ckey-inline-group">
+                                    <ActionSlot
+                                        label="Single Tap"
+                                        value={local.ma?.tapAction || 0}
+                                        macros={macros}
+                                        onChange={v => handleMA('tapAction', v)}
+                                    />
+                                    <div className="ckey-duration-row-inline">
+                                        <div className="ckey-duration-icon-wrapper" title="Press Duration">
+                                            <ClockIcon />
+                                        </div>
+                                        <input
+                                            type="number"
+                                            className="ckey-duration-input"
+                                            value={local.ma?.tapDuration || 20}
+                                            onChange={e => handleMA('tapDuration', parseInt(e.target.value) || 0)}
+                                        />
+                                    </div>
+                                </div>
+                                <div className="ckey-inline-group">
+                                    <ActionSlot
+                                        label="Double Tap"
+                                        value={local.ma?.doubleTapAction || 0}
+                                        macros={macros}
+                                        onChange={v => handleMA('doubleTapAction', v)}
+                                    />
+                                    <div className="ckey-duration-row-inline">
+                                        <div className="ckey-duration-icon-wrapper" title="Press Duration">
+                                            <ClockIcon />
+                                        </div>
+                                        <input
+                                            type="number"
+                                            className="ckey-duration-input"
+                                            value={local.ma?.doubleTapDuration || 20}
+                                            onChange={e => handleMA('doubleTapDuration', parseInt(e.target.value) || 0)}
+                                        />
+                                    </div>
+                                </div>
+                                <div className="ckey-inline-group">
+                                    <ActionSlot
+                                        label="Hold"
+                                        value={local.ma?.holdAction || 0}
+                                        macros={macros}
+                                        onChange={v => handleMA('holdAction', v)}
+                                    />
+                                    <div className="ckey-duration-row-inline">
+                                        <div className="ckey-duration-icon-wrapper" title="Press Duration">
+                                            <ClockIcon />
+                                        </div>
+                                        <input
+                                            type="number"
+                                            className="ckey-duration-input"
+                                            value={local.ma?.holdDuration || 20}
+                                            onChange={e => handleMA('holdDuration', parseInt(e.target.value) || 0)}
+                                        />
+                                    </div>
+                                </div>
                             </div>
 
                             <h4 className="ckey-section-title" style={{ marginTop: '1.25rem' }}>Thresholds</h4>

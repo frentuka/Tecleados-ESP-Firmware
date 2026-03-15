@@ -42,4 +42,4 @@ esp_err_t kb_macro_send_report(void);
  * @param duration_ms  How long to hold the virtual key before releasing (ms).
  *                     If 0, a default of 10 ms is used.
  */
-void kb_macro_fire_tap(uint16_t action_code, uint32_t duration_ms);
+void kb_macro_fire_tap(uint16_t action_code, uint32_t duration_ms, uint32_t delay_ms);

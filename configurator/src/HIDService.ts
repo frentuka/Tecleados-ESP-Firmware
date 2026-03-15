@@ -57,6 +57,7 @@ export interface CustomKeyPR {
     releaseAction:   number;
     pressDuration:   number;
     releaseDuration: number;
+    waitForFinish:   boolean;
 }
 
 export interface CustomKeyMA {

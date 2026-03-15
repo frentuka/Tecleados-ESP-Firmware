@@ -145,21 +145,24 @@ cJSON *macros_serialize_outline(const cfg_macro_index_t *idx) {
           char key[16];
           snprintf(key, sizeof(key), "mac_%u", i);
           
-          cfg_macro_t temp;
-          size_t len = sizeof(temp);
-          if (cfgmod_read_storage(CFGMOD_KIND_MACRO, key, &temp, &len) == ESP_OK && len == sizeof(temp)) {
+          cfg_macro_t *temp = malloc(sizeof(cfg_macro_t));
+          if (!temp) continue;
+          
+          size_t len = sizeof(cfg_macro_t);
+          if (cfgmod_read_storage(CFGMOD_KIND_MACRO, key, temp, &len) == ESP_OK && len == sizeof(cfg_macro_t)) {
                 cJSON *macro_item = cJSON_CreateObject();
-                cJSON_AddNumberToObject(macro_item, "id", temp.id);
-                cJSON_AddStringToObject(macro_item, "name", temp.name);
-                cJSON_AddNumberToObject(macro_item, "execMode", temp.exec_mode);
-                if (temp.exec_mode == MACRO_EXEC_ONCE_STACK_N) {
-                cJSON_AddNumberToObject(macro_item, "stackMax", temp.stack_max);
+                cJSON_AddNumberToObject(macro_item, "id", temp->id);
+                cJSON_AddStringToObject(macro_item, "name", temp->name);
+                cJSON_AddNumberToObject(macro_item, "execMode", temp->exec_mode);
+                if (temp->exec_mode == MACRO_EXEC_ONCE_STACK_N) {
+                  cJSON_AddNumberToObject(macro_item, "stackMax", temp->stack_max);
                 }
-                if (temp.exec_mode == MACRO_EXEC_BURST_N) {
-                cJSON_AddNumberToObject(macro_item, "repeatCount", temp.repeat_count);
+                if (temp->exec_mode == MACRO_EXEC_BURST_N) {
+                  cJSON_AddNumberToObject(macro_item, "repeatCount", temp->repeat_count);
                 }
                 cJSON_AddItemToArray(macros_arr, macro_item);
           }
+          free(temp);
       }
   }
 
@@ -172,11 +175,16 @@ cJSON *macros_serialize_single(uint16_t id, const cfg_macro_index_t *idx) {
       char key[16];
       snprintf(key, sizeof(key), "mac_%u", id);
       
-      cfg_macro_t temp;
-      size_t len = sizeof(temp);
-      if (cfgmod_read_storage(CFGMOD_KIND_MACRO, key, &temp, &len) == ESP_OK && len == sizeof(temp)) {
-          return serialize_single_macro_to_json(&temp);
+      cfg_macro_t *temp = malloc(sizeof(cfg_macro_t));
+      if (!temp) return NULL;
+      
+      size_t len = sizeof(cfg_macro_t);
+      if (cfgmod_read_storage(CFGMOD_KIND_MACRO, key, temp, &len) == ESP_OK && len == sizeof(cfg_macro_t)) {
+          cJSON *res = serialize_single_macro_to_json(temp);
+          free(temp);
+          return res;
       }
+      free(temp);
   }
 
   // Not found
@@ -196,21 +204,30 @@ cJSON *macros_serialize_limits(void) {
 }
 
 esp_err_t macros_upsert_single(cJSON *macro_json, cfg_macro_index_t *idx) {
-  cfg_macro_t temp;
-  if (!macros_deserialize(macro_json, &temp)) return ESP_ERR_INVALID_ARG;
+  cfg_macro_t *temp = malloc(sizeof(cfg_macro_t));
+  if (!temp) return ESP_ERR_NO_MEM;
+
+  if (!macros_deserialize(macro_json, temp)) {
+    free(temp);
+    return ESP_ERR_INVALID_ARG;
+  }
   
-  if (temp.id >= CFG_MACROS_MAX_COUNT) return ESP_ERR_INVALID_ARG;
+  if (temp->id >= CFG_MACROS_MAX_COUNT) {
+    free(temp);
+    return ESP_ERR_INVALID_ARG;
+  }
 
   // Save the macro directly
   char key[16];
-  snprintf(key, sizeof(key), "mac_%u", temp.id);
+  snprintf(key, sizeof(key), "mac_%u", temp->id);
   
-  esp_err_t err = cfgmod_write_storage(CFGMOD_KIND_MACRO, key, &temp, sizeof(temp));
+  esp_err_t err = cfgmod_write_storage(CFGMOD_KIND_MACRO, key, temp, sizeof(cfg_macro_t));
   if (err == ESP_OK) {
       // Update index
-      idx->active_mask |= (1U << temp.id);
+      idx->active_mask |= (1U << temp->id);
       cfgmod_write_storage(CFGMOD_KIND_MACRO, "mac_idx", idx, sizeof(cfg_macro_index_t));
   }
+  free(temp);
   return err;
 }
 
