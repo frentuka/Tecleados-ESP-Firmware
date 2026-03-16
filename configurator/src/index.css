@@ -2933,40 +2933,46 @@ village .ckey-card-header {
   color: var(--accent-color);
 }
 
-/* Custom Key Toggle Inline */
-.ckey-toggle-inline {
+/* Custom Key Wait Toggle */
+.ckey-wait-toggle {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
-    margin-left: 0.5rem;
-    padding: 0.2rem 0.5rem;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
     background: rgba(255, 255, 255, 0.05);
-    border-radius: 6px;
-    cursor: pointer;
-    user-select: none;
-    transition: all 0.2s;
     border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    padding: 0;
 }
 
-.ckey-toggle-inline:hover {
+.ckey-wait-toggle:hover {
     background: rgba(255, 255, 255, 0.1);
     border-color: rgba(255, 255, 255, 0.2);
+    color: var(--text-primary);
+    transform: translateY(-1px);
 }
 
-.ckey-toggle-inline input {
-    cursor: pointer;
-    accent-color: #4CAF50;
-    margin: 0;
-}
-
-.ckey-toggle-label {
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: #8b949e;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-}
-
-.ckey-toggle-inline input:checked + .ckey-toggle-label {
+.ckey-wait-toggle.active {
+    background: rgba(46, 160, 67, 0.15);
+    border-color: rgba(46, 160, 67, 0.5);
     color: #4CAF50;
+    box-shadow: 0 0 10px rgba(76, 175, 80, 0.1);
 }
+
+.ckey-wait-toggle.active:hover {
+    background: rgba(46, 160, 67, 0.25);
+    border-color: rgba(46, 160, 67, 0.7);
+    box-shadow: 0 0 15px rgba(76, 175, 80, 0.2);
+}
+
+.ckey-wait-toggle svg {
+    transition: transform 0.2s;
+}
+
+.ckey-wait-toggle:active svg {
+    transform: scale(0.9);
+}

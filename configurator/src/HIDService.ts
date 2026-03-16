@@ -945,6 +945,7 @@ class HIDService {
                 releaseAction:   ckey.pr.releaseAction,
                 pressDuration:   ckey.pr.pressDuration,
                 releaseDuration: ckey.pr.releaseDuration,
+                waitForFinish:   ckey.pr.waitForFinish,
             };
         } else if (ckey.mode === 1 && ckey.ma) {
             payload.ma = {

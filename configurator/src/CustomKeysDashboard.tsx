@@ -53,6 +53,14 @@ const ClockIcon = () => (
     </svg>
 );
 
+const WaitIcon = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="ckey-svg-icon">
+        <path d="M6 4v16" />
+        <path d="M11 12h9" />
+        <path d="M16 8l4 4-4 4" />
+    </svg>
+);
+
 // ── Action slot button ─────────────────────────────────────────────────────────
 
 interface ActionSlotProps {
@@ -262,6 +270,13 @@ function CKeyEditorModal({ ckey, macros, isSaving, error, onSave, onDelete, onCl
                                         onChange={v => handlePR('releaseAction', v)}
                                     />
                                     <div className="ckey-duration-row-inline">
+                                        <button 
+                                            className={`ckey-wait-toggle ${local.pr?.waitForFinish ? 'active' : ''}`}
+                                            title="Don't execute until Press action completes"
+                                            onClick={() => handlePR('waitForFinish', !local.pr?.waitForFinish)}
+                                        >
+                                            <WaitIcon />
+                                        </button>
                                         <div className="ckey-duration-icon-wrapper" title="Press Duration">
                                             <ClockIcon />
                                         </div>
@@ -271,14 +286,6 @@ function CKeyEditorModal({ ckey, macros, isSaving, error, onSave, onDelete, onCl
                                             value={local.pr?.releaseDuration || 20}
                                             onChange={e => handlePR('releaseDuration', parseInt(e.target.value) || 0)}
                                         />
-                                        <label className="ckey-toggle-inline" title="Wait for press action to finish">
-                                            <input 
-                                                type="checkbox" 
-                                                checked={local.pr?.waitForFinish || false}
-                                                onChange={e => handlePR('waitForFinish', e.target.checked)}
-                                            />
-                                            <span className="ckey-toggle-label">Wait</span>
-                                        </label>
                                     </div>
                                 </div>
                             </div>
@@ -375,7 +382,7 @@ function CKeyEditorModal({ ckey, macros, isSaving, error, onSave, onDelete, onCl
                     <div style={{ marginRight: 'auto' }}>
                         <button
                             className="btn btn-danger"
-                            onClick={() => { if (confirm('Delete this custom key?')) { onDelete(local.id); onClose(); } }}
+                            onClick={() => { onDelete(local.id); onClose(); }}
                             disabled={isSaving}
                         >
                             Delete
