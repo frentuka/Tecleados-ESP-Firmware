@@ -4,6 +4,8 @@
 #include <stdint.h>
 
 #include "driver/gpio.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 /*
 
@@ -59,3 +61,7 @@
 // Buffer length must be KB_MATRIX_BITMAP_BYTES.
 void scan(uint8_t* out_active_rc_pairs);
 void kb_matrix_gpio_init(void);
+
+// Interrupt control
+void kb_matrix_init_isr(TaskHandle_t task_to_notify);
+void kb_matrix_set_interrupts_enabled(bool enabled);

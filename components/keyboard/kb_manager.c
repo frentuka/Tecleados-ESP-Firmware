@@ -135,6 +135,8 @@ static void kb_manager_task(void *arg) {
   uint16_t s_active_action_codes[KB_MATRIX_ROW_COUNT][KB_MATRIX_COL_COUNT];
   memset(s_active_action_codes, 0, sizeof(s_active_action_codes));
   
+  kb_matrix_init_isr(xTaskGetCurrentTaskHandle());
+  
   while (1) {
     // benchmark
     int64_t now_us = esp_timer_get_time();
@@ -143,8 +145,30 @@ static void kb_manager_task(void *arg) {
     // limit scan rate to MAX_POLLING_RATE
     int64_t min_interval_us = 1000000LL / (int64_t)MAX_POLLING_RATE;
     if (now_us - s_last_scan_us < min_interval_us) {
-      taskYIELD();
-      continue;
+      // If we are here, we are scanning too fast.
+      // If no keys are pressed and no virtual keys are injected, we can wait for an interrupt.
+      bool matrix_empty = true;
+      for (size_t i = 0; i < KB_MATRIX_BITMAP_BYTES; i++) {
+        if (s_matrix[i] != 0) {
+          matrix_empty = false;
+          break;
+        }
+      }
+
+      if (matrix_empty && !s_paused) {
+        // Enable interrupts and sleep until a key is pressed or timeout
+        kb_matrix_set_interrupts_enabled(true);
+        // Wait for notification from ISR. 
+        // We use a timeout to ensure we still log stats and handle other periodic tasks.
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100)); 
+        kb_matrix_set_interrupts_enabled(false);
+        
+        // Update now_us after waking up
+        now_us = esp_timer_get_time();
+      } else {
+        taskYIELD();
+        continue;
+      }
     }
 
     // scanning

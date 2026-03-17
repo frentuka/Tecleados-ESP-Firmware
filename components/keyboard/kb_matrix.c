@@ -148,3 +148,50 @@ void kb_matrix_gpio_init(void) {
 
 	ESP_LOGI(TAG, "Columns level set to HIGH");
 }
+
+static TaskHandle_t s_task_to_notify = NULL;
+
+static void IRAM_ATTR kb_matrix_isr_handler(void *arg) {
+	if (s_task_to_notify) {
+		BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+		vTaskNotifyGiveFromISR(s_task_to_notify, &xHigherPriorityTaskWoken);
+		if (xHigherPriorityTaskWoken) {
+			portYIELD_FROM_ISR();
+		}
+	}
+}
+
+void kb_matrix_init_isr(TaskHandle_t task_to_notify) {
+	s_task_to_notify = task_to_notify;
+	const size_t row_count = sizeof(k_rows) / sizeof(k_rows[0]);
+	for (size_t i = 0; i < row_count; ++i) {
+		gpio_isr_handler_add(k_rows[i].gpio, kb_matrix_isr_handler, (void *)k_rows[i].gpio);
+	}
+}
+
+void kb_matrix_set_interrupts_enabled(bool enabled) {
+	const size_t row_count = sizeof(k_rows) / sizeof(k_rows[0]);
+	const size_t col_count = sizeof(k_cols) / sizeof(k_cols[0]);
+
+	if (enabled) {
+		// To detect ANY key press, drive ALL columns LOW
+		for (size_t i = 0; i < col_count; ++i) {
+			gpio_set_level(k_cols[i].gpio, 0);
+		}
+		// Enable interrupts on rows (falling edge since they are pulled up and columns are LOW)
+		for (size_t i = 0; i < row_count; ++i) {
+			gpio_set_intr_type(k_rows[i].gpio, GPIO_INTR_NEGEDGE);
+			gpio_intr_enable(k_rows[i].gpio);
+		}
+	} else {
+		// Disable interrupts on rows
+		for (size_t i = 0; i < row_count; ++i) {
+			gpio_intr_disable(k_rows[i].gpio);
+			gpio_set_intr_type(k_rows[i].gpio, GPIO_INTR_DISABLE);
+		}
+		// Drive columns back to HIGH (default scanning state)
+		for (size_t i = 0; i < col_count; ++i) {
+			gpio_set_level(k_cols[i].gpio, 1);
+		}
+	}
+}
