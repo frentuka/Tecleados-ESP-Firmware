@@ -23,7 +23,6 @@ import {
   CFG_KEY_MACROS,
   CFG_KEY_MACRO_LIMITS,
   CFG_KEY_MACRO_SINGLE,
-  type CustomKey,
 } from './HIDService';
 import KeyboardLayoutEditor from './KeyboardLayoutEditor';
 import MacrosDashboard from './MacrosDashboard';
@@ -32,20 +31,12 @@ import StatusWidget from './StatusWidget';
 import { useConfirm } from './hooks/useConfirm';
 import './index.css';
 
-export type MacroAction = 'tap' | 'press' | 'release';
+// Re-export types for backward compatibility — consumers can import from './App'
+export type { Macro, MacroElement, MacroAction } from './types/macros';
+export type { CustomKey } from './types/customKeys';
 
-export type MacroElement =
-  | { type: 'key'; key: number; action?: MacroAction; inlineSleep?: number; pressTime?: number }
-  | { type: 'sleep'; duration: number };
-
-export interface Macro {
-  id: number;
-  name: string;
-  elements: MacroElement[];
-  execMode?: number;
-  stackMax?: number;
-  repeatCount?: number;
-}
+import type { Macro } from './types/macros';
+import type { CustomKey } from './types/customKeys';
 
 interface LogMessage {
   id: number;

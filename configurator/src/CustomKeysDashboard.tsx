@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { CustomKey, CustomKeyPR, CustomKeyMA } from './HIDService';
-import SearchableKeyModal from './SearchableKeyModal';
+import type { CustomKey, CustomKeyPR, CustomKeyMA } from './types/customKeys';
+import type { Macro } from './types/macros';
+import SearchableKeyModal from './components/SearchableKeyModal';
 import { getKeyName, CKEY_BASE } from './KeyDefinitions';
-import type { Macro } from './App';
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
