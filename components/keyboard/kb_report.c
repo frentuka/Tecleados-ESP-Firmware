@@ -2,6 +2,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "esp_err.h"
 #include "kb_layout.h"
@@ -13,85 +14,64 @@
 #include "ble_hid_service.h"
 #include "blemod.h"
 
-static void virtual_nkro_to_6kro(const uint8_t *v_nkro, uint8_t *modifiers,
-                                 uint8_t basic_keys[6]) {
-  memset(basic_keys, 0, 6);
-  *modifiers = 0;
-  size_t out = 0;
+/* ---- Helpers ---- */
 
-  for (uint16_t kc = 1; kc < 256; ++kc) {
-    size_t byte_idx = kc >> 3;
-    uint8_t bit = (uint8_t)(1U << (kc & 7U));
-    if (v_nkro[byte_idx] & bit) {
-      if (kc >= 0xE0 && kc <= 0xE7) {
-        *modifiers |= (1 << (kc - 0xE0));
-      } else if (out < 6) {
-        basic_keys[out++] = (uint8_t)kc;
-      }
+static void virtual_nkro_to_6kro(const uint8_t *v_nkro,
+                                  uint8_t *out_modifiers,
+                                  uint8_t  out_basic_keys[6]) {
+    memset(out_basic_keys, 0, 6);
+    *out_modifiers = 0;
+    size_t out = 0;
+
+    for (uint16_t kc = 1; kc < 256; ++kc) {
+        if (v_nkro[kc >> 3] & (uint8_t)(1U << (kc & 7U))) {
+            if (kc >= 0xE0 && kc <= 0xE7) {
+                *out_modifiers |= (uint8_t)(1 << (kc - 0xE0));
+            } else if (out < 6) {
+                out_basic_keys[out++] = (uint8_t)kc;
+            }
+        }
     }
-  }
+}
+
+/* ---- Public API ---- */
+
+bool kb_hid_ready(void) {
+    if (ble_hid_is_routing_active()) {
+        return ble_hid_is_connected();
+    }
+    return tud_mounted() && tud_hid_n_ready(ITF_NUM_HID_KBD);
 }
 
 esp_err_t kb_send_report(const uint8_t *v_nkro) {
-  esp_err_t final_result = ESP_FAIL;
+    uint8_t modifiers    = 0;
+    uint8_t basic_keys[6] = {0};
+    virtual_nkro_to_6kro(v_nkro, &modifiers, basic_keys);
 
-  // Extract keys and separate standard keys from modifiers (0xE0 - 0xE7)
-  uint8_t modifiers = 0;
-  uint8_t basic_keys[6] = {0};
+    if (ble_hid_is_routing_active()) {
+        if (!ble_hid_is_connected()) return ESP_FAIL;
 
-  virtual_nkro_to_6kro(v_nkro, &modifiers, basic_keys);
-
-  if (ble_hid_is_routing_active()) {
-    // 1. Send via BLE if routing is active and connected
-    if (ble_hid_is_connected()) {
-      uint8_t report[8] = {0};
-      report[0] = modifiers;
-      memcpy(&report[2], basic_keys, 6);
-      if (ble_hid_send_keyboard_report(report, 8) == ESP_OK) {
-        final_result = ESP_OK;
-      }
+        uint8_t report[8] = {0};
+        report[0] = modifiers;
+        memcpy(&report[2], basic_keys, 6);
+        return ble_hid_send_keyboard_report(report, 8);
     }
-  } else {
-    // 2. Otherwise send via USB if mounted
-    if (tud_mounted()) {
-      if (tud_hid_n_ready(ITF_NUM_HID_KBD)) {
-        bool result = false;
-        if (usb_keyboard_use_boot_protocol()) {
-          result = usb_send_keyboard_6kro(modifiers, basic_keys);
-        } else {
-          result = usb_send_keyboard_nkro(modifiers, v_nkro, NKRO_BYTES);
-        }
-        if (result) {
-          final_result = ESP_OK;
-        }
-      } else {
-        // USB is busy; return FAIL so the caller can retry.
-        return ESP_FAIL;
-      }
-    }
-  }
 
-  return final_result;
+    if (!tud_mounted()) return ESP_FAIL;
+    if (!tud_hid_n_ready(ITF_NUM_HID_KBD)) return ESP_FAIL; /* Endpoint busy; caller retries */
+
+    bool ok = usb_keyboard_use_boot_protocol()
+              ? usb_send_keyboard_6kro(modifiers, basic_keys)
+              : usb_send_keyboard_nkro(modifiers, v_nkro, NKRO_BYTES);
+    return ok ? ESP_OK : ESP_FAIL;
 }
 
 esp_err_t kb_send_consumer_report(uint16_t media_keycode) {
-  esp_err_t final_result = ESP_FAIL;
-
-  if (ble_hid_is_routing_active()) {
-    // 1. Send via BLE if routing is active and connected
-    if (ble_hid_is_connected()) {
-      if (ble_hid_send_consumer_report(media_keycode) == ESP_OK) {
-        final_result = ESP_OK;
-      }
+    if (ble_hid_is_routing_active()) {
+        if (!ble_hid_is_connected()) return ESP_FAIL;
+        return ble_hid_send_consumer_report(media_keycode);
     }
-  } else {
-    // 2. Send via USB if mounted and ready
-    if (tud_mounted() && tud_hid_n_ready(ITF_NUM_HID_KBD)) {
-      if (usb_send_consumer_report(media_keycode)) {
-        final_result = ESP_OK;
-      }
-    }
-  }
 
-  return final_result;
+    if (!tud_mounted() || !tud_hid_n_ready(ITF_NUM_HID_KBD)) return ESP_FAIL;
+    return usb_send_consumer_report(media_keycode) ? ESP_OK : ESP_FAIL;
 }

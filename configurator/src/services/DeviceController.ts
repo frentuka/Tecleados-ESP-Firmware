@@ -112,13 +112,13 @@ export class DeviceController {
     public async sendInjectKey(row: number, col: number, state: boolean): Promise<boolean> {
         if (!this.isConnected()) return false;
         const payload = new Uint8Array([MODULE_SYSTEM, SYS_CMD_INJECT_KEY, row, col, state ? 1 : 0]);
-        return this.transport.enqueueTask(() => this.transport.sendCustomCommReport(payload));
+        return this.transport.sendCustomCommReport(payload);
     }
 
     public async clearInjectedKeys(): Promise<boolean> {
         if (!this.isConnected()) return false;
         const payload = new Uint8Array([MODULE_SYSTEM, SYS_CMD_CLEAR_INJECTED]);
-        return this.transport.enqueueTask(() => this.transport.sendCustomCommReport(payload));
+        return this.transport.sendCustomCommReport(payload);
     }
 
     // ── Macros ──────────────────────────────────────────────────────────

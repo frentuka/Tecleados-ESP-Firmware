@@ -3,7 +3,7 @@
 
 #include "rgb.h"
 
-#define TAG "kb_state"
+static const char *TAG = "kb_state";
 static uint8_t s_led_status = 0;
 
 void kb_state_init(void) {
