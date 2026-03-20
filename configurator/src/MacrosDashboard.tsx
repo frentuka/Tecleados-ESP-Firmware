@@ -7,6 +7,7 @@ import { MacroPreview } from './components/MacroPreview';
 import MacroModeModal from './components/MacroModeModal';
 import ExportModal from './components/ExportModal';
 import ImportModal from './components/ImportModal';
+import { saveJsonFile } from './utils/fileUtils';
 
 interface MacrosDashboardProps {
     macros: Macro[];
@@ -114,30 +115,7 @@ export default function MacrosDashboard({
             }
             const dataStr = JSON.stringify(fullMacros, null, 2);
 
-            if ('showSaveFilePicker' in window) {
-                try {
-                    const handle = await (window as any).showSaveFilePicker({
-                        suggestedName: 'macros_export.json',
-                        types: [{
-                            description: 'JSON Files',
-                            accept: { 'application/json': ['.json'] },
-                        }],
-                    });
-                    const writable = await handle.createWritable();
-                    await writable.write(dataStr);
-                    await writable.close();
-                } catch (err: any) {
-                    if (err.name !== 'AbortError') throw err;
-                }
-            } else {
-                const url = "data:text/json;charset=utf-8," + encodeURIComponent(dataStr);
-                const downloadAnchorNode = document.createElement('a');
-                downloadAnchorNode.setAttribute("href", url);
-                downloadAnchorNode.setAttribute("download", "macros_export.json");
-                document.body.appendChild(downloadAnchorNode);
-                downloadAnchorNode.click();
-                downloadAnchorNode.remove();
-            }
+            await saveJsonFile(dataStr, 'macros_export.json');
         } catch (err) {
             alert("Failed to export macros.");
         } finally {

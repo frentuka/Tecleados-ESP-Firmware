@@ -128,7 +128,7 @@ const StatusWidget: React.FC<StatusWidgetProps> = ({ isConnected, transportMode,
         .status-badge {
           display: flex;
           align-items: center;
-          align-sel: center;
+          align-self: center;
           gap: 6px;
           flex-shrink: 0;
           white-space: nowrap;

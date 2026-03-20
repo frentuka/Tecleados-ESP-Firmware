@@ -18,6 +18,7 @@ import SearchableKeyModal from './components/SearchableKeyModal';
 import type { Macro } from './types/macros';
 import { parseKleJson } from './utils/kleParser';
 import { parsePhysicalLayoutJson, serializePhysicalLayout } from './utils/layoutUtils';
+import { saveJsonFile } from './utils/fileUtils';
 
 // ── Matrix dimensions (must match firmware) ──
 const LAYER_COUNT = 4;
@@ -159,37 +160,8 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
         const fileName = `${hidService.getDeviceName()}_${new Date().toISOString().slice(0, 10)}.json`;
         const jsonContent = JSON.stringify(data, null, 2);
 
-        // Try File System Access API (Save As dialog)
-        if ('showSaveFilePicker' in window) {
-            try {
-                const handle = await (window as any).showSaveFilePicker({
-                    suggestedName: fileName,
-                    types: [{
-                        description: 'JSON Files',
-                        accept: { 'application/json': ['.json'] },
-                    }],
-                });
-                const writable = await handle.createWritable();
-                await writable.write(jsonContent);
-                await writable.close();
-                onLogRef.current('Layout exported to JSON via Save As');
-                return;
-            } catch (err: any) {
-                if (err.name === 'AbortError') return; // User cancelled
-                console.error('showSaveFilePicker error:', err);
-                // Fall back to legacy download
-            }
-        }
-
-        // Legacy Fallback (extensionless fix included)
-        const blob = new Blob([jsonContent], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = fileName;
-        a.click();
-        URL.revokeObjectURL(url);
-        onLogRef.current('Layout exported to JSON (Download)');
+        await saveJsonFile(jsonContent, fileName);
+        onLogRef.current('Layout exported to JSON');
     };
 
     const handleImportClick = () => {
@@ -645,6 +617,13 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                 const parsed = parseKleJson(kleInput);
                                 if (!parsed) {
                                     setKleError('Failed to parse KLE JSON. Make sure you copied the raw JSON data (array format).');
+                                    return;
+                                }
+
+                                // Validate all keys are within matrix bounds
+                                const outOfBounds = parsed.flat().find(k => k.row >= MATRIX_ROWS || k.col >= MATRIX_COLS);
+                                if (outOfBounds) {
+                                    setKleError(`Key at row ${outOfBounds.row}, col ${outOfBounds.col} exceeds matrix bounds (max ${MATRIX_ROWS - 1} rows, ${MATRIX_COLS - 1} cols).`);
                                     return;
                                 }
 

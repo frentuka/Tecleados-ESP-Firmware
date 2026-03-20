@@ -1,5 +1,3 @@
-// Removed unused React import
-import React from 'react';
 
 export const ActionTapIcon = () => (
     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

@@ -26,7 +26,7 @@ export function getFlagsString(flags: number): string {
     if (flags & PAYLOAD_FLAG_OK) parts.push('OK');
     if (flags & PAYLOAD_FLAG_ERR) parts.push('ERR');
     if (flags & PAYLOAD_FLAG_ABORT) parts.push('ABORT');
-    return parts.join(' | ') || 'NONE';
+    return parts.length > 0 ? `[${parts.join('|')}]` : '[NONE]';
 }
 
 /**

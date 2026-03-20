@@ -38,6 +38,11 @@ import type {
 
 import { MODULE_STATUS } from '../types/protocol';
 
+// ── Transport timing & limits ───────────────────────────────────────────
+const RECONNECT_INTERVAL_MS  = 2000; // How often to poll for device reconnection
+const TASK_QUEUE_DELAY_MS    = 50;   // Delay between sequential queued tasks
+const BLAST_RX_MAX_PACKETS   = 5000; // Abort if a single Blast RX exceeds this count
+
 // ── CRC-8 Table (polynomial 0x07, matches firmware usb_crc.c) ──────────
 const CRC8_TABLE = new Uint8Array([
     0x00, 0x07, 0x0e, 0x09, 0x1c, 0x1b, 0x12, 0x15, 0x38, 0x3f, 0x36, 0x31, 0x24, 0x23, 0x2a, 0x2d,
@@ -261,7 +266,7 @@ export class HIDTransport {
     private startReconnectPolling(): void {
         if (this.reconnectTimer) return;
         console.log('Starting auto-reconnect polling...');
-        this.reconnectTimer = setInterval(() => this.tryReconnect(), 2000);
+        this.reconnectTimer = setInterval(() => this.tryReconnect(), RECONNECT_INTERVAL_MS);
     }
 
     private stopReconnectPolling(): void {
@@ -552,7 +557,7 @@ export class HIDTransport {
             setTimeout(() => {
                 this.isProcessingQueue = false;
                 this.processNextTask();
-            }, 50);
+            }, TASK_QUEUE_DELAY_MS);
         }
     }
 
@@ -657,7 +662,7 @@ export class HIDTransport {
         // Blast RX: FIRST with remaining > 0 → handshake
         if ((flags & PAYLOAD_FLAG_FIRST) && remaining > 0) {
             const totalPackets = remaining + 1;
-            if (totalPackets > 5000) {
+            if (totalPackets > BLAST_RX_MAX_PACKETS) {
                 console.error(`[Blast RX] ABORTING: Ridiculous packet count (${totalPackets})`);
                 this.sendResponse(PAYLOAD_FLAG_ABORT);
                 return;

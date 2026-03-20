@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Macro } from '../types/macros';
 import type { ModeCategory } from './MacroIcons';
-import { getModeCategory, getModeBadge } from './MacroIcons';
+import { getModeCategory } from './MacroIcons';
 
 interface MacroModeModalProps {
     macro: Macro;
