@@ -149,7 +149,7 @@ cJSON *ckeys_serialize_outline(const cfg_ckey_index_t *idx) {
     cJSON *arr = cJSON_CreateArray();
 
     for (uint16_t i = 0; i < CFG_CKEYS_MAX_COUNT; i++) {
-        if (!(idx->active_mask & (1U << i))) continue;
+        if (!((idx->mask[i / 8] >> (i % 8)) & 1u)) continue;
 
         char key[12];
         snprintf(key, sizeof(key), "ck_%u", i);
@@ -170,7 +170,7 @@ cJSON *ckeys_serialize_outline(const cfg_ckey_index_t *idx) {
 }
 
 cJSON *ckeys_serialize_single(uint16_t id, const cfg_ckey_index_t *idx) {
-    if (id < CFG_CKEYS_MAX_COUNT && (idx->active_mask & (1U << id))) {
+    if (id < CFG_CKEYS_MAX_COUNT && ((idx->mask[id / 8] >> (id % 8)) & 1u)) {
         char key[12];
         snprintf(key, sizeof(key), "ck_%u", id);
 
@@ -199,7 +199,7 @@ esp_err_t ckeys_upsert_single(cJSON *ckey_json, cfg_ckey_index_t *idx) {
 
     esp_err_t err = cfgmod_write_storage(CFGMOD_KIND_CKEY, key, &temp, sizeof(temp));
     if (err == ESP_OK) {
-        idx->active_mask |= (1U << temp.id);
+        idx->mask[temp.id / 8] |= (1u << (temp.id % 8));
         cfgmod_write_storage(CFGMOD_KIND_CKEY, "ck_idx", idx, sizeof(cfg_ckey_index_t));
         ESP_LOGI(TAG, "Upserted custom key %u ('%s')", temp.id, temp.name);
     }
@@ -209,7 +209,7 @@ esp_err_t ckeys_upsert_single(cJSON *ckey_json, cfg_ckey_index_t *idx) {
 esp_err_t ckeys_delete_single(uint16_t id, cfg_ckey_index_t *idx) {
     if (id >= CFG_CKEYS_MAX_COUNT) return ESP_ERR_INVALID_ARG;
 
-    idx->active_mask &= ~(1U << id);
+    idx->mask[id / 8] &= ~(1u << (id % 8));
     esp_err_t err = cfgmod_write_storage(CFGMOD_KIND_CKEY, "ck_idx", idx, sizeof(cfg_ckey_index_t));
     if (err == ESP_OK) {
         ESP_LOGI(TAG, "Deleted custom key %u", id);
@@ -228,10 +228,8 @@ esp_err_t ckeys_load_all(cfg_custom_key_t *out_arr, size_t *out_count) {
         return ESP_OK; /* No index yet — empty list */
     }
 
-    ESP_LOGI(TAG, "ckeys_load_all: active_mask=0x%08X", (unsigned)idx.active_mask);
-
     for (uint16_t i = 0; i < CFG_CKEYS_MAX_COUNT; i++) {
-        if (!(idx.active_mask & (1U << i))) continue;
+        if (!((idx.mask[i / 8] >> (i % 8)) & 1u)) continue;
 
         char nvs_key[12];
         snprintf(nvs_key, sizeof(nvs_key), "ck_%u", i);

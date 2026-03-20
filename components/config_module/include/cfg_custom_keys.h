@@ -6,7 +6,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define CFG_CKEYS_MAX_COUNT 32
+#define CFG_CKEYS_MAX_COUNT 120
 
 /**
  * @brief Mode of a Custom Key.
@@ -66,10 +66,10 @@ typedef struct {
 
 /**
  * @brief Lightweight index stored in NVS to track which Custom Key IDs exist.
- * Bit N in active_mask = 1 means Custom Key N is present.
+ * Bit N in mask = 1 means Custom Key N is present. 15 bytes = 120 bits exactly.
  */
 typedef struct {
-    uint32_t active_mask;
+    uint8_t mask[15];
 } cfg_ckey_index_t;
 
 /* ---- cfgmod handler callbacks ---- */

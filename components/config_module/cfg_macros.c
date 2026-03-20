@@ -141,7 +141,7 @@ cJSON *macros_serialize_outline(const cfg_macro_index_t *idx) {
   cJSON *macros_arr = cJSON_CreateArray();
   
   for (uint16_t i = 0; i < CFG_MACROS_MAX_COUNT; i++) {
-      if ((idx->active_mask & (1U << i))) {
+      if ((idx->active_mask & (UINT64_C(1) << i))) {
           char key[16];
           snprintf(key, sizeof(key), "mac_%u", i);
           
@@ -171,7 +171,7 @@ cJSON *macros_serialize_outline(const cfg_macro_index_t *idx) {
 }
 
 cJSON *macros_serialize_single(uint16_t id, const cfg_macro_index_t *idx) {
-  if (id < CFG_MACROS_MAX_COUNT && (idx->active_mask & (1U << id))) {
+  if (id < CFG_MACROS_MAX_COUNT && (idx->active_mask & (UINT64_C(1) << id))) {
       char key[16];
       snprintf(key, sizeof(key), "mac_%u", id);
       
@@ -224,7 +224,7 @@ esp_err_t macros_upsert_single(cJSON *macro_json, cfg_macro_index_t *idx) {
   esp_err_t err = cfgmod_write_storage(CFGMOD_KIND_MACRO, key, temp, sizeof(cfg_macro_t));
   if (err == ESP_OK) {
       // Update index
-      idx->active_mask |= (1U << temp->id);
+      idx->active_mask |= (UINT64_C(1) << temp->id);
       cfgmod_write_storage(CFGMOD_KIND_MACRO, "mac_idx", idx, sizeof(cfg_macro_index_t));
   }
   free(temp);
@@ -235,7 +235,7 @@ esp_err_t macros_delete_single(uint16_t id, cfg_macro_index_t *idx) {
     if (id >= CFG_MACROS_MAX_COUNT) return ESP_ERR_INVALID_ARG;
     
     // Unset from mask first
-    idx->active_mask &= ~(1U << id);
+    idx->active_mask &= ~(UINT64_C(1) << id);
     esp_err_t err = cfgmod_write_storage(CFGMOD_KIND_MACRO, "mac_idx", idx, sizeof(cfg_macro_index_t));
     
     // We don't strictly *need* to erase it if it's not in the mask, but it's cleaner
@@ -259,7 +259,7 @@ esp_err_t macros_load_all(cfg_macro_list_t *out_list) {
   }
   
   for (uint16_t i = 0; i < CFG_MACROS_MAX_COUNT; i++) {
-      if ((idx.active_mask & (1U << i))) {
+      if ((idx.active_mask & (UINT64_C(1) << i))) {
           char key[16];
           snprintf(key, sizeof(key), "mac_%u", i);
           size_t len = sizeof(cfg_macro_t);

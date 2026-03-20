@@ -70,4 +70,4 @@ export const KB_KEY_TRANSPARENT = 0xffff;
 
 export const MACRO_CODE_BASE = ACTION_CODE_MACRO_MIN;
 export const CKEY_CODE_BASE = ACTION_CODE_CKEY_MIN;
-export const CKEY_MAX_COUNT = 32;
+export const CKEY_MAX_COUNT = 120;

@@ -27,6 +27,16 @@ extern void cfg_ble_init(void);
 
 #define CFGMOD_NVS_NAMESPACE "cfg"
 
+/* Per-kind NVS namespaces. NULL = fall back to "cfg" with prefixed key. */
+static const char *const s_kind_ns[CFGMOD_KIND_MAX] = {
+    [CFGMOD_KIND_LAYOUT]     = "cfg_lay",
+    [CFGMOD_KIND_MACRO]      = "cfg_mac",
+    [CFGMOD_KIND_CONNECTION] = NULL,
+    [CFGMOD_KIND_SYSTEM]     = NULL,
+    [CFGMOD_KIND_PHYSICAL]   = NULL,
+    [CFGMOD_KIND_CKEY]       = "cfg_ck",
+};
+
 typedef struct {
   cfgmod_default_fn def_fn;
   cfgmod_deserialize_fn des_fn;
@@ -643,14 +653,21 @@ esp_err_t cfgmod_read_storage(cfgmod_kind_t kind, const char *key,
     return ESP_ERR_INVALID_ARG;
   }
 
-  char nvs_key[16] = {0};
-  esp_err_t err = cfgmod_build_key(kind, key, nvs_key, sizeof(nvs_key));
-  if (err != ESP_OK) {
-    return err;
+  const char *ns;
+  const char *nvs_key;
+  char nvs_key_buf[16] = {0};
+  if (kind < CFGMOD_KIND_MAX && s_kind_ns[kind]) {
+    ns = s_kind_ns[kind];
+    nvs_key = key;
+  } else {
+    ns = CFGMOD_NVS_NAMESPACE;
+    esp_err_t build_err = cfgmod_build_key(kind, key, nvs_key_buf, sizeof(nvs_key_buf));
+    if (build_err != ESP_OK) return build_err;
+    nvs_key = nvs_key_buf;
   }
 
   nvs_handle_t handle;
-  err = nvs_open(CFGMOD_NVS_NAMESPACE, NVS_READONLY, &handle);
+  esp_err_t err = nvs_open(ns, NVS_READONLY, &handle);
   if (err != ESP_OK) {
     return err;
   }
@@ -667,20 +684,27 @@ esp_err_t cfgmod_write_storage(cfgmod_kind_t kind, const char *key,
     return ESP_ERR_INVALID_ARG;
   }
 
-  char nvs_key[16] = {0};
-  esp_err_t err = cfgmod_build_key(kind, key, nvs_key, sizeof(nvs_key));
-  if (err != ESP_OK) {
-    return err;
+  const char *ns;
+  const char *nvs_key;
+  char nvs_key_buf[16] = {0};
+  if (kind < CFGMOD_KIND_MAX && s_kind_ns[kind]) {
+    ns = s_kind_ns[kind];
+    nvs_key = key;
+  } else {
+    ns = CFGMOD_NVS_NAMESPACE;
+    esp_err_t build_err = cfgmod_build_key(kind, key, nvs_key_buf, sizeof(nvs_key_buf));
+    if (build_err != ESP_OK) return build_err;
+    nvs_key = nvs_key_buf;
   }
 
   nvs_handle_t handle;
-  err = nvs_open(CFGMOD_NVS_NAMESPACE, NVS_READWRITE, &handle);
+  esp_err_t err = nvs_open(ns, NVS_READWRITE, &handle);
   if (err != ESP_OK) {
     return err;
   }
 
   err = nvs_set_blob(handle, nvs_key, data, len);
-  ESP_LOGI(TAG, "NVS set_blob %s (len=%u) ret=0x%X", nvs_key, (unsigned)len, (unsigned)err);
+  ESP_LOGI(TAG, "NVS set_blob %s/%s (len=%u) ret=0x%X", ns, nvs_key, (unsigned)len, (unsigned)err);
   if (err == ESP_OK) {
     err = nvs_commit(handle);
   }
@@ -698,14 +722,23 @@ esp_err_t cfgmod_get_config(cfgmod_kind_t kind, const char *key,
   // 1. Apply defaults first (fail-safe)
   s_registry[kind].def_fn(out_struct);
 
-  // 2. Read JSON from NVS
-  char nvs_key[16] = {0};
-  if (cfgmod_build_key(kind, key, nvs_key, sizeof(nvs_key)) != ESP_OK) {
-    return ESP_OK; // fallback to default
+  // 2. Read from NVS
+  const char *ns;
+  const char *nvs_key;
+  char nvs_key_buf[16] = {0};
+  if (kind < CFGMOD_KIND_MAX && s_kind_ns[kind]) {
+    ns = s_kind_ns[kind];
+    nvs_key = key;
+  } else {
+    ns = CFGMOD_NVS_NAMESPACE;
+    if (cfgmod_build_key(kind, key, nvs_key_buf, sizeof(nvs_key_buf)) != ESP_OK) {
+      return ESP_OK; // fallback to default
+    }
+    nvs_key = nvs_key_buf;
   }
 
   nvs_handle_t handle;
-  if (nvs_open(CFGMOD_NVS_NAMESPACE, NVS_READONLY, &handle) != ESP_OK) {
+  if (nvs_open(ns, NVS_READONLY, &handle) != ESP_OK) {
     return ESP_OK; // fallback to default
   }
 

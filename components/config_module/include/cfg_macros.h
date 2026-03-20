@@ -8,7 +8,7 @@
 
 
 #define CFG_MACRO_MAX_EVENTS 256
-#define CFG_MACROS_MAX_COUNT 32
+#define CFG_MACROS_MAX_COUNT 64
 
 // Types of macro events (e.g. key press, delay)
 typedef enum {
@@ -63,7 +63,7 @@ bool macros_deserialize(cJSON *root, void *out_struct);
 cJSON *macros_serialize(const void *in_struct);
 
 typedef struct {
-  uint32_t active_mask; // Bit N is 1 if macro N exists (N 0..31)
+  uint64_t active_mask; // Bit N is 1 if macro N exists (N 0..63)
 } cfg_macro_index_t;
 
 // Serialize an outline of all macros (IDs and Names only)
