@@ -161,6 +161,11 @@ void kb_custom_key_init(void) {
     s_prev_action_cb = kb_system_action_get_cb();
     kb_system_action_register_cb(ckey_action_event_cb);
  
+    /* Re-register CKEY kind with our reload callback.
+     * Matches the pattern used by kb_macro_init() for CFGMOD_KIND_MACRO.
+     * cfg_init() registers with NULL; we override here once memory is ready. */
+    cfg_custom_keys_register(kb_custom_key_reload);
+
     /* Load initial table */
     kb_custom_key_reload("init");
 }

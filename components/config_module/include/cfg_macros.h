@@ -60,6 +60,13 @@ void cfg_macros_register(void);
 // Handler functions for external use (e.g. by kb_macro.c re-registration)
 void macros_default(void *out_struct);
 bool macros_deserialize(cJSON *root, void *out_struct);
+/*
+ * NOTE: Always returns NULL. Individual macros are serialized via
+ * macros_serialize_single(). This stub exists only to satisfy the
+ * cfgmod_serialize_fn signature required by cfgmod_register_kind().
+ * The generic USB GET path for macros is intercepted by the custom block
+ * in cfgmod_handle_usb_comm() before it reaches the generic handler.
+ */
 cJSON *macros_serialize(const void *in_struct);
 
 typedef struct {

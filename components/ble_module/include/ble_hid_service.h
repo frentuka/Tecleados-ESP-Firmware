@@ -3,10 +3,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 /**
  * @brief Initialize and register the HID GATT service.
  */
@@ -40,7 +36,3 @@ int ble_hid_tx_consumer_report(uint16_t conn_handle, uint16_t media_keycode);
  * @return int        0 on success, NimBLE error code otherwise
  */
 int ble_hid_notify_battery_level(uint16_t conn_handle, uint8_t level);
-
-#ifdef __cplusplus
-}
-#endif

@@ -88,8 +88,15 @@ bool macros_deserialize(cJSON *root, void *out_struct) {
 }
 
 cJSON *macros_serialize(const void *in_struct) {
-  // Unused for now, individual serialize handles it.
-  return NULL; 
+    /*
+     * Always returns NULL. Individual macros are serialized via
+     * macros_serialize_single(). This stub exists only to satisfy the
+     * cfgmod_serialize_fn signature required by cfgmod_register_kind().
+     * The generic USB GET path for macros is handled by the custom block
+     * in cfgmod_handle_usb_comm() before reaching the generic handler.
+     */
+    (void)in_struct;
+    return NULL;
 }
 
 static cJSON *serialize_single_macro_to_json(const cfg_macro_t *m) {
@@ -244,8 +251,12 @@ esp_err_t macros_delete_single(uint16_t id, cfg_macro_index_t *idx) {
 }
 
 void cfg_macros_register(void) {
-  // We no longer register the monolithic struct wrapper this way
-  // cfgmod_register_kind(CFGMOD_KIND_MACRO, ...);
+    /*
+     * Intentional no-op. The actual cfgmod_register_kind() call for
+     * CFGMOD_KIND_MACRO is made by kb_macro_init() in kb_macro.c, which
+     * owns the on_macros_updated callback. cfg_init() calls this function
+     * only to keep the registration site visible alongside the other kinds.
+     */
 }
 
 esp_err_t macros_load_all(cfg_macro_list_t *out_list) {

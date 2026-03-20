@@ -1,6 +1,7 @@
 #pragma once
 
 #include "cJSON.h"
+#include "cfgmod.h"
 #include "esp_err.h"
 #include <stdbool.h>
 #include <stddef.h>
@@ -97,8 +98,6 @@ esp_err_t ckeys_delete_single(uint16_t id, cfg_ckey_index_t *idx);
  * @param out_count Number of entries written.
  */
 esp_err_t ckeys_load_all(cfg_custom_key_t *out_arr, size_t *out_count);
-
-#include "cfgmod.h"
 
 /** Register the Custom Keys kind with cfgmod. Call once from cfg_init(). */
 void cfg_custom_keys_register(cfgmod_on_update_fn update_fn);
