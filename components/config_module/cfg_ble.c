@@ -9,7 +9,7 @@
 
 static const char *TAG = "cfg_ble";
 
-cfg_ble_state_t g_cfg_ble_state;
+static cfg_ble_state_t g_cfg_ble_state;
 
 static void ble_default(void *dest) {
     if (!dest) return;
@@ -111,7 +111,13 @@ static cJSON *ble_serialize(const void *src) {
 }
 
 static void on_ble_updated(const char *key) {
-    ESP_LOGI(TAG, "BLE configs updated from NVS");
+    esp_err_t err = cfgmod_get_config(CFGMOD_KIND_CONNECTION, key, &g_cfg_ble_state);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "BLE config reloaded: selected=%d, routing=%d",
+                 g_cfg_ble_state.selected_profile, g_cfg_ble_state.ble_routing_enabled);
+    } else {
+        ESP_LOGE(TAG, "BLE config reload failed: 0x%X", (unsigned)err);
+    }
 }
 
 void cfg_ble_init(void) {

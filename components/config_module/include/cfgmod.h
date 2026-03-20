@@ -51,7 +51,7 @@ typedef struct __attribute__((packed)) cfgmod_wire_header {
 esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
                                  size_t *out_len, size_t out_max);
 
-bool is_init(void);
+bool cfg_is_init(void);
 
 // Initialize cfg module dependencies (NVS, etc.).
 esp_err_t cfg_init(void);
@@ -75,7 +75,7 @@ esp_err_t cfgmod_register_kind(cfgmod_kind_t kind, cfgmod_default_fn def_fn,
 esp_err_t cfgmod_get_config(cfgmod_kind_t kind, const char *key,
                             void *out_struct);
 
-// Save a config struct to storage (serializes to JSON before saving)
+// Save a config struct to storage as a raw binary blob (calls update_fn on success)
 esp_err_t cfgmod_set_config(cfgmod_kind_t kind, const char *key,
                             const void *in_struct);
 

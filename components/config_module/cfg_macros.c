@@ -99,18 +99,26 @@ cJSON *macros_serialize(const void *in_struct) {
     return NULL;
 }
 
-static cJSON *serialize_single_macro_to_json(const cfg_macro_t *m) {
-    cJSON *macro_item = cJSON_CreateObject();
-    cJSON_AddNumberToObject(macro_item, "id", m->id);
-    cJSON_AddStringToObject(macro_item, "name", m->name);
-    cJSON_AddNumberToObject(macro_item, "execMode", m->exec_mode);
+/* Build a JSON object with the macro's header fields (no elements array). */
+static cJSON *serialize_macro_header_json(const cfg_macro_t *m) {
+    cJSON *obj = cJSON_CreateObject();
+    if (!obj) return NULL;
+    cJSON_AddNumberToObject(obj, "id",       m->id);
+    cJSON_AddStringToObject(obj, "name",     m->name);
+    cJSON_AddNumberToObject(obj, "execMode", m->exec_mode);
     if (m->exec_mode == MACRO_EXEC_ONCE_STACK_N) {
-      cJSON_AddNumberToObject(macro_item, "stackMax", m->stack_max);
+        cJSON_AddNumberToObject(obj, "stackMax",     m->stack_max);
     }
     if (m->exec_mode == MACRO_EXEC_BURST_N) {
-      cJSON_AddNumberToObject(macro_item, "repeatCount", m->repeat_count);
+        cJSON_AddNumberToObject(obj, "repeatCount",  m->repeat_count);
     }
-    
+    return obj;
+}
+
+static cJSON *serialize_single_macro_to_json(const cfg_macro_t *m) {
+    cJSON *macro_item = serialize_macro_header_json(m);
+    if (!macro_item) return NULL;
+
     cJSON *elements = cJSON_CreateArray();
     for (size_t j = 0; j < m->event_count; j++) {
       cJSON *el = cJSON_CreateObject();
@@ -157,17 +165,8 @@ cJSON *macros_serialize_outline(const cfg_macro_index_t *idx) {
           
           size_t len = sizeof(cfg_macro_t);
           if (cfgmod_read_storage(CFGMOD_KIND_MACRO, key, temp, &len) == ESP_OK && len == sizeof(cfg_macro_t)) {
-                cJSON *macro_item = cJSON_CreateObject();
-                cJSON_AddNumberToObject(macro_item, "id", temp->id);
-                cJSON_AddStringToObject(macro_item, "name", temp->name);
-                cJSON_AddNumberToObject(macro_item, "execMode", temp->exec_mode);
-                if (temp->exec_mode == MACRO_EXEC_ONCE_STACK_N) {
-                  cJSON_AddNumberToObject(macro_item, "stackMax", temp->stack_max);
-                }
-                if (temp->exec_mode == MACRO_EXEC_BURST_N) {
-                  cJSON_AddNumberToObject(macro_item, "repeatCount", temp->repeat_count);
-                }
-                cJSON_AddItemToArray(macros_arr, macro_item);
+                cJSON *macro_item = serialize_macro_header_json(temp);
+                if (macro_item) cJSON_AddItemToArray(macros_arr, macro_item);
           }
           free(temp);
       }

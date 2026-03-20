@@ -58,7 +58,7 @@ Each kind writes to its own NVS namespace for isolation and to stay within NVS's
 | PHYSICAL          | `cfg`         | `k4_physical` (prefixed)      | Uses fallback prefix scheme     |
 | CKEY              | `cfg_ck`      | `ck_0`…`ck_119`, `ck_idx`     | Individual blobs + bitmap index |
 
-Kinds with a dedicated namespace use the raw key name directly. Kinds using the fallback `cfg` namespace have their key prefixed with `k<kind_int>_` to avoid collisions (enforced by `cfgmod_build_key()`).
+Kinds with a dedicated namespace use the raw key name directly. Kinds using the fallback `cfg` namespace have their key prefixed with `k<kind_int>_` to avoid collisions (enforced by the internal `cfgmod_build_key()` + `resolve_ns_and_key()` helpers in `cfgmod.c`).
 
 ### Binary vs JSON Dual-Path Storage
 
@@ -141,6 +141,8 @@ Stores four keyboard layers (0–3). Each layer is a `cfg_layer_t` — a 2D arra
 - `s_dram_swap` — one additional layer cached in DRAM at a time; swapped on access from PSRAM
 
 `cfg_layout_get_action_code()` is the hot-path function called from the keyboard scan loop. It returns `ACTION_CODE_NONE` for out-of-bounds access and falls through transparent keys (`KB_KEY_TRANSPARENT`) to layer 0.
+
+**First-boot / empty NVS:** `cfg_layout_load_all()` calls `cfgmod_read_storage()` directly instead of `cfgmod_get_config()`. This is intentional — `cfgmod_get_config()` always returns `ESP_OK` (zeroing the struct via `layout_default` when NVS is empty), making it impossible to distinguish "loaded from NVS" from "NVS was empty". Using `cfgmod_read_storage()` lets the function detect a true NVS miss and fall back to the compile-time `keymaps[]` defaults.
 
 **On USB SET**: `layout_update_cb()` reloads the affected layer into the PSRAM cache and updates the DRAM mirrors if applicable.
 
@@ -255,9 +257,11 @@ Stores up to **9 BLE pairing profiles** plus global BLE routing state.
 - `selected_profile` — active profile index (0–8)
 - `ble_routing_enabled` — whether BLE HID reports are sent (default `true`)
 
-**Access pattern:** Module-local global `g_cfg_ble_state` is kept in sync with NVS. Callers use the getter/setter API exclusively:
+**Access pattern:** Module-local `g_cfg_ble_state` (static — not exported) is kept in sync with NVS. Callers use the getter/setter API exclusively:
 - `cfg_ble_get_state()` — returns `const` pointer to the in-memory state (no NVS read)
 - `cfg_ble_save_state(state)` — copies `state` into `g_cfg_ble_state` and persists to NVS
+
+`on_ble_updated()` (the `cfgmod_on_update_fn` callback) reloads `g_cfg_ble_state` from NVS so that any future USB SET path targeting `CFGMOD_KIND_CONNECTION` keeps the in-memory state consistent.
 
 **NVS key:** `k2_ble_cfg` (prefixed) in namespace `cfg`.
 
@@ -271,7 +275,7 @@ All functions are declared in [include/cfgmod.h](include/cfgmod.h).
 |------------------------------------------------------------|-----------------------------------------------------------------------------|
 | `cfg_init()`                                               | Initialize NVS, cJSON PSRAM hooks, register all kinds, install USB callback |
 | `cfg_deinit()`                                             | Placeholder for future cleanup (currently no-op)                            |
-| `is_init()`                                                | Returns `true` after `cfg_init()` succeeds                                  |
+| `cfg_is_init()`                                            | Returns `true` after `cfg_init()` succeeds                                  |
 | `cfgmod_register_kind(...)`                                | Register a config kind with its callbacks and struct size                   |
 | `cfgmod_get_config(kind, key, out)`                        | Load a config struct: defaults → NVS binary → NVS JSON fallback             |
 | `cfgmod_set_config(kind, key, in)`                         | Save a config struct as binary to NVS; calls `update_fn` on success         |

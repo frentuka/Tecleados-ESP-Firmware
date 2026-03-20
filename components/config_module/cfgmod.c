@@ -376,11 +376,36 @@ static esp_err_t cfgmod_build_key(cfgmod_kind_t kind, const char *key,
   return ESP_OK;
 }
 
+/*
+ * Resolve the NVS namespace and key name for a given (kind, key) pair.
+ * Kinds with a dedicated namespace use it directly; all others use the
+ * shared "cfg" namespace with a "k<kind>_<key>" prefix to avoid collisions.
+ *
+ * key_buf / key_buf_len is scratch space owned by the caller; out_nvs_key
+ * points into it when the prefix scheme is used, or directly into key otherwise.
+ */
+static esp_err_t resolve_ns_and_key(cfgmod_kind_t kind, const char *key,
+                                    const char **out_ns, const char **out_nvs_key,
+                                    char *key_buf, size_t key_buf_len) {
+  if (kind < CFGMOD_KIND_MAX && s_kind_ns[kind]) {
+    *out_ns      = s_kind_ns[kind];
+    *out_nvs_key = key;
+  } else {
+    *out_ns = CFGMOD_NVS_NAMESPACE;
+    esp_err_t err = cfgmod_build_key(kind, key, key_buf, key_buf_len);
+    if (err != ESP_OK) return err;
+    *out_nvs_key = key_buf;
+  }
+  return ESP_OK;
+}
+
 static bool s_init = false;
-bool is_init(void) { return s_init; }
+bool cfg_is_init(void) { return s_init; }
+
+#define CFG_USB_RESP_BUF_SIZE 32000
 
 bool cfg_usb_callback(uint8_t *data, uint16_t data_len) {
-    size_t buf_size = 32000;
+    size_t buf_size = CFG_USB_RESP_BUF_SIZE;
     uint8_t *out_buf = heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!out_buf) out_buf = malloc(buf_size); // fallback to internal RAM
     if (!out_buf) {
@@ -458,24 +483,14 @@ esp_err_t cfgmod_read_storage(cfgmod_kind_t kind, const char *key,
     return ESP_ERR_INVALID_ARG;
   }
 
-  const char *ns;
-  const char *nvs_key;
+  const char *ns, *nvs_key;
   char nvs_key_buf[16] = {0};
-  if (kind < CFGMOD_KIND_MAX && s_kind_ns[kind]) {
-    ns = s_kind_ns[kind];
-    nvs_key = key;
-  } else {
-    ns = CFGMOD_NVS_NAMESPACE;
-    esp_err_t build_err = cfgmod_build_key(kind, key, nvs_key_buf, sizeof(nvs_key_buf));
-    if (build_err != ESP_OK) return build_err;
-    nvs_key = nvs_key_buf;
-  }
+  esp_err_t err = resolve_ns_and_key(kind, key, &ns, &nvs_key, nvs_key_buf, sizeof(nvs_key_buf));
+  if (err != ESP_OK) return err;
 
   nvs_handle_t handle;
-  esp_err_t err = nvs_open(ns, NVS_READONLY, &handle);
-  if (err != ESP_OK) {
-    return err;
-  }
+  err = nvs_open(ns, NVS_READONLY, &handle);
+  if (err != ESP_OK) return err;
 
   err = nvs_get_blob(handle, nvs_key, out_buf, inout_len);
   nvs_close(handle);
@@ -489,24 +504,14 @@ esp_err_t cfgmod_write_storage(cfgmod_kind_t kind, const char *key,
     return ESP_ERR_INVALID_ARG;
   }
 
-  const char *ns;
-  const char *nvs_key;
+  const char *ns, *nvs_key;
   char nvs_key_buf[16] = {0};
-  if (kind < CFGMOD_KIND_MAX && s_kind_ns[kind]) {
-    ns = s_kind_ns[kind];
-    nvs_key = key;
-  } else {
-    ns = CFGMOD_NVS_NAMESPACE;
-    esp_err_t build_err = cfgmod_build_key(kind, key, nvs_key_buf, sizeof(nvs_key_buf));
-    if (build_err != ESP_OK) return build_err;
-    nvs_key = nvs_key_buf;
-  }
+  esp_err_t err = resolve_ns_and_key(kind, key, &ns, &nvs_key, nvs_key_buf, sizeof(nvs_key_buf));
+  if (err != ESP_OK) return err;
 
   nvs_handle_t handle;
-  esp_err_t err = nvs_open(ns, NVS_READWRITE, &handle);
-  if (err != ESP_OK) {
-    return err;
-  }
+  err = nvs_open(ns, NVS_READWRITE, &handle);
+  if (err != ESP_OK) return err;
 
   err = nvs_set_blob(handle, nvs_key, data, len);
   ESP_LOGI(TAG, "NVS set_blob %s/%s (len=%u) ret=0x%X", ns, nvs_key, (unsigned)len, (unsigned)err);
@@ -517,29 +522,21 @@ esp_err_t cfgmod_write_storage(cfgmod_kind_t kind, const char *key,
   return err;
 }
 
-// Fetch a config struct from storage
+// Fetch a config struct from storage (applies defaults then tries NVS binary/JSON)
 esp_err_t cfgmod_get_config(cfgmod_kind_t kind, const char *key,
                             void *out_struct) {
   if (kind >= CFGMOD_KIND_MAX || !s_registry[kind].registered || !out_struct) {
     return ESP_ERR_INVALID_ARG;
   }
 
-  // 1. Apply defaults first (fail-safe)
+  // 1. Apply defaults first (fail-safe baseline)
   s_registry[kind].def_fn(out_struct);
 
-  // 2. Read from NVS
-  const char *ns;
-  const char *nvs_key;
+  // 2. Resolve NVS namespace and key name
+  const char *ns, *nvs_key;
   char nvs_key_buf[16] = {0};
-  if (kind < CFGMOD_KIND_MAX && s_kind_ns[kind]) {
-    ns = s_kind_ns[kind];
-    nvs_key = key;
-  } else {
-    ns = CFGMOD_NVS_NAMESPACE;
-    if (cfgmod_build_key(kind, key, nvs_key_buf, sizeof(nvs_key_buf)) != ESP_OK) {
-      return ESP_OK; // fallback to default
-    }
-    nvs_key = nvs_key_buf;
+  if (resolve_ns_and_key(kind, key, &ns, &nvs_key, nvs_key_buf, sizeof(nvs_key_buf)) != ESP_OK) {
+    return ESP_OK; // fallback to default
   }
 
   nvs_handle_t handle;
