@@ -11,6 +11,7 @@
 #include "kb_layout.h"
 #include "kb_macro.h"
 #include "kb_system_action.h"
+#include "event_bus.h"
 
 static const char *TAG = "kb_ckey";
 
@@ -62,28 +63,14 @@ static void process_pr(const cfg_custom_key_t *ck, bool is_pressed) {
    MultiAction mode — tap/hold outcome routing
    ================================================================ */
 
-/*
- * The tap/hold engine fires generic KB_EV_* events.  We intercept them
- * here by registering a secondary callback that checks whether the
- * action code is in the CKey range, and if so, resolves and fires the
- * correct inner action.
- *
- * Design note: kb_system_action has a single s_action_cb slot used by
- * kb_macro.c.  Rather than making that a list, we chain-call from within
- * the ckey module: kb_macro.c keeps its existing callback; for CKey MA
- * codes we bypass the single-callback path and handle the event entirely
- * in our own registered callback.  We achieve this by registering our
- * own cb AFTER kb_macro_init() calls kb_system_action_register_cb().
- * We save the existing cb and call it if the code is not ours.
- */
+static void ckey_action_event_handler(void *arg, esp_event_base_t base,
+                                      int32_t id, void *data) {
+    const kb_sys_action_event_t *ev = (const kb_sys_action_event_t *)data;
+    uint16_t action_code = ev->action_code;
+    kb_action_ev_t event = (kb_action_ev_t)ev->event;
 
-static kb_sys_action_cb_t s_prev_action_cb = NULL;
-
-static void ckey_action_event_cb(uint16_t action_code, kb_action_ev_t event) {
-    /* Route non-CKey action codes to the existing system-action callback */
     if (action_code < ACTION_CODE_CKEY_MIN || action_code > ACTION_CODE_CKEY_MAX) {
-        if (s_prev_action_cb) s_prev_action_cb(action_code, event);
-        return;
+        return; // Not our event — other subscribers handle non-CKey codes.
     }
 
     /*
@@ -91,8 +78,8 @@ static void ckey_action_event_cb(uint16_t action_code, kb_action_ev_t event) {
      * (SINGLE_TAP / DOUBLE_TAP / HOLD).
      * PRESS / RELEASE are raw and already fired synchronously.
      */
-    uint16_t id = action_code - ACTION_CODE_CKEY_MIN;
-    const cfg_custom_key_t *ck = find_ckey(id);
+    uint16_t ckey_id = action_code - ACTION_CODE_CKEY_MIN;
+    const cfg_custom_key_t *ck = find_ckey(ckey_id);
     if (!ck || ck->mode != CKEY_MODE_MULTI_ACTION) return;
 
     switch (event) {
@@ -140,6 +127,14 @@ void kb_custom_key_reload(const char *key) {
     }
 }
 
+static void ckey_config_update_handler(void *arg, esp_event_base_t base,
+                                       int32_t event_id, void *data) {
+    const config_update_event_t *ev = (const config_update_event_t *)data;
+    if (ev->kind == (uint8_t)CFGMOD_KIND_CKEY) {
+        kb_custom_key_reload(ev->key);
+    }
+}
+
 void kb_custom_key_init(void) {
     /* Allocate runtime state in PSRAM */
     s_ckeys = heap_caps_malloc(sizeof(cfg_custom_key_t) * CFG_CKEYS_MAX_COUNT, MALLOC_CAP_SPIRAM);
@@ -155,16 +150,14 @@ void kb_custom_key_init(void) {
         memset(s_press_end_tick, 0, sizeof(TickType_t) * CFG_CKEYS_MAX_COUNT);
     }
 
-    /* Chain-install our event callback AFTER the system-action engine has been
-     * set up by kb_macro_init() (which calls kb_system_action_register_cb()).
-     * We save the previous callback and forward non-CKey events to it. */
-    s_prev_action_cb = kb_system_action_get_cb();
-    kb_system_action_register_cb(ckey_action_event_cb);
- 
-    /* Re-register CKEY kind with our reload callback.
-     * Matches the pattern used by kb_macro_init() for CFGMOD_KIND_MACRO.
-     * cfg_init() registers with NULL; we override here once memory is ready. */
-    cfg_custom_keys_register(kb_custom_key_reload);
+    /* Subscribe to system action events for MultiAction CKey processing.
+     * Each subscriber registers independently — no manual chain-forwarding needed. */
+    esp_event_handler_register(KB_EVENTS, KB_EVENT_SYSTEM_ACTION,
+                               ckey_action_event_handler, NULL);
+
+    /* Subscribe to config update events to reload custom keys when they change. */
+    esp_event_handler_register(CONFIG_EVENTS, CONFIG_EVENT_KIND_UPDATED,
+                               ckey_config_update_handler, NULL);
 
     /* Load initial table */
     kb_custom_key_reload("init");

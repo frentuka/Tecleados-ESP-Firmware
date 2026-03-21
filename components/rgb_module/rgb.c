@@ -15,6 +15,8 @@
 #include "driver/rmt_tx.h"
 #include "driver/rmt_encoder.h"
 
+#include "event_bus.h"
+
 static const char *TAG = "RGB_Light";
 
 // Estado lógico
@@ -69,6 +71,17 @@ static void rgb_worker_task(void *arg)
     }
 }
 
+static void rgb_led_state_handler(void *arg, esp_event_base_t base,
+                                  int32_t event_id, void *data) {
+    uint8_t led = *(uint8_t *)data;
+    if (led & KB_LED_BIT_CAPS_LOCK) {
+        rgb_set_color((RGBColor){25, 0, 0});
+        rgb_set(true);
+    } else {
+        rgb_set(false);
+    }
+}
+
 int rgb_init(gpio_num_t data_gpio)
 {
     if (s_inited) return 0;
@@ -106,6 +119,8 @@ int rgb_init(gpio_num_t data_gpio)
     s_on = false;
     s_color = (RGBColor){40,0,0};
     s_inited = true;
+
+    esp_event_handler_register(KB_EVENTS, KB_EVENT_LED_STATE, rgb_led_state_handler, NULL);
 
     ESP_LOGI(TAG, "Init on GPIO %d: OK", (int)data_gpio);
     return 0;

@@ -19,6 +19,7 @@
 
 #include "ble_hid_service.h"
 #include "cfg_ble.h"
+#include "event_bus.h"
 
 static const char *TAG = "ble_hid_mod";
 
@@ -82,6 +83,7 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
         if (profile >= 0 && profile < CFG_BLE_MAX_PROFILES) {
             s_conn_handles[profile] = event->connect.conn_handle;
             ESP_LOGI(TAG, "Mapped connection %d to profile %d (via arg)", event->connect.conn_handle, profile);
+            esp_event_post(BLE_EVENTS, BLE_EVENT_PROFILE_CONNECTED, &profile, sizeof(int), 0);
         } else {
             ESP_LOGW(TAG, "Could not map connection to profile!");
         }
@@ -114,6 +116,7 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
         if (s_conn_handles[i] == event->disconnect.conn.conn_handle) {
             ESP_LOGI(TAG, "Connection for profile %d cleared.", i);
             s_conn_handles[i] = BLE_HS_CONN_HANDLE_NONE;
+            esp_event_post(BLE_EVENTS, BLE_EVENT_PROFILE_DISCONNECTED, &i, sizeof(int), 0);
         }
     }
     // Resume advertising (Background, Pairing, or Reconnection)
@@ -153,16 +156,16 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
     if (event->enc_change.status == 0) {
       ESP_LOGI(TAG, "Connection successfully encrypted (pairing complete)");
 
-      // If we were in pairing mode, NOW we save the credentials
+      // If we were in pairing mode, fire event so cfg_ble saves credentials.
       if (s_pairing_profile >= 0 && s_pairing_profile < CFG_BLE_MAX_PROFILES) {
-          ESP_LOGI(TAG, "Saving newly connected MAC to profile %d", s_pairing_profile);
+          ESP_LOGI(TAG, "Pairing complete for profile %d. Firing event.", s_pairing_profile);
 
-          cfg_ble_state_t new_state = *cfg_ble_get_state();
-          new_state.profiles[s_pairing_profile].is_valid = true;
-          new_state.profiles[s_pairing_profile].addr_type = s_pending_addr.type;
-          memcpy(new_state.profiles[s_pairing_profile].val, s_pending_addr.val, 6);
-          new_state.selected_profile = s_pairing_profile;
-          cfg_ble_save_state(&new_state);
+          ble_pairing_result_t result = {
+              .profile_idx = s_pairing_profile,
+              .addr_type   = s_pending_addr.type,
+          };
+          memcpy(result.addr, s_pending_addr.val, 6);
+          esp_event_post(BLE_EVENTS, BLE_EVENT_PAIRING_COMPLETE, &result, sizeof(result), 0);
 
           ESP_LOGI(TAG, "Pairing success. Clearing s_pairing_profile.");
           s_pairing_profile = -1;
@@ -171,8 +174,12 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
     } else {
       ESP_LOGE(TAG, "Encryption failed, status=%d", event->enc_change.status);
       ESP_LOGI(TAG, "Pairing failed. Clearing s_pairing_profile.");
-      s_pairing_profile = -1;
-      esp_timer_stop(s_pairing_timeout_timer);
+      if (s_pairing_profile != -1) {
+          int failed_profile = s_pairing_profile;
+          s_pairing_profile = -1;
+          esp_timer_stop(s_pairing_timeout_timer);
+          esp_event_post(BLE_EVENTS, BLE_EVENT_PAIRING_FAILED, &failed_profile, sizeof(int), 0);
+      }
     }
     break;
 
@@ -459,7 +466,9 @@ void ble_hid_init(void) {
 static void ble_hid_pairing_timeout_cb(void *arg) {
     if (s_pairing_profile != -1) {
         ESP_LOGW(TAG, "ABSOLUTE Pairing timeout for profile %d. Stopping pairing mode.", s_pairing_profile);
+        int timed_out_profile = s_pairing_profile;
         s_pairing_profile = -1;
+        esp_event_post(BLE_EVENTS, BLE_EVENT_PAIRING_TIMEOUT, &timed_out_profile, sizeof(int), 0);
         ble_hid_advertise(); // Restart in background or stop
     }
 }
@@ -544,6 +553,8 @@ void ble_hid_profile_pair(uint8_t profile_id) {
     ESP_LOGI(TAG, "[BLE API] Setting s_pairing_profile = %d", profile_id);
     s_pairing_profile = profile_id;
     s_directed_profile = -1;
+    int pairing_profile_int = (int)profile_id;
+    esp_event_post(BLE_EVENTS, BLE_EVENT_PAIRING_STARTED, &pairing_profile_int, sizeof(int), 0);
 
     // Start absolute pairing timeout timer
     esp_timer_stop(s_pairing_timeout_timer);
@@ -612,6 +623,7 @@ void ble_hid_set_routing_active(bool active) {
     cfg_ble_state_t new_state = *cfg_ble_get_state();
     new_state.ble_routing_enabled = active;
     cfg_ble_save_state(&new_state);
+    esp_event_post(BLE_EVENTS, BLE_EVENT_ROUTING_CHANGED, &active, sizeof(bool), 0);
 
     if (active) {
         if (!was_active) {

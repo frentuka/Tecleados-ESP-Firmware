@@ -13,6 +13,13 @@
 
 #include "cfg_custom_keys.h"
 #include "cfg_macros.h"
+#include "event_bus.h"
+
+static inline void cfgmod_post_update_event(cfgmod_kind_t kind, const char *key) {
+    config_update_event_t ev = { .kind = (uint8_t)kind };
+    strlcpy(ev.key, key ? key : "", sizeof(ev.key));
+    esp_event_post(CONFIG_EVENTS, CONFIG_EVENT_KIND_UPDATED, &ev, sizeof(ev), 0);
+}
 
 // module initializers
 extern void cfg_layouts_register(void);
@@ -196,8 +203,11 @@ esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
 
       if (status != ESP_OK) {
         ESP_LOGE(TAG, "NVS write failed for macro: 0x%X", (unsigned)status);
-      } else if (s_registry[CFGMOD_KIND_MACRO].update_fn) {
-        s_registry[CFGMOD_KIND_MACRO].update_fn("macros");
+      } else {
+        if (s_registry[CFGMOD_KIND_MACRO].update_fn) {
+          s_registry[CFGMOD_KIND_MACRO].update_fn("macros");
+        }
+        cfgmod_post_update_event(CFGMOD_KIND_MACRO, "macros");
       }
       cJSON_Delete(root);
     } else {
@@ -276,8 +286,11 @@ esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
 
       if (status != ESP_OK) {
         ESP_LOGE(TAG, "Custom key NVS write failed: 0x%X", (unsigned)status);
-      } else if (s_registry[CFGMOD_KIND_CKEY].update_fn) {
-        s_registry[CFGMOD_KIND_CKEY].update_fn("ckeys");
+      } else {
+        if (s_registry[CFGMOD_KIND_CKEY].update_fn) {
+          s_registry[CFGMOD_KIND_CKEY].update_fn("ckeys");
+        }
+        cfgmod_post_update_event(CFGMOD_KIND_CKEY, "ckeys");
       }
       cJSON_Delete(root);
     } else {
@@ -602,8 +615,11 @@ esp_err_t cfgmod_set_config(cfgmod_kind_t kind, const char *key,
   // Write binary directly instead of JSON
   esp_err_t err = cfgmod_write_storage(kind, key, in_struct, s_registry[kind].struct_size);
 
-  if (err == ESP_OK && s_registry[kind].update_fn) {
-    s_registry[kind].update_fn(key);
+  if (err == ESP_OK) {
+    if (s_registry[kind].update_fn) {
+      s_registry[kind].update_fn(key);
+    }
+    cfgmod_post_update_event(kind, key);
   }
   return err;
 }

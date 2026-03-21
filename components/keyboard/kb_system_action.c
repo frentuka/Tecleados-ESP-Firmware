@@ -7,6 +7,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include "event_bus.h"
+
 static const char *TAG = "kb_sys_action";
 
 #define DOUBLE_TAP_TIMEOUT_US_DEFAULT  300000LL  /* 300 ms */
@@ -30,16 +32,14 @@ typedef struct {
     int64_t        hold_timeout_us;
 } action_tracker_t;
 
-static action_tracker_t    s_trackers[MAX_CONCURRENT_ACTIONS];
-static kb_sys_action_cb_t  s_action_cb  = NULL;
-static TaskHandle_t        s_task_handle = NULL;
+static action_tracker_t s_trackers[MAX_CONCURRENT_ACTIONS];
+static TaskHandle_t     s_task_handle = NULL;
 
 /* ---- Event notification ---- */
 
 static void notify_event(uint16_t action_code, kb_action_ev_t event) {
-    if (s_action_cb) {
-        s_action_cb(action_code, event);
-    }
+    kb_sys_action_event_t ev = { .action_code = action_code, .event = (int)event };
+    esp_event_post(KB_EVENTS, KB_EVENT_SYSTEM_ACTION, &ev, sizeof(ev), 0);
 }
 
 /* ---- Tracker lifetime ---- */
@@ -160,13 +160,6 @@ void kb_system_action_init(void) {
     }
 }
 
-void kb_system_action_register_cb(kb_sys_action_cb_t cb) {
-    s_action_cb = cb;
-}
-
-kb_sys_action_cb_t kb_system_action_get_cb(void) {
-    return s_action_cb;
-}
 
 void kb_system_action_process(uint16_t action_code, bool is_pressed) {
     process_action(action_code, is_pressed, NULL);

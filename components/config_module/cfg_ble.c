@@ -6,6 +6,7 @@
 #include "cJSON.h"
 #include "cfgmod.h"
 #include "cfg_storage_keys.h"
+#include "event_bus.h"
 
 static const char *TAG = "cfg_ble";
 
@@ -120,16 +121,34 @@ static void on_ble_updated(const char *key) {
     }
 }
 
+static void cfg_ble_on_pairing_complete(void *arg, esp_event_base_t base,
+                                        int32_t event_id, void *data) {
+    const ble_pairing_result_t *r = (const ble_pairing_result_t *)data;
+    if (r->profile_idx < 0 || r->profile_idx >= CFG_BLE_MAX_PROFILES) return;
+
+    ESP_LOGI(TAG, "Saving pairing result for profile %d via event", r->profile_idx);
+    cfg_ble_state_t new_state = g_cfg_ble_state;
+    new_state.profiles[r->profile_idx].is_valid  = true;
+    new_state.profiles[r->profile_idx].addr_type = r->addr_type;
+    memcpy(new_state.profiles[r->profile_idx].val, r->addr, 6);
+    new_state.selected_profile = r->profile_idx;
+    cfg_ble_save_state(&new_state);
+}
+
 void cfg_ble_init(void) {
     ble_default(&g_cfg_ble_state);
-    
-    cfgmod_register_kind(CFGMOD_KIND_CONNECTION, ble_default, ble_deserialize, 
+
+    cfgmod_register_kind(CFGMOD_KIND_CONNECTION, ble_default, ble_deserialize,
                          ble_serialize, on_ble_updated, sizeof(cfg_ble_state_t));
-                         
+
+    // Subscribe to pairing complete event — owns the credential save.
+    esp_event_handler_register(BLE_EVENTS, BLE_EVENT_PAIRING_COMPLETE,
+                               cfg_ble_on_pairing_complete, NULL);
+
     // Load initial from NVS if available
     esp_err_t err = cfgmod_get_config(CFGMOD_KIND_CONNECTION, "ble_cfg", &g_cfg_ble_state);
     if (err == ESP_OK) {
-        ESP_LOGI(TAG, "Loaded BLE config, selected=%d, routing=%d", 
+        ESP_LOGI(TAG, "Loaded BLE config, selected=%d, routing=%d",
                  g_cfg_ble_state.selected_profile, g_cfg_ble_state.ble_routing_enabled);
     } else {
         ESP_LOGI(TAG, "No BLE config found in NVS, using defaults");
