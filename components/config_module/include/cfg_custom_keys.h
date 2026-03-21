@@ -1,12 +1,13 @@
 #pragma once
 
 #include "cJSON.h"
+#include "cfgmod.h"
 #include "esp_err.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
-#define CFG_CKEYS_MAX_COUNT 32
+#define CFG_CKEYS_MAX_COUNT 120
 
 /**
  * @brief Mode of a Custom Key.
@@ -66,10 +67,10 @@ typedef struct {
 
 /**
  * @brief Lightweight index stored in NVS to track which Custom Key IDs exist.
- * Bit N in active_mask = 1 means Custom Key N is present.
+ * Bit N in mask = 1 means Custom Key N is present. 15 bytes = 120 bits exactly.
  */
 typedef struct {
-    uint32_t active_mask;
+    uint8_t mask[15];
 } cfg_ckey_index_t;
 
 /* ---- cfgmod handler callbacks ---- */
@@ -97,8 +98,6 @@ esp_err_t ckeys_delete_single(uint16_t id, cfg_ckey_index_t *idx);
  * @param out_count Number of entries written.
  */
 esp_err_t ckeys_load_all(cfg_custom_key_t *out_arr, size_t *out_count);
-
-#include "cfgmod.h"
 
 /** Register the Custom Keys kind with cfgmod. Call once from cfg_init(). */
 void cfg_custom_keys_register(cfgmod_on_update_fn update_fn);

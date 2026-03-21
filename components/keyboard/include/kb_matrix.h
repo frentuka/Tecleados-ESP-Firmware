@@ -1,7 +1,7 @@
 #pragma once
 
-#include <stdio.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
@@ -56,10 +56,16 @@
 #define KB_MATRIX_KEYS (KB_MATRIX_ROW_COUNT * KB_MATRIX_COL_COUNT)
 #define KB_MATRIX_BITMAP_BYTES ((KB_MATRIX_KEYS + 7) / 8)
 
-// Writes a row-major bitmap of pressed keys into out_active_rc_pairs.
-// Bit index = (row_index * KB_MATRIX_COL_COUNT) + col_index.
-// Buffer length must be KB_MATRIX_BITMAP_BYTES.
-void scan(uint8_t* out_active_rc_pairs);
+/**
+ * @brief Scan the physical key matrix into a row-major pressed-key bitmap.
+ *
+ * Drives each column LOW in turn, reads all rows, and sets the corresponding
+ * bit in @p out_matrix_bitmap.
+ * Bit index = (row_index * KB_MATRIX_COL_COUNT) + col_index.
+ * The caller must supply a buffer of at least KB_MATRIX_BITMAP_BYTES bytes.
+ */
+void kb_matrix_scan(uint8_t *out_matrix_bitmap);
+
 void kb_matrix_gpio_init(void);
 
 // Interrupt control

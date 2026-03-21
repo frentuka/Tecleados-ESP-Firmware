@@ -11,7 +11,8 @@ static void sys_update_cb(const char *key) { s_sys_loaded = false; }
 
 static void sys_default(void *out_struct) {
   cfg_system_t *s = (cfg_system_t *)out_struct;
-  strcpy(s->device_name, "Antigravity KB");
+  strncpy(s->device_name, "Antigravity KB", sizeof(s->device_name) - 1);
+  s->device_name[sizeof(s->device_name) - 1] = '\0';
   s->sleep_timeout_ms = 300000; // 5 mins
   s->rgb_brightness = 255;
   s->bluetooth_enabled = true;

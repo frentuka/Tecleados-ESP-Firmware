@@ -15,14 +15,6 @@ typedef enum {
 } kb_action_ev_t;
 
 /**
- * @brief Callback type for system action events.
- *
- * @param action_code The SYS_ACTION_* or Custom Key action code that triggered the event.
- * @param event The type of event that occurred.
- */
-typedef void (*kb_sys_action_cb_t)(uint16_t action_code, kb_action_ev_t event);
-
-/**
  * @brief Per-action timing configuration for the tap/hold engine.
  * Used by Custom Keys (MultiAction mode) to override the engine's global defaults.
  * Set a field to 0 to use the engine's built-in default for that threshold.
@@ -36,21 +28,6 @@ typedef struct {
  * @brief Initialize the system action generic tap/hold engine.
  */
 void kb_system_action_init(void);
-
-/**
- * @brief Register a callback to receive system action events.
- * Currently supports a single callback (usually the application-level controller).
- *
- * @param cb The callback function.
- */
-void kb_system_action_register_cb(kb_sys_action_cb_t cb);
-
-/**
- * @brief Get the currently registered system action callback.
- * 
- * @return The registered callback function, or NULL if none.
- */
-kb_sys_action_cb_t kb_system_action_get_cb(void);
 
 /**
  * @brief Process a raw system action press/release from the keyboard matrix.

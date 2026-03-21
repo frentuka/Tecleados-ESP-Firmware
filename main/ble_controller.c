@@ -4,10 +4,16 @@
 #include "kb_system_action.h"
 #include "kb_layout.h"
 #include "blemod.h"
+#include "event_bus.h"
 
 static const char *TAG = "ble_ctrl";
 
-static void on_kb_sys_action(uint16_t action_code, kb_action_ev_t event) {
+static void on_kb_sys_action(void *arg, esp_event_base_t base,
+                             int32_t event_id, void *event_data) {
+    const kb_sys_action_event_t *ev = (const kb_sys_action_event_t *)event_data;
+    uint16_t action_code = ev->action_code;
+    kb_action_ev_t event = (kb_action_ev_t)ev->event;
+
     if (action_code == SYS_ACTION_BLE_TOGGLE) {
         if (event == KB_EV_SINGLE_TAP) {
             ESP_LOGI(TAG, "BLE Toggle Pressed");
@@ -40,5 +46,5 @@ static void on_kb_sys_action(uint16_t action_code, kb_action_ev_t event) {
 
 void ble_controller_init(void) {
     ESP_LOGI(TAG, "Initializing BLE Application Controller");
-    kb_system_action_register_cb(on_kb_sys_action);
+    esp_event_handler_register(KB_EVENTS, KB_EVENT_SYSTEM_ACTION, on_kb_sys_action, NULL);
 }

@@ -795,10 +795,10 @@ h3 {
 }
 
 .btn-icon {
-  width: 40px;
-  height: 40px;
+  width: 28px;
+  height: 28px;
   padding: 0;
-  border-radius: 50%;
+  border-radius: 6px;
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid var(--border-color);
   color: var(--text-secondary);
@@ -1990,11 +1990,11 @@ village .preview-sleep-icon {
   box-shadow: 0 4px 15px rgba(163, 113, 247, 0.25);
 }
 
-/* Macro ID in bottom-right corner (Developer Mode) */
+/* Macro ID in bottom-left corner (Developer Mode) */
 .macro-id-dev {
   position: absolute;
   bottom: 0.6rem;
-  right: 0.8rem;
+  left: 0.8rem;
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
   font-size: 0.65rem;
   font-weight: 600;

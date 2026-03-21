@@ -19,8 +19,6 @@ typedef struct {
     bool ble_routing_enabled; // True if BLE_TG is ON
 } cfg_ble_state_t;
 
-extern cfg_ble_state_t g_cfg_ble_state;
-
 /**
  * @brief Initialize BLE configuration and load it from storage if present.
  */

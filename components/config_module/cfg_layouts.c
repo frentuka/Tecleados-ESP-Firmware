@@ -133,7 +133,6 @@ void cfg_layouts_register(void) {
 /*
     Load all layers from NVS into cache.
     Falls back to compile-time keymaps[] defaults if NVS is empty/corrupt.
-    On first boot, also persists the defaults to NVS.
 */
 esp_err_t cfg_layout_load_all(void) {
   if (!s_psram_cache) {
@@ -145,19 +144,23 @@ esp_err_t cfg_layout_load_all(void) {
   }
 
   for (int i = 0; i < KB_LAYER_COUNT; i++) {
-    // Start with the compiled default for this layer
+    // Start with the compile-time default for this layer.
     cfg_layer_t layer_data;
     memcpy(&layer_data, &keymaps[i], sizeof(cfg_layer_t));
 
-    // Try to load from NVS (if it exists and is valid, overwrites the default)
+    // Attempt a direct binary read from NVS.  cfgmod_get_config() is not used
+    // here because it always returns ESP_OK (calling layout_default() which
+    // memsets to zero), making it impossible to distinguish "NVS had data" from
+    // "NVS was empty". cfgmod_read_storage() returns an error when the key does
+    // not exist, so we can safely fall back to the compile-time default.
     cfg_layer_t tmp;
-    memcpy(&tmp, &keymaps[i], sizeof(cfg_layer_t)); // default first
-    esp_err_t err = cfgmod_get_config(CFGMOD_KIND_LAYOUT, s_layer_keys[i], &tmp);
-    if (err == ESP_OK) {
+    size_t len = sizeof(tmp);
+    if (cfgmod_read_storage(CFGMOD_KIND_LAYOUT, s_layer_keys[i], &tmp, &len) == ESP_OK
+        && len == sizeof(cfg_layer_t)) {
       layer_data = tmp;
       ESP_LOGI(TAG, "Layer %d loaded from NVS", i);
     } else {
-      ESP_LOGW(TAG, "Layer %d loaded from DEFAULTS", i);
+      ESP_LOGW(TAG, "Layer %d using compile-time defaults", i);
     }
 
     s_psram_cache[i] = layer_data;

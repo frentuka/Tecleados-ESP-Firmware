@@ -61,11 +61,9 @@ static bool kb_validate_pins(const kb_gpio_t *pins, size_t count, bool output_re
 /*
     scanning
 */
-static inline void kb_set_bit(uint8_t *bitmap, size_t bit_index) {
-	bitmap[bit_index >> 3] |= (uint8_t)(1U << (bit_index & 7U));
-}
+#include "kb_bitmap.h"
 
-void scan(uint8_t *out_matrix_bitmap) {
+void kb_matrix_scan(uint8_t *out_matrix_bitmap) {
 	const size_t row_count = sizeof(k_rows) / sizeof(k_rows[0]);
 	const size_t col_count = sizeof(k_cols) / sizeof(k_cols[0]);
 	const size_t total_bits = row_count * col_count;
@@ -75,13 +73,12 @@ void scan(uint8_t *out_matrix_bitmap) {
 
 	for (size_t c = 0; c < col_count; ++c) {
 		gpio_set_level(k_cols[c].gpio, 0);
-		taskYIELD();
+		taskYIELD(); // Allow GPIO output to settle before reading rows
 
 		for (size_t r = 0; r < row_count; ++r) {
-			int level = gpio_get_level(k_rows[r].gpio);
-			if (level == 0) {
+			if (gpio_get_level(k_rows[r].gpio) == 0) {
 				size_t bit_index = (k_rows[r].index * col_count) + k_cols[c].index;
-				kb_set_bit(out_matrix_bitmap, bit_index);
+				kb_bit_set(out_matrix_bitmap, bit_index);
 			}
 		}
 

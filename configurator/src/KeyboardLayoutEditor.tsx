@@ -6,15 +6,19 @@ import {
     CFG_CMD_SET,
     CFG_KEY_PHYSICAL_LAYOUT,
     CFG_KEY_LAYER_0,
-    type CustomKey,
 } from './HIDService';
+import type { CustomKey } from './types/customKeys';
+import type { PhysKey } from './types/device';
 import {
     getKeyClass,
     getKeyName,
     BROWSER_CODE_TO_HID,
 } from './KeyDefinitions';
-import SearchableKeyModal from './SearchableKeyModal';
-import type { Macro } from './App';
+import SearchableKeyModal from './components/SearchableKeyModal';
+import type { Macro } from './types/macros';
+import { parseKleJson } from './utils/kleParser';
+import { parsePhysicalLayoutJson, serializePhysicalLayout } from './utils/layoutUtils';
+import { saveJsonFile } from './utils/fileUtils';
 
 // ── Matrix dimensions (must match firmware) ──
 const LAYER_COUNT = 4;
@@ -77,10 +81,10 @@ const DEFAULT_KEYMAPS: LayerData[] = [
     ],
 ];
 
-// ── Physical layout (65% KLE) ──
-// Each entry: { row, col, w } where w = width in KLE units (1u baseline)
-// Keys consumed by wider neighbours (NONE slots) are omitted.
-interface PhysKey { row: number; col: number; w: number; h: number; x: number; y: number; }
+// ── Physical layout fallback (65% KLE) ─────────────────────────────────────
+// Each entry: { row, col, w, h, x, y } in KLE-unit coordinates.
+// Matches the keyboard's firmware DEFAULT layout. Overridden once the device
+// sends its own physical layout via CFG_KEY_PHYSICAL_LAYOUT.
 const DEFAULT_PHYSICAL_LAYOUT: PhysKey[][] = [
     // Row 0: ESC  1  2  3  4  5  6  7  8  9  0  -  =  BKSP(2u)  DEL
     [{ row: 0, col: 0, w: 1, h: 1, x: 0, y: 0 }, { row: 0, col: 1, w: 1, h: 1, x: 1, y: 0 }, { row: 0, col: 2, w: 1, h: 1, x: 2, y: 0 }, { row: 0, col: 3, w: 1, h: 1, x: 3, y: 0 }, { row: 0, col: 4, w: 1, h: 1, x: 4, y: 0 }, { row: 0, col: 5, w: 1, h: 1, x: 5, y: 0 }, { row: 0, col: 6, w: 1, h: 1, x: 6, y: 0 }, { row: 0, col: 7, w: 1, h: 1, x: 7, y: 0 }, { row: 0, col: 8, w: 1, h: 1, x: 8, y: 0 }, { row: 0, col: 9, w: 1, h: 1, x: 9, y: 0 }, { row: 0, col: 10, w: 1, h: 1, x: 10, y: 0 }, { row: 0, col: 11, w: 1, h: 1, x: 11, y: 0 }, { row: 0, col: 12, w: 1, h: 1, x: 12, y: 0 }, { row: 0, col: 13, w: 2, h: 1, x: 13, y: 0 }, { row: 0, col: 14, w: 1, h: 1, x: 15, y: 0 }],
@@ -93,122 +97,6 @@ const DEFAULT_PHYSICAL_LAYOUT: PhysKey[][] = [
     // Row 4: LCTRL(1.25u) LGUI(1.25u) LALT(1.25u) SPACE(6.25u) RALT FN1 FN2 ← ↓ →
     [{ row: 4, col: 0, w: 1.25, h: 1, x: 0, y: 4 }, { row: 4, col: 1, w: 1.25, h: 1, x: 1.25, y: 4 }, { row: 4, col: 2, w: 1.25, h: 1, x: 2.5, y: 4 }, { row: 4, col: 5, w: 6.25, h: 1, x: 3.75, y: 4 }, { row: 4, col: 9, w: 1, h: 1, x: 10, y: 4 }, { row: 4, col: 10, w: 1, h: 1, x: 11, y: 4 }, { row: 4, col: 11, w: 1, h: 1, x: 12, y: 4 }, { row: 4, col: 12, w: 1, h: 1, x: 13, y: 4 }, { row: 4, col: 13, w: 1, h: 1, x: 14, y: 4 }, { row: 4, col: 14, w: 1, h: 1, x: 15, y: 4 }],
 ];
-
-// Parse physical layout JSON from device
-// Format: {"rows":6,"cols":18,"layout":[[row,col,w100,h100,x100,y100,...],[...]]}
-function parsePhysicalLayoutJson(jsonText: string): PhysKey[][] | null {
-    try {
-        const parsed = JSON.parse(jsonText);
-        if (!parsed.layout || !Array.isArray(parsed.layout)) return null;
-        return parsed.layout.map((visualRow: number[]) => {
-            const keys: PhysKey[] = [];
-            for (let i = 0; i + 5 < visualRow.length; i += 6) {
-                keys.push({
-                    row: visualRow[i],
-                    col: visualRow[i + 1],
-                    w: visualRow[i + 2] / 100,
-                    h: visualRow[i + 3] / 100,
-                    x: visualRow[i + 4] / 100,
-                    y: visualRow[i + 5] / 100
-                });
-            }
-            return keys;
-        });
-    } catch {
-        return null;
-    }
-}
-
-// Serialize physical layout to JSON for device storage (6-tuple per key)
-function serializePhysicalLayout(layout: PhysKey[][], matrixRows: number, matrixCols: number): string {
-    const flat = layout.map(visualRow =>
-        visualRow.flatMap(k => [
-            k.row,
-            k.col,
-            Math.round(k.w * 100),
-            Math.round(k.h * 100),
-            Math.round(k.x * 100),
-            Math.round(k.y * 100)
-        ])
-    );
-    return JSON.stringify({ rows: matrixRows, cols: matrixCols, layout: flat });
-}
-
-// ── KLE JSON Parser ──
-// KLE raw data uses a relaxed format with unquoted keys like {w:2, c:"#ccc"}.
-// We pre-process to make it valid JSON before parsing.
-function parseKleJson(kleText: string): PhysKey[][] | null {
-    try {
-        let text = kleText.trim();
-
-        // KLE raw data is rows like [row1],[row2],... NOT wrapped in outer [].
-        // If it starts with [[ it's already a proper nested array.
-        // Otherwise wrap it to create [[row1],[row2],...]
-        if (!text.startsWith('[[')) {
-            text = '[' + text + ']';
-        }
-
-        // Fix unquoted keys: {w:2} → {"w":2}, {c:"#ccc",w:1.5} → {"c":"#ccc","w":1.5}
-        // Match word characters followed by : that aren't inside quotes
-        text = text.replace(/({|,)\s*([a-zA-Z_]\w*)\s*:/g, '$1"$2":');
-
-        // Fix hex color values without quotes: "#cccccc" is fine, but #cccccc needs quotes
-        // Actually KLE uses "#cccccc" format which is already quoted, so this should be fine
-
-        let data = JSON.parse(text);
-        if (!Array.isArray(data)) return null;
-
-        const result: PhysKey[][] = [];
-        let matrixRow = 0;
-        let currentY = 0;
-
-        for (const row of data) {
-            if (!Array.isArray(row)) continue;
-
-            const physRow: PhysKey[] = [];
-            let currentX = 0;
-            let currentW = 1;
-            let currentH = 1;
-            let matrixCol = 0;
-
-            for (const item of row) {
-                if (typeof item === 'string') {
-                    // This is a key
-                    physRow.push({
-                        row: matrixRow,
-                        col: matrixCol,
-                        w: currentW,
-                        h: currentH,
-                        x: currentX,
-                        y: currentY
-                    });
-                    currentX += currentW;
-                    matrixCol += Math.ceil(currentW);
-                    // Reset per-key properties
-                    currentW = 1;
-                    currentH = 1;
-                } else if (typeof item === 'object' && item !== null) {
-                    // Property object — applies to next key(s)
-                    if (item.w !== undefined) currentW = item.w;
-                    if (item.h !== undefined) currentH = item.h;
-                    if (item.x !== undefined) { currentX += item.x; matrixCol += Math.round(item.x); }
-                    if (item.y !== undefined) currentY += item.y;
-                }
-            }
-
-            if (physRow.length > 0) {
-                result.push(physRow);
-                matrixRow++;
-                currentY += 1; // move to next row by default
-            }
-        }
-
-        return result.length > 0 ? result : null;
-    } catch (e) {
-        console.error('KLE parse error:', e);
-        return null;
-    }
-}
 
 
 export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, macros, customKeys = [], onLog }: KeyboardLayoutEditorProps) {
@@ -272,37 +160,8 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
         const fileName = `${hidService.getDeviceName()}_${new Date().toISOString().slice(0, 10)}.json`;
         const jsonContent = JSON.stringify(data, null, 2);
 
-        // Try File System Access API (Save As dialog)
-        if ('showSaveFilePicker' in window) {
-            try {
-                const handle = await (window as any).showSaveFilePicker({
-                    suggestedName: fileName,
-                    types: [{
-                        description: 'JSON Files',
-                        accept: { 'application/json': ['.json'] },
-                    }],
-                });
-                const writable = await handle.createWritable();
-                await writable.write(jsonContent);
-                await writable.close();
-                onLogRef.current('Layout exported to JSON via Save As');
-                return;
-            } catch (err: any) {
-                if (err.name === 'AbortError') return; // User cancelled
-                console.error('showSaveFilePicker error:', err);
-                // Fall back to legacy download
-            }
-        }
-
-        // Legacy Fallback (extensionless fix included)
-        const blob = new Blob([jsonContent], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = fileName;
-        a.click();
-        URL.revokeObjectURL(url);
-        onLogRef.current('Layout exported to JSON (Download)');
+        await saveJsonFile(jsonContent, fileName);
+        onLogRef.current('Layout exported to JSON');
     };
 
     const handleImportClick = () => {
@@ -758,6 +617,13 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                 const parsed = parseKleJson(kleInput);
                                 if (!parsed) {
                                     setKleError('Failed to parse KLE JSON. Make sure you copied the raw JSON data (array format).');
+                                    return;
+                                }
+
+                                // Validate all keys are within matrix bounds
+                                const outOfBounds = parsed.flat().find(k => k.row >= MATRIX_ROWS || k.col >= MATRIX_COLS);
+                                if (outOfBounds) {
+                                    setKleError(`Key at row ${outOfBounds.row}, col ${outOfBounds.col} exceeds matrix bounds (max ${MATRIX_ROWS - 1} rows, ${MATRIX_COLS - 1} cols).`);
                                     return;
                                 }
 

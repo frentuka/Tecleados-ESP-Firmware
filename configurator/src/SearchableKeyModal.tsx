@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { ALL_KEYS, getKeyClass, TRANSPARENT, getMacroKeyOptions, getCKeyOptions, MACRO_BASE, CKEY_BASE } from './KeyDefinitions';
-import type { Macro } from './App';
-import type { CustomKey } from './HIDService';
+import type { Macro } from './types/macros';
+import type { CustomKey } from './types/customKeys';
 
 interface SearchableKeyModalProps {
     currentValue: number;

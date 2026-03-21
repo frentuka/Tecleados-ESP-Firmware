@@ -88,22 +88,37 @@ bool macros_deserialize(cJSON *root, void *out_struct) {
 }
 
 cJSON *macros_serialize(const void *in_struct) {
-  // Unused for now, individual serialize handles it.
-  return NULL; 
+    /*
+     * Always returns NULL. Individual macros are serialized via
+     * macros_serialize_single(). This stub exists only to satisfy the
+     * cfgmod_serialize_fn signature required by cfgmod_register_kind().
+     * The generic USB GET path for macros is handled by the custom block
+     * in cfgmod_handle_usb_comm() before reaching the generic handler.
+     */
+    (void)in_struct;
+    return NULL;
+}
+
+/* Build a JSON object with the macro's header fields (no elements array). */
+static cJSON *serialize_macro_header_json(const cfg_macro_t *m) {
+    cJSON *obj = cJSON_CreateObject();
+    if (!obj) return NULL;
+    cJSON_AddNumberToObject(obj, "id",       m->id);
+    cJSON_AddStringToObject(obj, "name",     m->name);
+    cJSON_AddNumberToObject(obj, "execMode", m->exec_mode);
+    if (m->exec_mode == MACRO_EXEC_ONCE_STACK_N) {
+        cJSON_AddNumberToObject(obj, "stackMax",     m->stack_max);
+    }
+    if (m->exec_mode == MACRO_EXEC_BURST_N) {
+        cJSON_AddNumberToObject(obj, "repeatCount",  m->repeat_count);
+    }
+    return obj;
 }
 
 static cJSON *serialize_single_macro_to_json(const cfg_macro_t *m) {
-    cJSON *macro_item = cJSON_CreateObject();
-    cJSON_AddNumberToObject(macro_item, "id", m->id);
-    cJSON_AddStringToObject(macro_item, "name", m->name);
-    cJSON_AddNumberToObject(macro_item, "execMode", m->exec_mode);
-    if (m->exec_mode == MACRO_EXEC_ONCE_STACK_N) {
-      cJSON_AddNumberToObject(macro_item, "stackMax", m->stack_max);
-    }
-    if (m->exec_mode == MACRO_EXEC_BURST_N) {
-      cJSON_AddNumberToObject(macro_item, "repeatCount", m->repeat_count);
-    }
-    
+    cJSON *macro_item = serialize_macro_header_json(m);
+    if (!macro_item) return NULL;
+
     cJSON *elements = cJSON_CreateArray();
     for (size_t j = 0; j < m->event_count; j++) {
       cJSON *el = cJSON_CreateObject();
@@ -141,7 +156,7 @@ cJSON *macros_serialize_outline(const cfg_macro_index_t *idx) {
   cJSON *macros_arr = cJSON_CreateArray();
   
   for (uint16_t i = 0; i < CFG_MACROS_MAX_COUNT; i++) {
-      if ((idx->active_mask & (1U << i))) {
+      if ((idx->active_mask & (UINT64_C(1) << i))) {
           char key[16];
           snprintf(key, sizeof(key), "mac_%u", i);
           
@@ -150,17 +165,8 @@ cJSON *macros_serialize_outline(const cfg_macro_index_t *idx) {
           
           size_t len = sizeof(cfg_macro_t);
           if (cfgmod_read_storage(CFGMOD_KIND_MACRO, key, temp, &len) == ESP_OK && len == sizeof(cfg_macro_t)) {
-                cJSON *macro_item = cJSON_CreateObject();
-                cJSON_AddNumberToObject(macro_item, "id", temp->id);
-                cJSON_AddStringToObject(macro_item, "name", temp->name);
-                cJSON_AddNumberToObject(macro_item, "execMode", temp->exec_mode);
-                if (temp->exec_mode == MACRO_EXEC_ONCE_STACK_N) {
-                  cJSON_AddNumberToObject(macro_item, "stackMax", temp->stack_max);
-                }
-                if (temp->exec_mode == MACRO_EXEC_BURST_N) {
-                  cJSON_AddNumberToObject(macro_item, "repeatCount", temp->repeat_count);
-                }
-                cJSON_AddItemToArray(macros_arr, macro_item);
+                cJSON *macro_item = serialize_macro_header_json(temp);
+                if (macro_item) cJSON_AddItemToArray(macros_arr, macro_item);
           }
           free(temp);
       }
@@ -171,7 +177,7 @@ cJSON *macros_serialize_outline(const cfg_macro_index_t *idx) {
 }
 
 cJSON *macros_serialize_single(uint16_t id, const cfg_macro_index_t *idx) {
-  if (id < CFG_MACROS_MAX_COUNT && (idx->active_mask & (1U << id))) {
+  if (id < CFG_MACROS_MAX_COUNT && (idx->active_mask & (UINT64_C(1) << id))) {
       char key[16];
       snprintf(key, sizeof(key), "mac_%u", id);
       
@@ -224,7 +230,7 @@ esp_err_t macros_upsert_single(cJSON *macro_json, cfg_macro_index_t *idx) {
   esp_err_t err = cfgmod_write_storage(CFGMOD_KIND_MACRO, key, temp, sizeof(cfg_macro_t));
   if (err == ESP_OK) {
       // Update index
-      idx->active_mask |= (1U << temp->id);
+      idx->active_mask |= (UINT64_C(1) << temp->id);
       cfgmod_write_storage(CFGMOD_KIND_MACRO, "mac_idx", idx, sizeof(cfg_macro_index_t));
   }
   free(temp);
@@ -235,7 +241,7 @@ esp_err_t macros_delete_single(uint16_t id, cfg_macro_index_t *idx) {
     if (id >= CFG_MACROS_MAX_COUNT) return ESP_ERR_INVALID_ARG;
     
     // Unset from mask first
-    idx->active_mask &= ~(1U << id);
+    idx->active_mask &= ~(UINT64_C(1) << id);
     esp_err_t err = cfgmod_write_storage(CFGMOD_KIND_MACRO, "mac_idx", idx, sizeof(cfg_macro_index_t));
     
     // We don't strictly *need* to erase it if it's not in the mask, but it's cleaner
@@ -244,8 +250,12 @@ esp_err_t macros_delete_single(uint16_t id, cfg_macro_index_t *idx) {
 }
 
 void cfg_macros_register(void) {
-  // We no longer register the monolithic struct wrapper this way
-  // cfgmod_register_kind(CFGMOD_KIND_MACRO, ...);
+    /*
+     * Intentional no-op. The actual cfgmod_register_kind() call for
+     * CFGMOD_KIND_MACRO is made by kb_macro_init() in kb_macro.c, which
+     * owns the on_macros_updated callback. cfg_init() calls this function
+     * only to keep the registration site visible alongside the other kinds.
+     */
 }
 
 esp_err_t macros_load_all(cfg_macro_list_t *out_list) {
@@ -259,7 +269,7 @@ esp_err_t macros_load_all(cfg_macro_list_t *out_list) {
   }
   
   for (uint16_t i = 0; i < CFG_MACROS_MAX_COUNT; i++) {
-      if ((idx.active_mask & (1U << i))) {
+      if ((idx.active_mask & (UINT64_C(1) << i))) {
           char key[16];
           snprintf(key, sizeof(key), "mac_%u", i);
           size_t len = sizeof(cfg_macro_t);

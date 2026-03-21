@@ -8,7 +8,7 @@
 
 
 #define CFG_MACRO_MAX_EVENTS 256
-#define CFG_MACROS_MAX_COUNT 32
+#define CFG_MACROS_MAX_COUNT 64
 
 // Types of macro events (e.g. key press, delay)
 typedef enum {
@@ -60,10 +60,17 @@ void cfg_macros_register(void);
 // Handler functions for external use (e.g. by kb_macro.c re-registration)
 void macros_default(void *out_struct);
 bool macros_deserialize(cJSON *root, void *out_struct);
+/*
+ * NOTE: Always returns NULL. Individual macros are serialized via
+ * macros_serialize_single(). This stub exists only to satisfy the
+ * cfgmod_serialize_fn signature required by cfgmod_register_kind().
+ * The generic USB GET path for macros is intercepted by the custom block
+ * in cfgmod_handle_usb_comm() before it reaches the generic handler.
+ */
 cJSON *macros_serialize(const void *in_struct);
 
 typedef struct {
-  uint32_t active_mask; // Bit N is 1 if macro N exists (N 0..31)
+  uint64_t active_mask; // Bit N is 1 if macro N exists (N 0..63)
 } cfg_macro_index_t;
 
 // Serialize an outline of all macros (IDs and Names only)

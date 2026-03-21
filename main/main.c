@@ -34,6 +34,7 @@
 #include "tinyusb_default_config.h"
 
 #include "ble_controller.h"
+#include "event_bus.h"
 
 #define TAG "MAIN"
 
@@ -53,6 +54,7 @@ void double_press_test() {
 }
 
 static void init_procedure(void) {
+  event_bus_init();
   button_init(*single_press_test, *double_press_test);
   cfg_init();
 

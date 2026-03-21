@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { CustomKey, CustomKeyPR, CustomKeyMA } from './HIDService';
-import SearchableKeyModal from './SearchableKeyModal';
+import type { CustomKey, CustomKeyPR, CustomKeyMA } from './types/customKeys';
+import type { Macro } from './types/macros';
+import SearchableKeyModal from './components/SearchableKeyModal';
 import { getKeyName, CKEY_BASE } from './KeyDefinitions';
-import type { Macro } from './App';
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -142,15 +142,16 @@ function CKeyPreviewSequence({ ck, macros }: { ck: CustomKey, macros: Macro[] })
     return null;
 }
 
-function CKeyCard({ ck, isSelected, onClick, macros, isDeveloperMode }: { 
-    ck: CustomKey, 
-    isSelected: boolean, 
-    onClick: () => void, 
+function CKeyCard({ ck, isSelected, onClick, onDelete, macros, isDeveloperMode }: {
+    ck: CustomKey,
+    isSelected: boolean,
+    onClick: () => void,
+    onDelete: (id: number) => void,
     macros: Macro[],
     isDeveloperMode: boolean
 }) {
     return (
-        <div 
+        <div
             className={`ckey-card glass-panel ${isSelected ? 'ckey-card-selected' : ''}`}
             onClick={onClick}
         >
@@ -171,6 +172,18 @@ function CKeyCard({ ck, isSelected, onClick, macros, isDeveloperMode }: {
                     ID: 0x{(CKEY_BASE + ck.id).toString(16).toUpperCase()}
                 </div>
             )}
+
+            <button
+                className="btn-icon btn-danger"
+                title="Delete"
+                onClick={e => { e.stopPropagation(); onDelete(ck.id); }}
+                style={{ position: 'absolute', bottom: '0.75rem', right: '0.75rem' }}
+            >
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: 'middle' }}>
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                </svg>
+            </button>
         </div>
     );
 }
@@ -405,7 +418,7 @@ function CKeyEditorModal({ ckey, macros, isSaving, error, onSave, onDelete, onCl
 
 // ── Main Dashboard ─────────────────────────────────────────────────────────────
 
-const CKEY_MAX = 32;
+const CKEY_MAX = 120;
 
 export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMode, onSave, onDelete, onReload }: CustomKeysDashboardProps) {
     const [selected, setSelected] = useState<CustomKey | null>(null);
@@ -475,11 +488,12 @@ export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMod
                         <div className="empty-state">No custom keys defined yet.</div>
                     ) : (
                         sortedKeys.map(ck => (
-                            <CKeyCard 
-                                key={ck.id} 
-                                ck={ck} 
+                            <CKeyCard
+                                key={ck.id}
+                                ck={ck}
                                 isSelected={selected?.id === ck.id}
                                 onClick={() => setSelected(ck)}
+                                onDelete={handleDeleteKey}
                                 macros={macros}
                                 isDeveloperMode={isDeveloperMode}
                             />
