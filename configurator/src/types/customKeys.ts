@@ -8,6 +8,7 @@ export interface CustomKeyPR {
     pressDuration: number;
     releaseDuration: number;
     waitForFinish: boolean;
+    pressSustain: boolean;
 }
 
 export interface CustomKeyMA {
@@ -19,6 +20,7 @@ export interface CustomKeyMA {
     tapDuration: number;
     doubleTapDuration: number;
     holdDuration: number;
+    holdSustain: boolean;
 }
 
 export interface CustomKey {

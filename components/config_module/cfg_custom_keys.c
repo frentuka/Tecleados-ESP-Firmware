@@ -26,12 +26,14 @@ static bool deserialize_pr(cJSON *pr_obj, cfg_ckey_pr_t *pr) {
     cJSON *pd = cJSON_GetObjectItem(pr_obj, "pressDuration");
     cJSON *rd = cJSON_GetObjectItem(pr_obj, "releaseDuration");
     cJSON *wf = cJSON_GetObjectItem(pr_obj, "waitForFinish");
+    cJSON *ps = cJSON_GetObjectItem(pr_obj, "pressSustain");
 
     pr->press_action                = cJSON_IsNumber(pa) ? (uint32_t)pa->valuedouble   : 0;
     pr->release_action              = cJSON_IsNumber(ra) ? (uint32_t)ra->valuedouble   : 0;
     pr->press_tap_release_delay_ms  = cJSON_IsNumber(pd) ? (uint32_t)pd->valuedouble   : 20;
     pr->release_tap_release_delay_ms= cJSON_IsNumber(rd) ? (uint32_t)rd->valuedouble   : 20;
     pr->wait_for_finish             = cJSON_IsTrue(wf);
+    pr->press_sustain               = cJSON_IsTrue(ps);
     return true;
 }
 
@@ -55,6 +57,9 @@ static bool deserialize_ma(cJSON *ma_obj, cfg_ckey_ma_t *ma) {
     ma->tap_release_delay_ms        = cJSON_IsNumber(td)  ? (uint32_t)td->valuedouble  : 20;
     ma->double_tap_release_delay_ms = cJSON_IsNumber(dtd) ? (uint32_t)dtd->valuedouble : 20;
     ma->hold_release_delay_ms       = cJSON_IsNumber(hd)  ? (uint32_t)hd->valuedouble  : 20;
+
+    cJSON *hs = cJSON_GetObjectItem(ma_obj, "holdSustain");
+    ma->hold_sustain                = cJSON_IsTrue(hs);
     return true;
 }
 
@@ -102,6 +107,7 @@ static cJSON *serialize_pr(const cfg_ckey_pr_t *pr) {
     cJSON_AddNumberToObject(obj, "pressDuration",   (double)pr->press_tap_release_delay_ms);
     cJSON_AddNumberToObject(obj, "releaseDuration", (double)pr->release_tap_release_delay_ms);
     cJSON_AddBoolToObject(obj, "waitForFinish",     pr->wait_for_finish);
+    cJSON_AddBoolToObject(obj, "pressSustain",     pr->press_sustain);
     return obj;
 }
 
@@ -115,6 +121,7 @@ static cJSON *serialize_ma(const cfg_ckey_ma_t *ma) {
     cJSON_AddNumberToObject(obj, "tapDuration",        (double)ma->tap_release_delay_ms);
     cJSON_AddNumberToObject(obj, "doubleTapDuration",  (double)ma->double_tap_release_delay_ms);
     cJSON_AddNumberToObject(obj, "holdDuration",       (double)ma->hold_release_delay_ms);
+    cJSON_AddBoolToObject(obj, "holdSustain",         ma->hold_sustain);
     return obj;
 }
 

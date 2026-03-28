@@ -26,6 +26,9 @@ typedef enum {
  * Each action is an action code (HID, System, Macro, CKey range).
  * The *_tap_release_delay_ms fields control how long the virtual key is
  * held before releasing it (i.e. the "tap width").  Set to 0 to skip the delay.
+ *
+ * If press_sustain is true, the press action is held for as long as the
+ * physical key is held instead of using a fixed tap duration.
  */
 typedef struct {
     uint32_t press_action;
@@ -33,6 +36,7 @@ typedef struct {
     uint32_t press_tap_release_delay_ms;
     uint32_t release_tap_release_delay_ms;
     bool     wait_for_finish;
+    bool     press_sustain;
 } cfg_ckey_pr_t;
 
 /**
@@ -40,6 +44,9 @@ typedef struct {
  *
  * Tap, double-tap and hold actions are determined by timing thresholds.
  * The *_release_delay_ms fields control the virtual tap width of each resolved action.
+ *
+ * If hold_sustain is true, the hold action is held for as long as the
+ * physical key is held instead of using a fixed tap duration.
  */
 typedef struct {
     uint32_t tap_action;
@@ -50,6 +57,7 @@ typedef struct {
     uint32_t tap_release_delay_ms;
     uint32_t double_tap_release_delay_ms;
     uint32_t hold_release_delay_ms;
+    bool     hold_sustain;
 } cfg_ckey_ma_t;
 
 /**

@@ -21,6 +21,9 @@ static size_t           s_ckey_count = 0;
 static cfg_custom_key_t *s_ckeys = NULL;
 static TickType_t       *s_press_end_tick = NULL;
 
+/** Tracks which CKey IDs currently have a sustained hold-action pressed (MA mode). */
+static bool             *s_ma_hold_sustained = NULL;
+
 /* ---- Lookup ---- */
 
 static const cfg_custom_key_t *find_ckey(uint16_t id) {
@@ -41,6 +44,24 @@ static void fire_pr_tap(uint16_t action_code, uint32_t duration_ms, uint32_t del
 
 static void process_pr(const cfg_custom_key_t *ck, bool is_pressed) {
     uint16_t id = ck->id;
+
+    if (ck->rules.pr.press_sustain) {
+        /* Sustain mode: hold the press action for as long as the key is held */
+        if (is_pressed) {
+            kb_macro_process_action((uint16_t)ck->rules.pr.press_action, true);
+            kb_macro_send_report();
+        } else {
+            kb_macro_process_action((uint16_t)ck->rules.pr.press_action, false);
+            kb_macro_send_report();
+            /* Fire the release action normally after the sustained press ends */
+            if (ck->rules.pr.release_action) {
+                fire_pr_tap((uint16_t)ck->rules.pr.release_action,
+                            ck->rules.pr.release_tap_release_delay_ms, 0);
+            }
+        }
+        return;
+    }
+
     if (is_pressed) {
         uint32_t dur = ck->rules.pr.press_tap_release_delay_ms;
         s_press_end_tick[id] = xTaskGetTickCount() + pdMS_TO_TICKS(dur);
@@ -92,8 +113,22 @@ static void ckey_action_event_handler(void *arg, esp_event_base_t base,
                     ck->rules.ma.double_tap_release_delay_ms, 0);
         break;
     case KB_EV_HOLD:
-        fire_pr_tap((uint16_t)ck->rules.ma.hold_action,
-                    ck->rules.ma.hold_release_delay_ms, 0);
+        if (ck->rules.ma.hold_sustain) {
+            /* Sustain: press and hold until physical key release */
+            kb_macro_process_action((uint16_t)ck->rules.ma.hold_action, true);
+            kb_macro_send_report();
+            s_ma_hold_sustained[ckey_id] = true;
+        } else {
+            fire_pr_tap((uint16_t)ck->rules.ma.hold_action,
+                        ck->rules.ma.hold_release_delay_ms, 0);
+        }
+        break;
+    case KB_EV_RELEASE:
+        if (s_ma_hold_sustained[ckey_id]) {
+            kb_macro_process_action((uint16_t)ck->rules.ma.hold_action, false);
+            kb_macro_send_report();
+            s_ma_hold_sustained[ckey_id] = false;
+        }
         break;
     default:
         break;
@@ -139,15 +174,20 @@ void kb_custom_key_init(void) {
     /* Allocate runtime state in PSRAM */
     s_ckeys = heap_caps_malloc(sizeof(cfg_custom_key_t) * CFG_CKEYS_MAX_COUNT, MALLOC_CAP_SPIRAM);
     s_press_end_tick = heap_caps_malloc(sizeof(TickType_t) * CFG_CKEYS_MAX_COUNT, MALLOC_CAP_SPIRAM);
+    s_ma_hold_sustained = heap_caps_malloc(sizeof(bool) * CFG_CKEYS_MAX_COUNT, MALLOC_CAP_SPIRAM);
 
-    if (!s_ckeys || !s_press_end_tick) {
+    if (!s_ckeys || !s_press_end_tick || !s_ma_hold_sustained) {
         ESP_LOGE(TAG, "Failed to allocate custom key memory in PSRAM");
         if (!s_ckeys) s_ckeys = malloc(sizeof(cfg_custom_key_t) * CFG_CKEYS_MAX_COUNT);
         if (!s_press_end_tick) s_press_end_tick = malloc(sizeof(TickType_t) * CFG_CKEYS_MAX_COUNT);
+        if (!s_ma_hold_sustained) s_ma_hold_sustained = malloc(sizeof(bool) * CFG_CKEYS_MAX_COUNT);
     }
 
     if (s_press_end_tick) {
         memset(s_press_end_tick, 0, sizeof(TickType_t) * CFG_CKEYS_MAX_COUNT);
+    }
+    if (s_ma_hold_sustained) {
+        memset(s_ma_hold_sustained, 0, sizeof(bool) * CFG_CKEYS_MAX_COUNT);
     }
 
     /* Subscribe to system action events for MultiAction CKey processing.

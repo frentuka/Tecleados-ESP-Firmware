@@ -250,6 +250,7 @@ export class DeviceController {
                 pressDuration: ckey.pr.pressDuration,
                 releaseDuration: ckey.pr.releaseDuration,
                 waitForFinish: ckey.pr.waitForFinish,
+                pressSustain: ckey.pr.pressSustain,
             };
         } else if (ckey.mode === 1 && ckey.ma) {
             payload.ma = {
@@ -261,6 +262,7 @@ export class DeviceController {
                 tapDuration: ckey.ma.tapDuration,
                 doubleTapDuration: ckey.ma.doubleTapDuration,
                 holdDuration: ckey.ma.holdDuration,
+                holdSustain: ckey.ma.holdSustain,
             };
         }
         const jsonBytes = new TextEncoder().encode(JSON.stringify(payload));

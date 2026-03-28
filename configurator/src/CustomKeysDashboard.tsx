@@ -25,6 +25,7 @@ function makeDefaultPR(): CustomKeyPR {
         pressDuration:   20,
         releaseDuration: 20,
         waitForFinish:   false,
+        pressSustain:    false,
     };
 }
 
@@ -38,6 +39,7 @@ function makeDefaultMA(): CustomKeyMA {
         tapDuration:        20,
         doubleTapDuration:  20,
         holdDuration:       20,
+        holdSustain:        false,
     };
 }
 
@@ -58,6 +60,15 @@ const WaitIcon = () => (
         <path d="M6 4v16" />
         <path d="M11 12h9" />
         <path d="M16 8l4 4-4 4" />
+    </svg>
+);
+
+const SustainIcon = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="ckey-svg-icon">
+        <rect x="3" y="8" width="18" height="8" rx="2" />
+        <path d="M8 12h8" />
+        <path d="M12 8V6" />
+        <path d="M12 18v-2" />
     </svg>
 );
 
@@ -108,7 +119,9 @@ function CKeyPreviewSequence({ ck, macros }: { ck: CustomKey, macros: Macro[] })
                 <div className="preview-el preview-el-press" title="Press Action">
                     <span className="preview-el-action">P</span>
                     {getKeyName(ck.pr.pressAction, macros)}
-                    {ck.pr.pressDuration > 0 && <span className="preview-el-sleep">({ck.pr.pressDuration}ms)</span>}
+                    {ck.pr.pressSustain
+                        ? <span className="preview-el-sleep">(sustain)</span>
+                        : ck.pr.pressDuration > 0 && <span className="preview-el-sleep">({ck.pr.pressDuration}ms)</span>}
                 </div>
                 <div className="preview-el preview-el-release" title="Release Action">
                     <span className="preview-el-action">R</span>
@@ -134,7 +147,9 @@ function CKeyPreviewSequence({ ck, macros }: { ck: CustomKey, macros: Macro[] })
                 <div className="preview-el preview-el-hold" title="Hold Action">
                     <span className="preview-el-action">H</span>
                     {getKeyName(ck.ma.holdAction, macros)}
-                    {ck.ma.holdDuration > 0 && <span className="preview-el-sleep">({ck.ma.holdDuration}ms)</span>}
+                    {ck.ma.holdSustain
+                        ? <span className="preview-el-sleep">(sustain)</span>
+                        : ck.ma.holdDuration > 0 && <span className="preview-el-sleep">({ck.ma.holdDuration}ms)</span>}
                 </div>
             </div>
         );
@@ -264,15 +279,25 @@ function CKeyEditorModal({ ckey, macros, isSaving, error, onSave, onDelete, onCl
                                         onChange={v => handlePR('pressAction', v)}
                                     />
                                     <div className="ckey-duration-row-inline">
-                                        <div className="ckey-duration-icon-wrapper" title="Press Duration">
-                                            <ClockIcon />
+                                        <button
+                                            className={`ckey-wait-toggle ${local.pr?.pressSustain ? 'active' : ''}`}
+                                            title="Sustain: hold key for as long as custom key is pressed"
+                                            onClick={() => handlePR('pressSustain', !local.pr?.pressSustain)}
+                                        >
+                                            <SustainIcon />
+                                        </button>
+                                        <div className={`ckey-duration-anim ${local.pr?.pressSustain ? 'collapsed' : ''}`}>
+                                            <div className="ckey-duration-icon-wrapper" title="Press Duration">
+                                                <ClockIcon />
+                                            </div>
+                                            <input
+                                                type="number"
+                                                className="ckey-duration-input"
+                                                value={local.pr?.pressDuration || 20}
+                                                onChange={e => handlePR('pressDuration', parseInt(e.target.value) || 0)}
+                                                tabIndex={local.pr?.pressSustain ? -1 : 0}
+                                            />
                                         </div>
-                                        <input
-                                            type="number"
-                                            className="ckey-duration-input"
-                                            value={local.pr?.pressDuration || 20}
-                                            onChange={e => handlePR('pressDuration', parseInt(e.target.value) || 0)}
-                                        />
                                     </div>
                                 </div>
                                 <div className="ckey-inline-group">
@@ -355,15 +380,25 @@ function CKeyEditorModal({ ckey, macros, isSaving, error, onSave, onDelete, onCl
                                         onChange={v => handleMA('holdAction', v)}
                                     />
                                     <div className="ckey-duration-row-inline">
-                                        <div className="ckey-duration-icon-wrapper" title="Press Duration">
-                                            <ClockIcon />
+                                        <button
+                                            className={`ckey-wait-toggle ${local.ma?.holdSustain ? 'active' : ''}`}
+                                            title="Sustain: hold key for as long as custom key is held"
+                                            onClick={() => handleMA('holdSustain', !local.ma?.holdSustain)}
+                                        >
+                                            <SustainIcon />
+                                        </button>
+                                        <div className={`ckey-duration-anim ${local.ma?.holdSustain ? 'collapsed' : ''}`}>
+                                            <div className="ckey-duration-icon-wrapper" title="Press Duration">
+                                                <ClockIcon />
+                                            </div>
+                                            <input
+                                                type="number"
+                                                className="ckey-duration-input"
+                                                value={local.ma?.holdDuration || 20}
+                                                onChange={e => handleMA('holdDuration', parseInt(e.target.value) || 0)}
+                                                tabIndex={local.ma?.holdSustain ? -1 : 0}
+                                            />
                                         </div>
-                                        <input
-                                            type="number"
-                                            className="ckey-duration-input"
-                                            value={local.ma?.holdDuration || 20}
-                                            onChange={e => handleMA('holdDuration', parseInt(e.target.value) || 0)}
-                                        />
                                     </div>
                                 </div>
                             </div>
