@@ -155,6 +155,8 @@ static inline void ble_hid_profile_toggle_connection(uint8_t id) { (void)id; }
 
 /* ---- USB callback registration ---- */
 
+#ifndef _TH_USB_MSG_MODULE_T
+#define _TH_USB_MSG_MODULE_T
 typedef enum {
     MODULE_CONFIG = 0,
     MODULE_SYSTEM,
@@ -162,8 +164,12 @@ typedef enum {
     MODULE_STATUS,
     USB_MODULE_COUNT
 } usb_msg_module_t;
+#endif
 
+#ifndef _TH_USB_DATA_CALLBACK_T
+#define _TH_USB_DATA_CALLBACK_T
 typedef bool (*usb_data_callback_t)(uint8_t *data, uint16_t data_len);
+#endif
 static usb_data_callback_t _mock_usb_callbacks[USB_MODULE_COUNT] = {0};
 
 static inline void usbmod_register_callback(usb_msg_module_t module, usb_data_callback_t cb) {

@@ -7,36 +7,9 @@
 #include "mocks/mock_esp.h"
 #include "mocks/mock_esp_event.h"
 
-/* Event bases (defined in test_kb_state.c) */
-extern const char *KB_EVENTS;
-extern const char *BLE_EVENTS;
-extern const char *CONFIG_EVENTS;
-
-/* Payload structs — guarded, may already be defined in same TU */
-#ifndef _TH_KB_SYS_ACTION_EVENT_T
-#define _TH_KB_SYS_ACTION_EVENT_T
-typedef struct {
-    uint16_t action_code;
-    int      event;
-} kb_sys_action_event_t;
-#endif
-
-#ifndef _TH_BLE_PAIRING_RESULT_T
-#define _TH_BLE_PAIRING_RESULT_T
-typedef struct {
-    int     profile_idx;
-    uint8_t addr_type;
-    uint8_t addr[6];
-} ble_pairing_result_t;
-#endif
-
-#ifndef _TH_CONFIG_UPDATE_EVENT_T
-#define _TH_CONFIG_UPDATE_EVENT_T
-typedef struct {
-    uint8_t kind;
-    char    key[16];
-} config_update_event_t;
-#endif
+/* Event bases (KB_EVENTS, BLE_EVENTS, CONFIG_EVENTS) come from the linked
+   event_bus.c. Payload structs (kb_sys_action_event_t, ble_pairing_result_t,
+   config_update_event_t) come from event_bus.h via test_constants.h. */
 
 /* ---- Tests ---- */
 
@@ -127,32 +100,31 @@ TEST_CASE(event_bus, handler_registration) {
     TEST_ASSERT_EQUAL(2, _mock_handler_count);
 }
 
-TEST_CASE(event_bus, dispatch_to_handler) {
+TEST_CASE(event_bus, multiple_events_accumulate) {
     mock_events_reset();
+    uint8_t payloads[] = {10, 20, 30};
+    for (int i = 0; i < 3; i++) {
+        esp_event_post(KB_EVENTS, i, &payloads[i], sizeof(payloads[i]), 0);
+    }
 
-    static int handler_called = 0;
-    static uint16_t handler_data = 0;
-    handler_called = 0;
-    handler_data = 0;
-
-    esp_event_handler_t my_handler = (esp_event_handler_t)(void(*)(void*, const char*, int32_t, void*))
-        NULL; /* We'll test dispatch manually */
-
-    /* Post an event then verify manual dispatch via mock_event_dispatch_all */
-    uint8_t payload = 42;
-    esp_event_post(KB_EVENTS, 1, &payload, sizeof(payload), 0);
-
-    TEST_ASSERT_EQUAL(1, mock_event_count());
+    TEST_ASSERT_EQUAL(3, mock_event_count());
+    for (int i = 0; i < 3; i++) {
+        const mock_posted_event_t *ev = mock_event_get(i);
+        TEST_ASSERT_EQUAL(i, ev->event_id);
+        TEST_ASSERT_EQUAL(payloads[i], ev->data[0]);
+    }
 }
 
 TEST_CASE(event_bus, payload_struct_sizes) {
-    TEST_ASSERT_EQUAL(8, sizeof(kb_sys_action_event_t));  /* uint16 + int (padded) */
-    TEST_ASSERT(sizeof(ble_pairing_result_t) >= 11);       /* int + uint8 + 6 bytes */
-    TEST_ASSERT(sizeof(config_update_event_t) >= 17);      /* uint8 + 16 char */
+    /* uint16 + int = 8 bytes (with padding) */
+    TEST_ASSERT_EQUAL(8, sizeof(kb_sys_action_event_t));
+    /* int + uint8 + 6 bytes, with possible padding */
+    TEST_ASSERT(sizeof(ble_pairing_result_t) >= 11);
+    /* uint8 + 16 char */
+    TEST_ASSERT(sizeof(config_update_event_t) >= 17);
 }
 
 TEST_CASE(event_bus, config_update_key_fits) {
-    /* CFGMOD_MAX_KEY_LEN is 12; key field is 16 — verify it fits */
     config_update_event_t ev;
     strlcpy(ev.key, "123456789012", sizeof(ev.key)); /* 12 chars + null */
     TEST_ASSERT_STR_EQUAL("123456789012", ev.key);

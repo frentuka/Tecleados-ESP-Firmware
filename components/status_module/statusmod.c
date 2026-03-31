@@ -45,11 +45,11 @@ static bool send_status_push(void) {
 
     uint8_t header[7] = {MODULE_STATUS, 0, 0, 0, 0, 0, 0};
     size_t json_len = strlen(json_buf);
-    uint8_t full_resp[7 + json_len];
+    uint8_t full_resp[7 + 128]; /* 7-byte header + max JSON (128 chars) */
     memcpy(full_resp, header, 7);
     memcpy(full_resp + 7, json_buf, json_len);
 
-    return send_payload(full_resp, sizeof(full_resp));
+    return send_payload(full_resp, (uint16_t)(7 + json_len));
 }
 
 /* =========================================================================
