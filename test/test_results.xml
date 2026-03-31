@@ -1,0 +1,305 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="200" failures="0" time="0">
+  <testsuite name="kb_macro" tests="15" failures="0">
+    <testcase name="modifier_keys_in_nkro" classname="kb_macro" time="0.0000"/>
+    <testcase name="action_code_none_ignored" classname="kb_macro" time="0.0000"/>
+    <testcase name="fn1_press_activates_layer" classname="kb_macro" time="0.0000"/>
+    <testcase name="fn1_release_returns_to_base" classname="kb_macro" time="0.0000"/>
+    <testcase name="fn2_press_activates_layer" classname="kb_macro" time="0.0000"/>
+    <testcase name="fn1_fn2_activates_fn3" classname="kb_macro" time="0.0000"/>
+    <testcase name="fn1_fn2_release_fn1_stays_fn2" classname="kb_macro" time="0.0000"/>
+    <testcase name="fn2_fn1_also_activates_fn3" classname="kb_macro" time="0.0000"/>
+    <testcase name="system_action_dispatched" classname="kb_macro" time="0.0000"/>
+    <testcase name="custom_key_dispatched" classname="kb_macro" time="0.0000"/>
+    <testcase name="action_code_ranges_dont_overlap" classname="kb_macro" time="0.0000"/>
+    <testcase name="execution_mode_count" classname="kb_macro" time="0.0000"/>
+    <testcase name="macro_id_extraction" classname="kb_macro" time="0.0000"/>
+    <testcase name="ckey_id_extraction" classname="kb_macro" time="0.0000"/>
+    <testcase name="max_macro_id" classname="kb_macro" time="0.0000"/>
+  </testsuite>
+  <testsuite name="kb_system_action" tests="12" failures="0">
+    <testcase name="press_fires_press_event" classname="kb_system_action" time="0.0000"/>
+    <testcase name="release_fires_release_event" classname="kb_system_action" time="0.0000"/>
+    <testcase name="single_tap_after_timeout" classname="kb_system_action" time="0.0000"/>
+    <testcase name="double_tap_within_window" classname="kb_system_action" time="0.0000"/>
+    <testcase name="hold_after_timeout" classname="kb_system_action" time="0.0000"/>
+    <testcase name="hold_then_release_cleans_up" classname="kb_system_action" time="0.0000"/>
+    <testcase name="custom_timing_shorter_hold" classname="kb_system_action" time="0.0000"/>
+    <testcase name="custom_timing_shorter_double_tap" classname="kb_system_action" time="0.0000"/>
+    <testcase name="concurrent_trackers" classname="kb_system_action" time="0.0000"/>
+    <testcase name="tracker_pool_overflow" classname="kb_system_action" time="0.0000"/>
+    <testcase name="release_without_prior_press" classname="kb_system_action" time="0.0000"/>
+    <testcase name="duplicate_press_ignored_during_hold_wait" classname="kb_system_action" time="0.0000"/>
+  </testsuite>
+  <testsuite name="kb_custom_key" tests="10" failures="0">
+    <testcase name="pr_mode_press_fires_tap" classname="kb_custom_key" time="0.0000"/>
+    <testcase name="pr_mode_release_fires_tap" classname="kb_custom_key" time="0.0000"/>
+    <testcase name="pr_sustain_press_calls_process_action" classname="kb_custom_key" time="0.0000"/>
+    <testcase name="pr_sustain_release_calls_both" classname="kb_custom_key" time="0.0000"/>
+    <testcase name="pr_sustain_no_release_action_skips_tap" classname="kb_custom_key" time="0.0000"/>
+    <testcase name="ma_mode_routes_to_sys_action" classname="kb_custom_key" time="0.0000"/>
+    <testcase name="unknown_id_ignored" classname="kb_custom_key" time="0.0000"/>
+    <testcase name="multiple_ckeys_independent" classname="kb_custom_key" time="0.0000"/>
+    <testcase name="id_extraction_boundary" classname="kb_custom_key" time="0.0000"/>
+    <testcase name="max_ckeys_capacity" classname="kb_custom_key" time="0.0000"/>
+  </testsuite>
+  <testsuite name="cfg_layouts" tests="9" failures="0">
+    <testcase name="default_is_all_zeros" classname="cfg_layouts" time="0.0000"/>
+    <testcase name="layer_struct_size" classname="cfg_layouts" time="0.0000"/>
+    <testcase name="layer_copy_preserves_data" classname="cfg_layouts" time="0.0000"/>
+    <testcase name="full_layer_round_trip" classname="cfg_layouts" time="0.0000"/>
+    <testcase name="layer_key_names" classname="cfg_layouts" time="0.0000"/>
+    <testcase name="transparent_key_value" classname="cfg_layouts" time="0.0000"/>
+    <testcase name="max_action_code_fits_uint16" classname="cfg_layouts" time="0.0000"/>
+    <testcase name="binary_size_matches_struct" classname="cfg_layouts" time="0.0000"/>
+    <testcase name="all_four_layers_independent" classname="cfg_layouts" time="0.0000"/>
+  </testsuite>
+  <testsuite name="cfgmod" tests="14" failures="0">
+    <testcase name="build_key_standard" classname="cfgmod" time="0.0000"/>
+    <testcase name="build_key_system" classname="cfgmod" time="0.0000"/>
+    <testcase name="build_key_null_out" classname="cfgmod" time="0.0000"/>
+    <testcase name="build_key_null_key" classname="cfgmod" time="0.0000"/>
+    <testcase name="build_key_too_long" classname="cfgmod" time="0.0000"/>
+    <testcase name="build_key_buffer_too_small" classname="cfgmod" time="0.0000"/>
+    <testcase name="register_valid_kind" classname="cfgmod" time="0.0000"/>
+    <testcase name="register_invalid_kind" classname="cfgmod" time="0.0000"/>
+    <testcase name="register_null_callbacks" classname="cfgmod" time="0.0000"/>
+    <testcase name="register_zero_struct_size" classname="cfgmod" time="0.0000"/>
+    <testcase name="wire_header_size" classname="cfgmod" time="0.0000"/>
+    <testcase name="wire_header_packing" classname="cfgmod" time="0.0000"/>
+    <testcase name="kind_namespace_mapping" classname="cfgmod" time="0.0000"/>
+    <testcase name="nvs_round_trip_binary" classname="cfgmod" time="0.0000"/>
+  </testsuite>
+  <testsuite name="action_codes" tests="15" failures="0">
+    <testcase name="ranges_dont_overlap" classname="action_codes" time="0.0000"/>
+    <testcase name="none_is_zero" classname="action_codes" time="0.0000"/>
+    <testcase name="transparent_is_max_uint16" classname="action_codes" time="0.0000"/>
+    <testcase name="hid_range" classname="action_codes" time="0.0000"/>
+    <testcase name="media_range" classname="action_codes" time="0.0000"/>
+    <testcase name="system_range" classname="action_codes" time="0.0000"/>
+    <testcase name="ckey_range_capacity" classname="action_codes" time="0.0000"/>
+    <testcase name="macro_range_capacity" classname="action_codes" time="0.0000"/>
+    <testcase name="layer_actions_sequential" classname="action_codes" time="0.0000"/>
+    <testcase name="ble_profile_actions" classname="action_codes" time="0.0000"/>
+    <testcase name="media_actions_within_system_range" classname="action_codes" time="0.0000"/>
+    <testcase name="media_actions_contiguous" classname="action_codes" time="0.0000"/>
+    <testcase name="macro_id_extraction" classname="action_codes" time="0.0000"/>
+    <testcase name="ckey_id_extraction" classname="action_codes" time="0.0000"/>
+    <testcase name="transparent_does_not_collide_with_any_range" classname="action_codes" time="0.0000"/>
+  </testsuite>
+  <testsuite name="macros_config" tests="13" failures="0">
+    <testcase name="max_event_count" classname="macros_config" time="0.0000"/>
+    <testcase name="max_macro_count" classname="macros_config" time="0.0000"/>
+    <testcase name="execution_mode_count" classname="macros_config" time="0.0000"/>
+    <testcase name="event_struct_layout" classname="macros_config" time="0.0000"/>
+    <testcase name="macro_name_length" classname="macros_config" time="0.0000"/>
+    <testcase name="index_mask_single_bit" classname="macros_config" time="0.0000"/>
+    <testcase name="index_mask_all_64" classname="macros_config" time="0.0000"/>
+    <testcase name="index_mask_clear_bit" classname="macros_config" time="0.0000"/>
+    <testcase name="macro_list_zero_init" classname="macros_config" time="0.0000"/>
+    <testcase name="exec_mode_values" classname="macros_config" time="0.0000"/>
+    <testcase name="macro_struct_has_stack_max" classname="macros_config" time="0.0000"/>
+    <testcase name="macro_struct_has_repeat_count" classname="macros_config" time="0.0000"/>
+    <testcase name="nested_macro_events" classname="macros_config" time="0.0000"/>
+  </testsuite>
+  <testsuite name="usb_crc" tests="11" failures="0">
+    <testcase name="prepare_and_verify_round_trip" classname="usb_crc" time="0.0000"/>
+    <testcase name="all_zeros_round_trip" classname="usb_crc" time="0.0000"/>
+    <testcase name="all_ff_round_trip" classname="usb_crc" time="0.0000"/>
+    <testcase name="single_bit_corruption_detected" classname="usb_crc" time="0.0000"/>
+    <testcase name="crc_byte_corruption_detected" classname="usb_crc" time="0.0000"/>
+    <testcase name="different_payloads_different_crc" classname="usb_crc" time="0.0000"/>
+    <testcase name="repeated_prepare_is_idempotent" classname="usb_crc" time="0.0000"/>
+    <testcase name="full_payload_round_trip" classname="usb_crc" time="0.0000"/>
+    <testcase name="every_single_byte_flip_detected" classname="usb_crc" time="0.0000"/>
+    <testcase name="zero_payload_has_nonzero_crc_byte" classname="usb_crc" time="0.0000"/>
+    <testcase name="single_nonzero_byte_round_trip" classname="usb_crc" time="0.0000"/>
+  </testsuite>
+  <testsuite name="usb_rx" tests="13" failures="0">
+    <testcase name="packet_struct_size" classname="usb_rx" time="0.0000"/>
+    <testcase name="blast_bitmap_set_and_get" classname="usb_rx" time="0.0000"/>
+    <testcase name="blast_bitmap_multiple_bits" classname="usb_rx" time="0.0000"/>
+    <testcase name="blast_bitmap_boundary" classname="usb_rx" time="0.0000"/>
+    <testcase name="blast_receive_first_packet" classname="usb_rx" time="0.0000"/>
+    <testcase name="blast_receive_ordered" classname="usb_rx" time="0.0000"/>
+    <testcase name="blast_receive_out_of_order" classname="usb_rx" time="0.0000"/>
+    <testcase name="blast_receive_duplicate_ignored" classname="usb_rx" time="0.0000"/>
+    <testcase name="blast_entry_detection" classname="usb_rx" time="0.0000"/>
+    <testcase name="single_packet_detection" classname="usb_rx" time="0.0000"/>
+    <testcase name="bitmap_response_format" classname="usb_rx" time="0.0000"/>
+    <testcase name="max_blast_packets" classname="usb_rx" time="0.0000"/>
+    <testcase name="payload_flag_values" classname="usb_rx" time="0.0000"/>
+  </testsuite>
+  <testsuite name="usb_tx" tests="14" failures="0">
+    <testcase name="single_packet_calculation" classname="usb_tx" time="0.0000"/>
+    <testcase name="multi_packet_calculation" classname="usb_tx" time="0.0000"/>
+    <testcase name="large_payload_calculation" classname="usb_tx" time="0.0000"/>
+    <testcase name="build_first_packet" classname="usb_tx" time="0.0000"/>
+    <testcase name="build_mid_packet" classname="usb_tx" time="0.0000"/>
+    <testcase name="build_last_packet" classname="usb_tx" time="0.0000"/>
+    <testcase name="build_out_of_bounds" classname="usb_tx" time="0.0000"/>
+    <testcase name="single_packet_is_first_and_last" classname="usb_tx" time="0.0000"/>
+    <testcase name="bitmap_reconcile_detection" classname="usb_tx" time="0.0000"/>
+    <testcase name="bitmap_parsing" classname="usb_tx" time="0.0000"/>
+    <testcase name="reconcile_max_rounds" classname="usb_tx" time="0.0000"/>
+    <testcase name="nak_max_retries" classname="usb_tx" time="0.0000"/>
+    <testcase name="ack_ok_signals_success" classname="usb_tx" time="0.0000"/>
+    <testcase name="exact_payload_boundary" classname="usb_tx" time="0.0000"/>
+  </testsuite>
+  <testsuite name="kb_bitmap" tests="1" failures="0">
+    <testcase name="set_and_get_bit_zero" classname="kb_bitmap" time="0.0000"/>
+  </testsuite>
+  <testsuite name="event_bus" tests="1" failures="0">
+    <testcase name="event_bases_are_distinct" classname="event_bus" time="0.0000"/>
+  </testsuite>
+  <testsuite name="kb_bitmap" tests="1" failures="0">
+    <testcase name="set_and_get_bit_seven" classname="kb_bitmap" time="0.0000"/>
+  </testsuite>
+  <testsuite name="event_bus" tests="1" failures="0">
+    <testcase name="post_and_retrieve_kb_event" classname="event_bus" time="0.0000"/>
+  </testsuite>
+  <testsuite name="kb_bitmap" tests="2" failures="0">
+    <testcase name="set_and_get_bit_eight" classname="kb_bitmap" time="0.0000"/>
+    <testcase name="set_and_get_bit_31" classname="kb_bitmap" time="0.0000"/>
+  </testsuite>
+  <testsuite name="event_bus" tests="1" failures="0">
+    <testcase name="post_ble_pairing_complete" classname="event_bus" time="0.0000"/>
+  </testsuite>
+  <testsuite name="kb_bitmap" tests="1" failures="0">
+    <testcase name="clear_bit" classname="kb_bitmap" time="0.0000"/>
+  </testsuite>
+  <testsuite name="event_bus" tests="1" failures="0">
+    <testcase name="post_config_update" classname="event_bus" time="0.0000"/>
+  </testsuite>
+  <testsuite name="kb_bitmap" tests="1" failures="0">
+    <testcase name="clear_preserves_adjacent_bits" classname="kb_bitmap" time="0.0000"/>
+  </testsuite>
+  <testsuite name="event_bus" tests="1" failures="0">
+    <testcase name="find_last_event" classname="event_bus" time="0.0000"/>
+  </testsuite>
+  <testsuite name="kb_bitmap" tests="1" failures="0">
+    <testcase name="set_preserves_existing_bits" classname="kb_bitmap" time="0.0000"/>
+  </testsuite>
+  <testsuite name="event_bus" tests="1" failures="0">
+    <testcase name="count_matching_events" classname="event_bus" time="0.0000"/>
+  </testsuite>
+  <testsuite name="kb_bitmap" tests="2" failures="0">
+    <testcase name="get_unset_bit_returns_false" classname="kb_bitmap" time="0.0000"/>
+    <testcase name="set_all_bits_in_byte" classname="kb_bitmap" time="0.0000"/>
+  </testsuite>
+  <testsuite name="event_bus" tests="1" failures="0">
+    <testcase name="handler_registration" classname="event_bus" time="0.0000"/>
+  </testsuite>
+  <testsuite name="kb_bitmap" tests="1" failures="0">
+    <testcase name="matrix_bitmap_size" classname="kb_bitmap" time="0.0000"/>
+  </testsuite>
+  <testsuite name="event_bus" tests="1" failures="0">
+    <testcase name="multiple_events_accumulate" classname="event_bus" time="0.0000"/>
+  </testsuite>
+  <testsuite name="kb_bitmap" tests="1" failures="0">
+    <testcase name="nkro_bitmap_256_bits" classname="kb_bitmap" time="0.0000"/>
+  </testsuite>
+  <testsuite name="event_bus" tests="2" failures="0">
+    <testcase name="payload_struct_sizes" classname="event_bus" time="0.0000"/>
+    <testcase name="config_update_key_fits" classname="event_bus" time="0.0000"/>
+  </testsuite>
+  <testsuite name="kb_bitmap" tests="2" failures="0">
+    <testcase name="double_set_is_idempotent" classname="kb_bitmap" time="0.0000"/>
+    <testcase name="double_clear_is_idempotent" classname="kb_bitmap" time="0.0000"/>
+  </testsuite>
+  <testsuite name="status_module" tests="1" failures="0">
+    <testcase name="initial_state" classname="status_module" time="0.0000"/>
+  </testsuite>
+  <testsuite name="kb_state" tests="2" failures="0">
+    <testcase name="init_sets_zero" classname="kb_state" time="0.0000"/>
+    <testcase name="update_caps_lock" classname="kb_state" time="0.0000"/>
+  </testsuite>
+  <testsuite name="status_module" tests="1" failures="0">
+    <testcase name="profile_connected_sets_bitmap" classname="status_module" time="0.0000"/>
+  </testsuite>
+  <testsuite name="kb_state" tests="1" failures="0">
+    <testcase name="update_posts_event_on_change" classname="kb_state" time="0.0000"/>
+  </testsuite>
+  <testsuite name="status_module" tests="2" failures="0">
+    <testcase name="profile_disconnected_clears_bitmap" classname="status_module" time="0.0000"/>
+    <testcase name="multiple_profiles_connected" classname="status_module" time="0.0000"/>
+  </testsuite>
+  <testsuite name="kb_state" tests="1" failures="0">
+    <testcase name="no_event_when_unchanged" classname="kb_state" time="0.0000"/>
+  </testsuite>
+  <testsuite name="status_module" tests="1" failures="0">
+    <testcase name="pairing_started_sets_profile" classname="status_module" time="0.0000"/>
+  </testsuite>
+  <testsuite name="kb_state" tests="1" failures="0">
+    <testcase name="multiple_leds" classname="kb_state" time="0.0000"/>
+  </testsuite>
+  <testsuite name="status_module" tests="1" failures="0">
+    <testcase name="pairing_complete_updates_state" classname="status_module" time="0.0000"/>
+  </testsuite>
+  <testsuite name="kb_state" tests="1" failures="0">
+    <testcase name="clear_leds" classname="kb_state" time="0.0000"/>
+  </testsuite>
+  <testsuite name="status_module" tests="1" failures="0">
+    <testcase name="pairing_failed_clears_pairing" classname="status_module" time="0.0000"/>
+  </testsuite>
+  <testsuite name="kb_state" tests="1" failures="0">
+    <testcase name="transition_between_different_states" classname="kb_state" time="0.0000"/>
+  </testsuite>
+  <testsuite name="status_module" tests="1" failures="0">
+    <testcase name="pairing_timeout_clears_pairing" classname="status_module" time="0.0000"/>
+  </testsuite>
+  <testsuite name="kb_state" tests="1" failures="0">
+    <testcase name="all_leds_on" classname="kb_state" time="0.0000"/>
+  </testsuite>
+  <testsuite name="status_module" tests="1" failures="0">
+    <testcase name="routing_changed_to_ble" classname="status_module" time="0.0000"/>
+  </testsuite>
+  <testsuite name="kb_report" tests="1" failures="0">
+    <testcase name="send_report_empty_nkro" classname="kb_report" time="0.0000"/>
+  </testsuite>
+  <testsuite name="status_module" tests="3" failures="0">
+    <testcase name="routing_changed_to_usb" classname="status_module" time="0.0000"/>
+    <testcase name="disconnect_nonexistent_profile_safe" classname="status_module" time="0.0000"/>
+    <testcase name="boundary_profile_indices" classname="status_module" time="0.0000"/>
+  </testsuite>
+  <testsuite name="kb_report" tests="1" failures="0">
+    <testcase name="send_report_single_key" classname="kb_report" time="0.0000"/>
+  </testsuite>
+  <testsuite name="status_module" tests="1" failures="0">
+    <testcase name="each_ble_event_triggers_push" classname="status_module" time="0.0000"/>
+  </testsuite>
+  <testsuite name="kb_report" tests="13" failures="0">
+    <testcase name="send_report_modifier_only" classname="kb_report" time="0.0000"/>
+    <testcase name="send_report_six_keys_plus_modifier" classname="kb_report" time="0.0000"/>
+    <testcase name="send_report_more_than_six_truncates" classname="kb_report" time="0.0000"/>
+    <testcase name="send_report_all_modifiers" classname="kb_report" time="0.0000"/>
+    <testcase name="send_report_nkro_protocol" classname="kb_report" time="0.0000"/>
+    <testcase name="hid_ready_usb_mounted" classname="kb_report" time="0.0000"/>
+    <testcase name="hid_ready_ble_routing" classname="kb_report" time="0.0000"/>
+    <testcase name="hid_not_ready_ble_routing_disconnected" classname="kb_report" time="0.0000"/>
+    <testcase name="hid_not_ready_usb_not_mounted" classname="kb_report" time="0.0000"/>
+    <testcase name="routing_priority_ble_over_usb" classname="kb_report" time="0.0000"/>
+    <testcase name="send_report_fails_when_ble_disconnected" classname="kb_report" time="0.0000"/>
+    <testcase name="consumer_report_via_usb" classname="kb_report" time="0.0000"/>
+    <testcase name="consumer_report_via_ble" classname="kb_report" time="0.0000"/>
+  </testsuite>
+  <testsuite name="kb_layout" tests="12" failures="0">
+    <testcase name="base_layer_lookup" classname="kb_layout" time="0.0000"/>
+    <testcase name="fn1_layer_override" classname="kb_layout" time="0.0000"/>
+    <testcase name="transparent_falls_to_base" classname="kb_layout" time="0.0000"/>
+    <testcase name="out_of_bounds_row_returns_none" classname="kb_layout" time="0.0000"/>
+    <testcase name="out_of_bounds_col_returns_none" classname="kb_layout" time="0.0000"/>
+    <testcase name="out_of_bounds_layer_defaults_to_base" classname="kb_layout" time="0.0000"/>
+    <testcase name="dram_swap_cache_hit" classname="kb_layout" time="0.0000"/>
+    <testcase name="dram_swap_eviction_on_layer_change" classname="kb_layout" time="0.0000"/>
+    <testcase name="fn3_with_all_transparent_falls_to_base" classname="kb_layout" time="0.0000"/>
+    <testcase name="none_on_base_stays_none_even_through_transparent" classname="kb_layout" time="0.0000"/>
+    <testcase name="base_layer_transparent_not_recursive" classname="kb_layout" time="0.0000"/>
+    <testcase name="all_corners_valid" classname="kb_layout" time="0.0000"/>
+  </testsuite>
+  <testsuite name="kb_macro" tests="3" failures="0">
+    <testcase name="hid_key_press_sets_nkro_bit" classname="kb_macro" time="0.0000"/>
+    <testcase name="hid_key_release_clears_nkro_bit" classname="kb_macro" time="0.0000"/>
+    <testcase name="multiple_hid_keys_simultaneous" classname="kb_macro" time="0.0000"/>
+  </testsuite>
+</testsuites>

@@ -28,6 +28,7 @@
 - [BLE Multi-Profile](#ble-multi-profile)
 - [Web Configurator](#web-configurator)
 - [Communication Protocol](#communication-protocol)
+- [Testing](#testing)
 - [Roadmap](#roadmap)
 
 ---
@@ -709,6 +710,108 @@ Phase 4 — Commit:       Host ──[LAST]──> Device, Device ──[ACK|OK]
 | `0x0B` | `CFG_KEY_CKEY_SINGLE` | Full CKey by `{id}` | Upsert / `{delete: id}` |
 
 For the full specification including failure recovery, CRC details, and system commands, see [COMM_PROTOCOL.md](COMM_PROTOCOL.md).
+
+---
+
+## Testing
+
+The firmware includes a comprehensive host-based unit test suite that compiles and runs on your development machine — no ESP32 hardware or ESP-IDF toolchain required.
+
+**Location:** `test/` — See [`test/TEST.md`](test/TEST.md) for full documentation.
+
+### Test Architecture
+
+- **Production code linked directly** — 9 modules (`event_bus.c`, `kb_state.c`, `usb_crc.c`, `kb_report.c`, `kb_system_action.c`, `kb_layout.c`, `cfg_layouts.c`, `usb_callbacks_rx.c`, `statusmod.c`) are compiled from real source via `#include` in `main.c`, tested against mocks at the ESP-IDF boundary
+- **Shim header interception** — `test/include/` contains shim headers (e.g., `esp_log.h`, `freertos/FreeRTOS.h`) that redirect to mocks when production code `#include`s them; include path ordering ensures shims are found first
+- **Custom test framework** (`test/include/test_harness.h`) — zero-dependency C test harness with self-registering `TEST_CASE` macros, per-suite `TEST_SETUP`/`TEST_TEARDOWN`, assertion helpers, test filtering (`-k`), JUnit XML output (`--junit`), and a console runner
+- **Mock layer** (`test/include/mocks/`) — lightweight replacements for ESP-IDF APIs (NVS, esp_event, FreeRTOS, TinyUSB, BLE) with controllable state (timer, semaphore force-fail, queue force-full/empty)
+- **Single-translation-unit build** — `main.c` `#include`s production `.c` files and all test `.c` files, avoiding linker complexity
+- **Cross-platform** — works with MSVC (Windows), GCC, and Clang
+
+### Test Modules
+
+Tests are organized into three categories. Every test exercises real production code — there are no re-implementations or constants-only tests.
+
+**`keyboard/`** — Keyboard subsystem (4 files)
+
+| Test File | Component | Tests | What's Covered |
+|-----------|-----------|-------|----------------|
+| `test_kb_state.c` | `kb_state.c` | 8 | LED state tracking, event posting on change |
+| `test_kb_report.c` | `kb_report.c` | 15 | NKRO→6KRO conversion, USB/BLE routing priority |
+| `test_kb_layout.c` | `cfg_layouts.c` + `kb_layout.c` | 19 | Factory defaults, transparent fallthrough, DRAM swap cache, NVS-injected layers |
+| `test_kb_system_action.c` | `kb_system_action.c` | 12 | Tap/hold state machine, timing, concurrent trackers |
+
+**`usb/`** — USB communication (2 files)
+
+| Test File | Component | Tests | What's Covered |
+|-----------|-----------|-------|----------------|
+| `test_usb_crc.c` | `usb_crc.c` | 11 | CRC-8 round-trip, corruption detection, every-byte-flip coverage |
+| `test_usb_rx.c` | `usb_callbacks_rx.c` | 12 | Blast-mode RX, bitmap tracking, packet ordering, commit, duplicate rejection |
+
+**`system/`** — System-level (2 files)
+
+| Test File | Component | Tests | What's Covered |
+|-----------|-----------|-------|----------------|
+| `test_event_bus.c` | `event_bus.c` | 10 | Event post/retrieve, handler registration, payload struct sizing |
+| `test_status_module.c` | `statusmod.c` | 15 | BLE event-driven state cache, profile connect/disconnect bitmap, pairing lifecycle, routing mode, USB callback |
+
+**Total: 102 tests, 256 assertions across 8 test modules.**
+
+### Running Tests
+
+**Option A — MSVC (Windows, recommended):**
+
+```bash
+cd test
+_build.bat
+test_runner.exe
+```
+
+Or manually (open a Developer Command Prompt or run `vcvarsall.bat x64` first):
+
+```bash
+cd test
+cl /nologo /W3 /std:c17 /Fe:test_runner.exe /Iinclude ^
+  /I../../components/keyboard/include ^
+  /I../../components/event_bus/include ^
+  /I../../components/config_module/include ^
+  /I../../components/ble_module/include ^
+  main.c
+test_runner.exe
+```
+
+**Option B — GCC / Clang (Linux, macOS, MinGW):**
+
+```bash
+cd test
+gcc -std=c99 -Wall -Wextra -o test_runner \
+  -Iinclude \
+  -I../../components/keyboard/include \
+  -I../../components/event_bus/include \
+  -I../../components/config_module/include \
+  -I../../components/ble_module/include \
+  main.c -lm
+./test_runner
+```
+
+**Test filtering and JUnit output:**
+
+```bash
+test_runner -k usb_crc          # Run only tests matching "usb_crc"
+test_runner -k hold             # Run only tests with "hold" in the name
+test_runner --junit             # Write test_results.xml (JUnit format)
+test_runner -k kb_state --junit # Combine both
+```
+
+### Mock Layer
+
+| Mock Header | Replaces | Key Capabilities |
+|-------------|----------|------------------|
+| `mock_esp.h` | `esp_err.h`, `esp_log.h`, `esp_timer.h` | Error codes, no-op logging, controllable timer (`mock_timer_set`/`advance`) |
+| `mock_freertos.h` | FreeRTOS | Semaphore tracking (force-fail, taken state), queue simulation (force-full/empty), tick control, task stubs |
+| `mock_esp_event.h` | `esp_event` | Records posted events, handler registration, find/count/dispatch helpers |
+| `mock_nvs.h` | `nvs_flash` | In-memory NVS with 256 entries, inject/reset for test setup |
+| `mock_tinyusb.h` | TinyUSB, BLE stubs | Captures HID reports, USB/BLE routing state control |
 
 ---
 

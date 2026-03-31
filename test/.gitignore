@@ -1,0 +1,6 @@
+# Build artifacts
+test_runner
+test_runner.exe
+*.obj
+*.o
+build/
