@@ -73,7 +73,7 @@ void kb_matrix_scan(uint8_t *out_matrix_bitmap) {
 
 	for (size_t c = 0; c < col_count; ++c) {
 		gpio_set_level(k_cols[c].gpio, 0);
-		taskYIELD(); // Allow GPIO output to settle before reading rows
+		esp_rom_delay_us(5); // Allow GPIO output to settle (~1-2 us needed; 5 us is a conservative margin)
 
 		for (size_t r = 0; r < row_count; ++r) {
 			if (gpio_get_level(k_rows[r].gpio) == 0) {

@@ -92,7 +92,10 @@ Physical key press
 - Runs at priority 5, 6 KB stack, internal RAM.
 - Target rate: **1200 Hz** (`MAX_POLLING_RATE_HZ`).
 - **Idle sleep**: when no keys are pressed, enables GPIO interrupts on all rows (columns driven LOW) and sleeps via `ulTaskNotifyTake`. Woken by ISR on key press.
+- **GPIO settling**: each column is driven LOW and held for `esp_rom_delay_us(5)` before rows are read. This is a ~5 µs busy-wait — sufficient for GPIO output settling — replacing a former `taskYIELD()` that caused 18 unnecessary context switches per scan (~540 µs wasted per 833 µs budget).
 - **Debounce**: integrator with `KB_DEBOUNCE_SCANS = 5`. A key must be stable for 5 consecutive scans to change state.
+- **Edge detection**: after debounce, the current and previous bitmaps are XOR'd to produce a change mask; only set bits (changed keys) are iterated using `__builtin_ctz`. A typical single keypress visits 1 bit instead of all 108.
+- **Cached emptiness**: `s_matrix_nonempty` is updated once after each `debounce_update()` and reused by the rate-limiter idle check, avoiding a redundant bitmap scan per rate-limited iteration.
 - **Layer-sticky action codes**: on press, the action code for the current layer is stored per key; the matching release always fires the same code even if the layer changes while the key is held.
 - **Forced reports**: a report is also sent every `MIN_REPORT_RATE_HZ` (1 Hz) to keep the host alive even with no matrix changes.
 - **Boot protocol**: auto-detected via `usb_keyboard_use_boot_protocol()`; report format switches between 6KRO and NKRO transparently.
@@ -105,7 +108,7 @@ A 32-byte (256-bit) bitmap `s_v_nkro[]` holds every currently "pressed" HID keyc
 
 - `kb_macro_virtual_press(kc)` — sets bit `kc`
 - `kb_macro_virtual_release(kc)` — clears bit `kc`
-- `kb_macro_send_report()` — takes mutex, calls `kb_send_report(s_v_nkro)`, retries up to 100× on endpoint-busy
+- `kb_macro_send_report()` — snapshots `s_v_nkro` under the mutex (~50 ns), releases it, then retries `kb_send_report()` up to 100× on endpoint-busy. The mutex is **not** held during retries, so virtual press/release on other tasks are never blocked by USB endpoint congestion. A stale snapshot is harmless: the next scan sends a fresh report within ~833 µs.
 
 Layer switching is tracked via `s_is_fn1_held` / `s_is_fn2_held`:
 
@@ -177,7 +180,7 @@ IDLE → PRESSED_WAIT_HOLD → HELD
 
 Per-action timing can be overridden via `kb_system_action_process_ex()` with a `kb_sys_action_timing_t` struct (0 = use engine default).
 
-Up to 10 concurrent action trackers. The background task `kb_sys_action` (priority 5, 4 KB) checks timeouts every 10 ms.
+Up to 10 concurrent action trackers. The background task `kb_sys_action` (priority 5, 4 KB) checks timeouts every 10 ms when trackers are active. When no trackers are allocated it blocks indefinitely on `ulTaskNotifyTake`; `alloc_tracker()` calls `xTaskNotifyGive()` to wake it immediately when a gesture starts.
 
 ### Callback
 
@@ -228,7 +231,7 @@ Priority:
 1. **BLE** — if `ble_hid_is_routing_active()` and connected: send via `ble_hid_send_keyboard_report()`.
 2. **USB** — if `tud_mounted()` and endpoint ready: send 6KRO (boot protocol) or NKRO depending on `usb_keyboard_use_boot_protocol()`.
 
-NKRO→6KRO conversion extracts modifier bits (keycodes `0xE0–0xE7`) into the modifier byte and packs up to 6 remaining keycodes.
+NKRO→6KRO conversion is only performed when the transport actually requires it (BLE always; USB only in boot/6KRO protocol mode). For NKRO USB mode the raw bitmap is sent directly — the modifier byte is extracted in O(1) as `v_nkro[0xE0 >> 3]` (byte 28), since the modifier keycodes `0xE0–0xE7` map exactly to that byte. When conversion is needed, the scan loop runs `kc = 1` to `kc < 0xE0` for regular keys, then reads the modifier byte directly.
 
 ---
 
@@ -271,7 +274,7 @@ Over USB: the `MODULE_SYSTEM` HID channel accepts:
 | Task | Priority | Stack | Responsibility |
 |------|----------|-------|----------------|
 | `kb_mgr` | 5 | 6 KB | Scan, debounce, action dispatch, report send |
-| `kb_sys_action` | 5 | 4 KB | Tap/hold timeout polling (10 ms interval) |
+| `kb_sys_action` | 5 | 4 KB | Tap/hold timeout polling (10 ms when active; sleeps when idle) |
 | `kb_macro` | 4 | 5 KB | Macro execution |
 | `kb_tap_0..3` | 4 | 3 KB | Fire-tap workers (4 parallel slots) |
 

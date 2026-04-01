@@ -124,7 +124,7 @@ static void kb_manager_task(void *arg) {
     /* State flags */
     bool s_last_matrix_valid  = false;
     bool s_last_boot_protocol = false;
-    uint32_t s_idle_yield_counter = 0;
+    bool s_matrix_nonempty    = false; // cached: true when s_matrix has any pressed keys
 
     memset(s_matrix, 0, sizeof(s_matrix));
     memset(s_active_action_codes, 0, sizeof(s_active_action_codes));
@@ -139,13 +139,9 @@ static void kb_manager_task(void *arg) {
 
         /* Rate-limit scanning to MAX_POLLING_RATE_HZ */
         if (now_us - s_last_scan_us < min_scan_interval_us) {
-            /* If no keys are held, sleep in interrupt mode until a key wakes us. */
-            bool matrix_empty = true;
-            for (size_t i = 0; i < KB_MATRIX_BITMAP_BYTES; i++) {
-                if (s_matrix[i] != 0) { matrix_empty = false; break; }
-            }
-
-            if (matrix_empty && !s_paused) {
+            /* If no keys are held, sleep in interrupt mode until a key wakes us.
+             * s_matrix_nonempty is updated after every debounce; use the cached value. */
+            if (!s_matrix_nonempty && !s_paused) {
                 bool injected_empty = true;
                 portENTER_CRITICAL(&s_injected_matrix_lock);
                 for (size_t i = 0; i < KB_MATRIX_BITMAP_BYTES; i++) {
@@ -188,6 +184,12 @@ static void kb_manager_task(void *arg) {
         s_scan_count++;
         s_last_scan_us = now_us;
 
+        /* Update cached emptiness flag for the rate-limiter sleep decision */
+        s_matrix_nonempty = false;
+        for (size_t i = 0; i < KB_MATRIX_BITMAP_BYTES; i++) {
+            if (s_matrix[i] != 0) { s_matrix_nonempty = true; break; }
+        }
+
         /* --- Periodic stats logging (errors only) --- */
         if (elapsed_us >= 1000000LL) {
             uint32_t scans_per_sec   = (uint32_t)((s_scan_count  * 1000000LL) / elapsed_us);
@@ -219,18 +221,30 @@ static void kb_manager_task(void *arg) {
                               memcmp(s_matrix, s_last_matrix, KB_MATRIX_BITMAP_BYTES) != 0;
 
         if (matrix_changed) {
-            for (uint8_t r = 0; r < KB_MATRIX_ROW_COUNT; ++r) {
-                for (uint8_t c = 0; c < KB_MATRIX_COL_COUNT; ++c) {
-                    size_t bit = (size_t)r * KB_MATRIX_COL_COUNT + c;
-                    bool curr = kb_bit_get(s_matrix, bit);
-                    bool prev = s_last_matrix_valid ? kb_bit_get(s_last_matrix, bit) : false;
+            /* XOR the bitmaps to find only the changed bits, then use __builtin_ctz
+             * to visit only those positions.  For a typical single keypress this
+             * iterates 1 bit instead of all KB_MATRIX_KEYS (108). */
+            uint8_t diff[KB_MATRIX_BITMAP_BYTES];
+            for (size_t i = 0; i < KB_MATRIX_BITMAP_BYTES; i++) {
+                diff[i] = s_matrix[i] ^ (s_last_matrix_valid ? s_last_matrix[i] : 0);
+            }
 
-                    if (curr == prev) continue;
+            for (size_t byte_idx = 0; byte_idx < KB_MATRIX_BITMAP_BYTES; byte_idx++) {
+                uint8_t d = diff[byte_idx];
+                while (d) {
+                    int bit_pos = __builtin_ctz(d);
+                    size_t bit  = byte_idx * 8 + (size_t)bit_pos;
+
+                    if (bit >= KB_MATRIX_KEYS) break; /* ignore bitmap padding bits */
+
+                    uint8_t r   = (uint8_t)(bit / KB_MATRIX_COL_COUNT);
+                    uint8_t c   = (uint8_t)(bit % KB_MATRIX_COL_COUNT);
+                    bool    curr = kb_bit_get(s_matrix, bit);
 
                     if (curr) {
                         /* Key down: resolve action on current layer and remember it */
-                        uint8_t layer = kb_macro_get_active_layer();
-                        uint16_t action = kb_layout_get_action_code(r, c, layer);
+                        uint8_t layer    = kb_macro_get_active_layer();
+                        uint16_t action  = kb_layout_get_action_code(r, c, layer);
                         s_active_action_codes[r][c] = action;
                         kb_macro_process_action(action, true);
                     } else {
@@ -239,6 +253,8 @@ static void kb_manager_task(void *arg) {
                         kb_macro_process_action(action, false);
                         s_active_action_codes[r][c] = ACTION_CODE_NONE;
                     }
+
+                    d &= (uint8_t)(d - 1); /* clear lowest set bit */
                 }
             }
         }
@@ -270,10 +286,6 @@ static void kb_manager_task(void *arg) {
             s_last_boot_protocol = boot_protocol;
         }
 
-        /* Yield every 128 scans to prevent starving the idle task */
-        if ((++s_idle_yield_counter & 0x7F) == 0) {
-            vTaskDelay(1);
-        }
     }
 }
 

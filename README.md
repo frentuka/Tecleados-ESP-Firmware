@@ -267,8 +267,9 @@ The core HID pipeline. Responsible for everything from raw GPIO matrix state to 
 
 **Scanning:**
 
-- Columns driven LOW one at a time; rows read (LOW = pressed, due to diodes)
+- Columns driven LOW one at a time; `esp_rom_delay_us(5)` settling before rows are read
 - Debounce: **5 consecutive scans** required before a state change is registered
+- Edge detection: XOR bitmaps + `__builtin_ctz` — only changed keys are visited per scan
 - Polling target: **1200 Hz**
 - Idle: scan task sleeps; GPIO interrupt on any key wakes it
 - Minimum report rate: **1 Hz** (keeps the host alive even when nothing changes)
@@ -278,7 +279,7 @@ The core HID pipeline. Responsible for everything from raw GPIO matrix state to 
 | Task | Priority | Stack | Purpose |
 |------|----------|-------|---------|
 | `kb_mgr` | 5 | 6 KB | Matrix scan, debounce, action dispatch, report send |
-| `kb_sys_action` | 5 | 4 KB | Tap/hold timeout polling (every 10 ms) |
+| `kb_sys_action` | 5 | 4 KB | Tap/hold timeout polling (10 ms when active; sleeps when idle) |
 | `kb_macro` | 4 | 5 KB | Macro execution from 32-item queue |
 | `kb_tap_0`–`kb_tap_3` | 4 | 3 KB each | Fire-tap workers (4 parallel) |
 
@@ -287,7 +288,7 @@ The core HID pipeline. Responsible for everything from raw GPIO matrix state to 
 1. BLE — if routing is active and at least one profile is connected
 2. USB — if device is mounted and endpoint is ready
    - Boot protocol (6KRO): 1 modifier byte + 6 keycode bytes
-   - Report protocol (NKRO): 29-byte bitmap (up to 231 simultaneous keys)
+   - Report protocol (NKRO): 29-byte bitmap (up to 231 simultaneous keys); modifier byte extracted directly from the bitmap — no full NKRO→6KRO conversion needed
 
 ---
 

@@ -77,15 +77,23 @@ void kb_macro_virtual_release(uint8_t hid_keycode) {
 }
 
 esp_err_t kb_macro_send_report(void) {
-    esp_err_t err = ESP_FAIL;
+    /* Snapshot the bitmap under the mutex (hold time ~50 ns) then retry outside
+     * it.  This prevents the up-to-100 ms retry loop from blocking virtual
+     * press/release on all other tasks.  A stale snapshot is harmless: the next
+     * scan iteration will send a fresh report within ~833 us. */
+    uint8_t snapshot[sizeof(s_v_nkro)];
     if (xSemaphoreTake(s_v_nkro_mutex, portMAX_DELAY)) {
-        /* Retry up to 100 times when the HID endpoint is busy */
-        for (int i = 0; i < 100; i++) {
-            err = kb_send_report(s_v_nkro);
-            if (err == ESP_OK) break;
-            vTaskDelay(pdMS_TO_TICKS(1));
-        }
+        memcpy(snapshot, s_v_nkro, sizeof(s_v_nkro));
         xSemaphoreGive(s_v_nkro_mutex);
+    } else {
+        return ESP_FAIL;
+    }
+
+    esp_err_t err = ESP_FAIL;
+    for (int i = 0; i < 100; i++) {
+        err = kb_send_report(snapshot);
+        if (err == ESP_OK) break;
+        vTaskDelay(pdMS_TO_TICKS(1));
     }
     return err;
 }

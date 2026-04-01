@@ -32,8 +32,9 @@ typedef struct {
     int64_t        hold_timeout_us;
 } action_tracker_t;
 
-static action_tracker_t s_trackers[MAX_CONCURRENT_ACTIONS];
-static TaskHandle_t     s_task_handle = NULL;
+static action_tracker_t  s_trackers[MAX_CONCURRENT_ACTIONS];
+static TaskHandle_t      s_task_handle = NULL;
+static volatile int      s_active_tracker_count = 0;
 
 /* ---- Event notification ---- */
 
@@ -67,6 +68,11 @@ static action_tracker_t *alloc_tracker(uint16_t action_code,
                 (timing && timing->hold_threshold_ms > 0)
                 ? (int64_t)timing->hold_threshold_ms * 1000LL
                 : HOLD_TIMEOUT_US_DEFAULT;
+            s_active_tracker_count++;
+            /* Wake the background task if it is sleeping */
+            if (s_task_handle) {
+                xTaskNotifyGive(s_task_handle);
+            }
             return &s_trackers[i];
         }
     }
@@ -78,6 +84,7 @@ static void free_tracker(action_tracker_t *t) {
     if (t) {
         t->state       = STATE_IDLE;
         t->action_code = 0;
+        if (s_active_tracker_count > 0) s_active_tracker_count--;
     }
 }
 
@@ -85,6 +92,12 @@ static void free_tracker(action_tracker_t *t) {
 
 static void sys_action_task(void *arg) {
     while (1) {
+        /* Sleep indefinitely when there is nothing to time out.  alloc_tracker()
+         * calls xTaskNotifyGive() to wake us as soon as a tracker is allocated. */
+        if (s_active_tracker_count == 0) {
+            ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        }
+
         int64_t now = esp_timer_get_time();
 
         for (int i = 0; i < MAX_CONCURRENT_ACTIONS; i++) {
@@ -105,7 +118,9 @@ static void sys_action_task(void *arg) {
             }
         }
 
-        vTaskDelay(pdMS_TO_TICKS(10));
+        if (s_active_tracker_count > 0) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
     }
 }
 
