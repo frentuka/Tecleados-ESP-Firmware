@@ -88,6 +88,30 @@ static void free_tracker(action_tracker_t *t) {
     }
 }
 
+/* ---- Timer polling (extracted for testability) ---- */
+
+void kb_system_action_poll(void) {
+    int64_t now = esp_timer_get_time();
+
+    for (int i = 0; i < MAX_CONCURRENT_ACTIONS; i++) {
+        action_tracker_t *t = &s_trackers[i];
+
+        if (t->state == STATE_PRESSED_WAIT_HOLD) {
+            if (now - t->timestamp_us >= t->hold_timeout_us) {
+                notify_event(t->action_code, KB_EV_HOLD);
+                t->state = STATE_HELD;
+            }
+        } else if (t->state == STATE_RELEASED_WAIT_DOUBLE) {
+            /* timestamp_us was reset to the release moment, so this window
+             * is always double_tap_timeout_us from the release. */
+            if (now - t->timestamp_us >= t->double_tap_timeout_us) {
+                notify_event(t->action_code, KB_EV_SINGLE_TAP);
+                free_tracker(t);
+            }
+        }
+    }
+}
+
 /* ---- Background timing task ---- */
 
 static void sys_action_task(void *arg) {
@@ -98,25 +122,7 @@ static void sys_action_task(void *arg) {
             ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         }
 
-        int64_t now = esp_timer_get_time();
-
-        for (int i = 0; i < MAX_CONCURRENT_ACTIONS; i++) {
-            action_tracker_t *t = &s_trackers[i];
-
-            if (t->state == STATE_PRESSED_WAIT_HOLD) {
-                if (now - t->timestamp_us >= t->hold_timeout_us) {
-                    notify_event(t->action_code, KB_EV_HOLD);
-                    t->state = STATE_HELD;
-                }
-            } else if (t->state == STATE_RELEASED_WAIT_DOUBLE) {
-                /* timestamp_us was reset to the release moment, so this window
-                 * is always double_tap_timeout_us from the release. */
-                if (now - t->timestamp_us >= t->double_tap_timeout_us) {
-                    notify_event(t->action_code, KB_EV_SINGLE_TAP);
-                    free_tracker(t);
-                }
-            }
-        }
+        kb_system_action_poll();
 
         if (s_active_tracker_count > 0) {
             vTaskDelay(pdMS_TO_TICKS(10));

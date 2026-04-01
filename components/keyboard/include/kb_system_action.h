@@ -30,6 +30,13 @@ typedef struct {
 void kb_system_action_init(void);
 
 /**
+ * @brief Poll all active trackers and fire timed events (hold, single-tap).
+ * Called by the background task every 10 ms. Exposed for host-based testing
+ * where the background task does not actually run.
+ */
+void kb_system_action_poll(void);
+
+/**
  * @brief Process a raw system action press/release from the keyboard matrix.
  * Uses the engine's global default timing thresholds.
  *
