@@ -1,6 +1,6 @@
-# TEF-Oxide Firmware Test Suite
+# TEF Firmware Test Suite
 
-Host-based unit tests for the TEF-Oxide ESP32-S3 keyboard firmware. Compiles and runs entirely on the development machine — no ESP32 hardware or ESP-IDF toolchain required.
+Host-based unit tests for the TEF ESP32-S3 keyboard firmware. Compiles and runs entirely on the development machine — no ESP32 hardware or ESP-IDF toolchain required.
 
 ## Architecture
 

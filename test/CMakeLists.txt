@@ -1,4 +1,4 @@
-# TEF-Oxide Firmware — Host Test Build
+# TEF Firmware — Host Test Build
 #
 # This CMakeLists.txt is for the HOST test suite only.
 # It does NOT interact with ESP-IDF or the firmware build.

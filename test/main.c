@@ -1,6 +1,6 @@
 /**
  * @file main.c
- * @brief Test runner entry point for TEF-Oxide firmware host tests.
+ * @brief Test runner entry point for TEF firmware host tests.
  *
  * Includes production .c files (linked against mocks via shim headers),
  * then all test files. Compiles and runs on the host machine.

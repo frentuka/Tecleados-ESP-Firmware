@@ -1,4 +1,4 @@
-# TEF-Oxide Keyboard Firmware
+# TEF Keyboard Firmware
 
 > Custom programmable keyboard firmware for the ESP32-S3, built on top of ESP-IDF.
 > Supports USB HID, Bluetooth LE, N-Key Rollover, 64 macros, 120 custom keys, 4 layers, and a React-based web configurator.
@@ -35,7 +35,7 @@
 
 ## Overview
 
-TEF-Oxide is a fully programmable USB/Bluetooth keyboard firmware targeting the ESP32-S3. It handles the full pipeline from matrix scanning to HID report delivery, with a rich action system and a browser-based configurator for live configuration without reflashing.
+TEF is a fully programmable USB/Bluetooth keyboard firmware targeting the ESP32-S3. It handles the full pipeline from matrix scanning to HID report delivery, with a rich action system and a browser-based configurator for live configuration without reflashing.
 
 The firmware is designed around a modular component architecture using ESP-IDF. Each subsystem (keyboard matrix, USB, BLE, config storage, RGB, etc.) is a self-contained component with a clean public API. Cross-module communication is handled through a system-wide event bus built on the ESP-IDF `esp_event` loop, so modules react to domain events without direct dependencies on each other.
 
@@ -88,7 +88,7 @@ The firmware is designed around a modular component architecture using ESP-IDF. 
 | Vendor ID | `0x303A` (Espressif) |
 | Product ID | `0x1324` |
 | Manufacturer | `Tecleados` |
-| Product | `TEF-Oxide` |
+| Product | `TEF` |
 | Serial | `13548` |
 
 ---

@@ -1,6 +1,6 @@
 /**
  * @file test_harness.h
- * @brief Minimal C test framework for TEF-Oxide firmware host tests.
+ * @brief Minimal C test framework for TEF firmware host tests.
  *
  * Provides test registration, per-suite setup/teardown, assertions,
  * test filtering (-k), JUnit XML output (--junit), and a runner.
@@ -346,7 +346,7 @@ static inline int test_run_all(int argc, char *argv[]) {
     memset(test_failures, 0, sizeof(test_failures));
 
     printf("\n========================================\n");
-    printf(" TEF-Oxide Firmware Test Suite\n");
+    printf(" TEF Firmware Test Suite\n");
     printf("========================================\n");
     if (filter) printf(" Filter: \"%s\"\n", filter);
     printf("\n");
