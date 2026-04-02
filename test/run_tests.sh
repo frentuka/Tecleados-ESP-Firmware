@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# DF-ONE Firmware — Host Test Runner
+# TEF-Oxide Firmware — Host Test Runner
 #
 # Compiles and runs all unit tests on the host machine.
 # No ESP-IDF or target hardware required.
@@ -25,7 +25,7 @@ INCLUDES="-Iinclude"
 OUTPUT="test_runner"
 
 echo "============================================"
-echo "  DF-ONE Firmware — Building Host Tests"
+echo "  TEF-Oxide Firmware — Building Host Tests"
 echo "============================================"
 echo ""
 echo "Compiler: $CC"

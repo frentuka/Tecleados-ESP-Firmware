@@ -208,7 +208,7 @@ export class HIDTransport {
     }
 
     public getDeviceName(): string {
-        return this.device?.productName || 'DF-ONE Full Layout';
+        return this.device?.productName || 'TEF-Oxide Full Layout';
     }
 
     // ── Connection Observers ──

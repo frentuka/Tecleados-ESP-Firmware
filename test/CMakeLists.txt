@@ -1,4 +1,4 @@
-# DF-ONE Firmware — Host Test Build
+# TEF-Oxide Firmware — Host Test Build
 #
 # This CMakeLists.txt is for the HOST test suite only.
 # It does NOT interact with ESP-IDF or the firmware build.
@@ -10,7 +10,7 @@
 #   ./build/test_runner
 #
 cmake_minimum_required(VERSION 3.16)
-project(df_one_tests C)
+project(tef_oxide_tests C)
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -27,4 +27,4 @@ target_link_libraries(test_runner m)
 
 # CTest integration
 enable_testing()
-add_test(NAME df_one_tests COMMAND test_runner)
+add_test(NAME tef_oxide_tests COMMAND test_runner)
