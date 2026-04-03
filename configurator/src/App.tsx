@@ -6,6 +6,7 @@ import CustomKeysDashboard from './CustomKeysDashboard';
 import SplitDashboard from './SplitDashboard';
 import StatusWidget from './StatusWidget';
 import DevControlsPanel from './components/DevControlsPanel';
+import DeviceIdentityDashboard from './DeviceIdentityDashboard';
 import { useConfirm } from './hooks/useConfirm';
 import { useMacros } from './hooks/useMacros';
 import { useCustomKeys } from './hooks/useCustomKeys';
@@ -255,12 +256,21 @@ function App() {
           </div>
 
           {isDeveloperMode && (
-            <DevControlsPanel
-              isConnected={isConnected}
-              logs={logs}
-              onClearLogs={() => setLogs([])}
-              onAddLog={addLog}
-            />
+            <>
+              <div className="glass-panel">
+                <DeviceIdentityDashboard
+                  isConnected={isConnected}
+                  onLog={addLog}
+                />
+              </div>
+
+              <DevControlsPanel
+                isConnected={isConnected}
+                logs={logs}
+                onClearLogs={() => setLogs([])}
+                onAddLog={addLog}
+              />
+            </>
           )}
         </>
       )}

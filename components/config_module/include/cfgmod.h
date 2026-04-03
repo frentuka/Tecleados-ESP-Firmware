@@ -35,6 +35,7 @@ typedef enum cfgmod_key_id : uint8_t {
   CFG_KEY_MACRO_SINGLE,
   CFG_KEY_CKEYS,        // Custom Keys outline (all names/IDs)
   CFG_KEY_CKEY_SINGLE,  // Single Custom Key GET / SET / DELETE
+  CFG_KEY_SYSTEM,       // Device identity (name, split config)
   CFG_KEY_MAX
 } cfgmod_key_id_t;
 

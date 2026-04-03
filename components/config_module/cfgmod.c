@@ -95,6 +95,7 @@ static const cfgmod_key_map_t s_key_map[CFG_KEY_MAX] = {
    [CFG_KEY_MACRO_SINGLE] = { CFGMOD_KIND_MACRO, "macros" },
    [CFG_KEY_CKEYS]        = { CFGMOD_KIND_CKEY, "ckeys" },
    [CFG_KEY_CKEY_SINGLE]  = { CFGMOD_KIND_CKEY, "ckeys" },
+   [CFG_KEY_SYSTEM]       = { CFGMOD_KIND_SYSTEM, "sys" },
 };
 
 /*

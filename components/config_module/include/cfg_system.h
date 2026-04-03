@@ -10,6 +10,10 @@ typedef struct {
   uint32_t sleep_timeout_ms;
   uint8_t rgb_brightness;
   bool bluetooth_enabled;
+  // Split identity
+  bool is_split;
+  int8_t split_col_offset;   // added to raw col when is_split is true
+  char split_variant[16];    // e.g. "Left", "Right", "Numpad"
 } cfg_system_t;
 
 // Registers the system serializer with cfgmod

@@ -28,11 +28,20 @@ import {
     SPLIT_CMD_CANCEL_PAIRING,
     SPLIT_CMD_UNPAIR,
     SPLIT_CMD_GET_REMOTE_MATRIX,
+    CFG_KEY_SYSTEM,
 } from '../types/protocol';
 
 import type { CommandResponse, DeviceStatus } from '../types/device';
 import type { Macro, MacroLimits } from '../types/macros';
 import type { CustomKey } from '../types/customKeys';
+
+// ── Device Identity ─────────────────────────────────────────────────────────
+export interface DeviceIdentity {
+    device_name: string;       // BLE advertised name
+    is_split: boolean;         // Whether this unit is part of a split keyboard
+    split_col_offset: number;  // int8: added to raw col when is_split is true
+    split_variant: string;     // e.g. "Left", "Right", "Numpad"
+}
 
 // Re-export transport for backward compatibility
 export { HIDTransport };
@@ -173,6 +182,46 @@ export class DeviceController {
             } catch { /* fall through */ }
         }
         return null;
+    }
+
+    // ── Device Identity ─────────────────────────────────────────────────────
+
+    public async fetchDeviceIdentity(): Promise<DeviceIdentity | null> {
+        if (!this.isConnected()) return null;
+        const buf = this.buildConfigPayload(CFG_CMD_GET, CFG_KEY_SYSTEM);
+        const resp = await this.sendCommand(buf);
+        if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
+            try {
+                const d = JSON.parse(resp.jsonText);
+                return {
+                    device_name:      d.name          ?? 'Antigravity KB',
+                    is_split:         d.is_split       ?? false,
+                    split_col_offset: d.split_col_offset ?? 0,
+                    split_variant:    d.split_variant  ?? '',
+                };
+            } catch (e) {
+                console.error('fetchDeviceIdentity parse error:', e);
+            }
+        }
+        return null;
+    }
+
+    public async saveDeviceIdentity(identity: DeviceIdentity): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        const payload = {
+            name:             identity.device_name,
+            is_split:         identity.is_split,
+            split_col_offset: identity.split_col_offset,
+            split_variant:    identity.split_variant,
+        };
+        const jsonBytes = new TextEncoder().encode(JSON.stringify(payload));
+        const buf = new Uint8Array(3 + jsonBytes.length);
+        buf[0] = MODULE_CONFIG;
+        buf[1] = CFG_CMD_SET;
+        buf[2] = CFG_KEY_SYSTEM;
+        buf.set(jsonBytes, 3);
+        const resp = await this.sendCommand(buf);
+        return resp !== null && resp.status === 0;
     }
 
     // ── Macros ──────────────────────────────────────────────────────────

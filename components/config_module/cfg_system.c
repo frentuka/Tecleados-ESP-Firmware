@@ -16,14 +16,20 @@ static void sys_default(void *out_struct) {
   s->sleep_timeout_ms = 300000; // 5 mins
   s->rgb_brightness = 255;
   s->bluetooth_enabled = true;
+  s->is_split = false;
+  s->split_col_offset = 0;
+  s->split_variant[0] = '\0';
 }
 
 static bool sys_deserialize(cJSON *root, void *out_struct) {
   cfg_system_t *s = (cfg_system_t *)out_struct;
-  cJSON *name = cJSON_GetObjectItem(root, "name");
-  cJSON *sleep = cJSON_GetObjectItem(root, "sleep");
-  cJSON *rgb = cJSON_GetObjectItem(root, "rgb_brightness");
-  cJSON *bt = cJSON_GetObjectItem(root, "bt_en");
+  cJSON *name     = cJSON_GetObjectItem(root, "name");
+  cJSON *sleep    = cJSON_GetObjectItem(root, "sleep");
+  cJSON *rgb      = cJSON_GetObjectItem(root, "rgb_brightness");
+  cJSON *bt       = cJSON_GetObjectItem(root, "bt_en");
+  cJSON *is_split = cJSON_GetObjectItem(root, "is_split");
+  cJSON *offset   = cJSON_GetObjectItem(root, "split_col_offset");
+  cJSON *variant  = cJSON_GetObjectItem(root, "split_variant");
 
   if (cJSON_IsString(name)) {
     strncpy(s->device_name, name->valuestring, sizeof(s->device_name) - 1);
@@ -35,6 +41,14 @@ static bool sys_deserialize(cJSON *root, void *out_struct) {
     s->rgb_brightness = (uint8_t)rgb->valueint;
   if (cJSON_IsBool(bt))
     s->bluetooth_enabled = cJSON_IsTrue(bt);
+  if (cJSON_IsBool(is_split))
+    s->is_split = cJSON_IsTrue(is_split);
+  if (cJSON_IsNumber(offset))
+    s->split_col_offset = (int8_t)offset->valueint;
+  if (cJSON_IsString(variant)) {
+    strncpy(s->split_variant, variant->valuestring, sizeof(s->split_variant) - 1);
+    s->split_variant[sizeof(s->split_variant) - 1] = '\0';
+  }
 
   return true;
 }
@@ -49,6 +63,9 @@ static cJSON *sys_serialize(const void *in_struct) {
   cJSON_AddNumberToObject(root, "sleep", (double)s->sleep_timeout_ms);
   cJSON_AddNumberToObject(root, "rgb_brightness", (double)s->rgb_brightness);
   cJSON_AddBoolToObject(root, "bt_en", s->bluetooth_enabled);
+  cJSON_AddBoolToObject(root, "is_split", s->is_split);
+  cJSON_AddNumberToObject(root, "split_col_offset", (double)s->split_col_offset);
+  cJSON_AddStringToObject(root, "split_variant", s->split_variant);
 
   return root;
 }

@@ -20,6 +20,7 @@
 
 #include "ble_hid_service.h"
 #include "cfg_ble.h"
+#include "cfg_system.h"
 #include "event_bus.h"
 
 static const char *TAG = "ble_hid_mod";
@@ -439,7 +440,12 @@ void ble_hid_init(void) {
   ble_hid_svc_register();
 
   // 6. Set device name and appearance (GAP)
-  ret = ble_svc_gap_device_name_set(BLE_DEVICE_NAME);
+  cfg_system_t sys;
+  const char *dev_name = BLE_DEVICE_NAME; // fallback
+  if (cfg_system_get(&sys) == ESP_OK && sys.device_name[0] != '\0') {
+      dev_name = sys.device_name;
+  }
+  ret = ble_svc_gap_device_name_set(dev_name);
   assert(ret == 0);
 
   ret = ble_svc_gap_device_appearance_set(BLE_APPEARANCE_HID_KEYBOARD);
