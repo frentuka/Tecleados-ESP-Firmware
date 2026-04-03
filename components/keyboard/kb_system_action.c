@@ -177,7 +177,7 @@ void kb_system_action_init(void) {
     if (s_task_handle == NULL) {
         xTaskCreateWithCaps(sys_action_task, "kb_sys_action", 4096, NULL, 5,
                             &s_task_handle,
-                            MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+                            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     }
 }
 

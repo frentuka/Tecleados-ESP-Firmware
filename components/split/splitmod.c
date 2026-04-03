@@ -717,8 +717,8 @@ esp_err_t splitmod_init(void)
     }
 
     BaseType_t xret = xTaskCreateWithCaps(
-        split_task, "split", 2048, NULL, 5, &s_task_handle,
-        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT
+        split_task, "split", 6144, NULL, 5, &s_task_handle,
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
     );
     if (xret != pdPASS) {
         ESP_LOGE(TAG, "failed to create split task");

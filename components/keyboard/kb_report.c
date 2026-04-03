@@ -40,16 +40,15 @@ static void virtual_nkro_to_6kro(const uint8_t *v_nkro,
 /* ---- Public API ---- */
 
 bool kb_hid_ready(void) {
-    if (ble_hid_is_routing_active()) {
-        return ble_hid_is_connected();
+    if (ble_hid_is_routing_active() && ble_hid_is_connected()) {
+        return true;
     }
     return tud_mounted() && tud_hid_n_ready(ITF_NUM_HID_KBD);
 }
 
 esp_err_t kb_send_report(const uint8_t *v_nkro) {
     /* --- BLE path (always 6KRO) --- */
-    if (ble_hid_is_routing_active()) {
-        if (!ble_hid_is_connected()) return ESP_FAIL;
+    if (ble_hid_is_routing_active() && ble_hid_is_connected()) {
 
         uint8_t modifiers = 0;
         uint8_t basic_keys[6] = {0};
@@ -80,8 +79,7 @@ esp_err_t kb_send_report(const uint8_t *v_nkro) {
 }
 
 esp_err_t kb_send_consumer_report(uint16_t media_keycode) {
-    if (ble_hid_is_routing_active()) {
-        if (!ble_hid_is_connected()) return ESP_FAIL;
+    if (ble_hid_is_routing_active() && ble_hid_is_connected()) {
         return ble_hid_send_consumer_report(media_keycode);
     }
 

@@ -368,8 +368,8 @@ void kb_manager_start(void) {
     vTaskDelay(pdMS_TO_TICKS(500)); // Allow USB/GPIO to settle before scanning
 
     BaseType_t ret = xTaskCreateWithCaps(
-        kb_manager_task, "kb_mgr", 2048, NULL, 5, NULL,
-        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT
+        kb_manager_task, "kb_mgr", 6144, NULL, 5, NULL,
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
     );
     if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to create kb_manager_task: %d", (int)ret);

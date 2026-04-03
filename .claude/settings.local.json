@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc -l /x/appcrap/VStudio/ESP32/esp-now-test/components/config_module/*.c)",
+      "Read(//^/.dram0/.bss/,/^/.iram0/.data|^/**)",
+      "Read(//x/appcrap/VStudio/ESP32/esp-now-test/{if\\(NF>=3 && $NF ~ /0x[0-9a-f]+/ && $\\(NF-1\\) ~ /0x[0-9a-f]+/**)",
+      "Bash(sort -k2 -rn)"
+    ]
+  }
+}
