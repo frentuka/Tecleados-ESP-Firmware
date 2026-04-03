@@ -40,15 +40,21 @@ static void virtual_nkro_to_6kro(const uint8_t *v_nkro,
 /* ---- Public API ---- */
 
 bool kb_hid_ready(void) {
-    if (ble_hid_is_routing_active() && ble_hid_is_connected()) {
-        return true;
+    if (ble_hid_is_routing_active()) {
+        // BLE mode: only ready when actually connected.
+        // Do NOT fall through to USB — that would split traffic across transports.
+        return ble_hid_is_connected();
     }
     return tud_mounted() && tud_hid_n_ready(ITF_NUM_HID_KBD);
 }
 
 esp_err_t kb_send_report(const uint8_t *v_nkro) {
     /* --- BLE path (always 6KRO) --- */
-    if (ble_hid_is_routing_active() && ble_hid_is_connected()) {
+    if (ble_hid_is_routing_active()) {
+        // BLE routing is enabled: ONLY send via BLE.
+        // If not yet connected (e.g. stack initializing on boot), block and let
+        // the caller retry — never silently fall through to USB.
+        if (!ble_hid_is_connected()) return ESP_ERR_INVALID_STATE;
 
         uint8_t modifiers = 0;
         uint8_t basic_keys[6] = {0};
@@ -60,26 +66,24 @@ esp_err_t kb_send_report(const uint8_t *v_nkro) {
         return ble_hid_send_keyboard_report(report, 8);
     }
 
-    /* --- USB path --- */
+    /* --- USB path (only when BLE routing is explicitly off) --- */
     if (!tud_mounted()) return ESP_FAIL;
-    if (!tud_hid_n_ready(ITF_NUM_HID_KBD)) return ESP_FAIL; /* Endpoint busy; caller retries */
+    if (!tud_hid_n_ready(ITF_NUM_HID_KBD)) return ESP_FAIL;
 
     if (usb_keyboard_use_boot_protocol()) {
-        /* Boot protocol needs a 6KRO-format report */
         uint8_t modifiers = 0;
         uint8_t basic_keys[6] = {0};
         virtual_nkro_to_6kro(v_nkro, &modifiers, basic_keys);
         return usb_send_keyboard_6kro(modifiers, basic_keys) ? ESP_OK : ESP_FAIL;
     }
 
-    /* NKRO USB: send the raw bitmap.  Modifiers live at byte 28 (0xE0>>3)
-     * of the bitmap and are extracted directly — no full conversion needed. */
     uint8_t modifiers = v_nkro[0xE0 >> 3];
     return usb_send_keyboard_nkro(modifiers, v_nkro, NKRO_BYTES) ? ESP_OK : ESP_FAIL;
 }
 
 esp_err_t kb_send_consumer_report(uint16_t media_keycode) {
-    if (ble_hid_is_routing_active() && ble_hid_is_connected()) {
+    if (ble_hid_is_routing_active()) {
+        if (!ble_hid_is_connected()) return ESP_ERR_INVALID_STATE;
         return ble_hid_send_consumer_report(media_keycode);
     }
 
