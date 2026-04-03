@@ -391,6 +391,15 @@ static void process_system_action(uint16_t action, bool is_pressed) {
         return;
     }
 
+    /* Split keyboard actions — routed through tap/hold engine */
+    bool is_split_action = (action == SYS_ACTION_SPLIT_PAIR   ||
+                            action == SYS_ACTION_SPLIT_ROLE_SWAP ||
+                            action == SYS_ACTION_SPLIT_DISCONNECT);
+    if (is_split_action) {
+        kb_system_action_process(action, is_pressed);
+        return;
+    }
+
     /* Brightness and RGB — stubs for future implementation */
     if (is_pressed) {
         if (action == SYS_ACTION_BRIGHTNESS_UP || action == SYS_ACTION_BRIGHTNESS_DOWN) {

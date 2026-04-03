@@ -3,13 +3,14 @@ import { hidService } from './HIDService';
 import KeyboardLayoutEditor from './KeyboardLayoutEditor';
 import MacrosDashboard from './MacrosDashboard';
 import CustomKeysDashboard from './CustomKeysDashboard';
+import SplitDashboard from './SplitDashboard';
 import StatusWidget from './StatusWidget';
 import DevControlsPanel from './components/DevControlsPanel';
 import { useConfirm } from './hooks/useConfirm';
 import { useMacros } from './hooks/useMacros';
 import { useCustomKeys } from './hooks/useCustomKeys';
 import { getFlagsString } from './utils/packetUtils';
-import type { LogMessage } from './types/device';
+import type { DeviceStatus, LogMessage } from './types/device';
 import './index.css';
 
 // Re-export types for backward compatibility — consumers can import from './App'
@@ -19,7 +20,7 @@ export type { CustomKey } from './types/customKeys';
 
 function App() {
   const [isConnected, setIsConnected] = useState(false);
-  const [deviceStatus, setDeviceStatus] = useState<{ mode: number; profile: number; pairing: number; bitmap: number } | null>(null);
+  const [deviceStatus, setDeviceStatus] = useState<DeviceStatus | null>(null);
   const [isDeveloperMode, setIsDeveloperMode] = useState<boolean>(() => {
     return localStorage.getItem('isDeveloperMode') === 'true';
   });
@@ -70,7 +71,7 @@ function App() {
     hidService.onConnectionChange(handler);
 
     // Also listen for status updates (pushed from ESP)
-    const statusHandler = (status: { mode: number; profile: number; pairing: number; bitmap: number }) => {
+    const statusHandler = (status: DeviceStatus) => {
       setDeviceStatus(status);
     };
     hidService.onStatusUpdate(statusHandler);
@@ -170,6 +171,8 @@ function App() {
             selectedProfile={deviceStatus?.profile ?? 0}
             pairingProfile={deviceStatus?.pairing ?? -1}
             connectedBitmap={deviceStatus?.bitmap ?? 0}
+            splitState={deviceStatus?.split_state ?? 0}
+            splitRole={deviceStatus?.split_role ?? 0}
             onOfflineClick={handleConnect}
           />
         </div>
@@ -240,6 +243,14 @@ function App() {
               onSave={handleSaveCustomKey}
               onDelete={handleDeleteCustomKey}
               onReload={fetchCustomKeys}
+            />
+          </div>
+
+          <div className="glass-panel">
+            <SplitDashboard
+              isConnected={isConnected}
+              deviceStatus={deviceStatus}
+              onLog={addLog}
             />
           </div>
 

@@ -738,6 +738,8 @@ export class HIDTransport {
                         profile: data.profile,
                         pairing: data.pairing ?? -1,
                         bitmap: data.bitmap,
+                        split_state: data.split_state ?? 0,
+                        split_role: data.split_role ?? 0,
                     };
                     this.statusUpdateCallbacks.forEach(cb => cb(normalizedStatus));
                 } catch (e) {

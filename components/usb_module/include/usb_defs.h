@@ -10,6 +10,7 @@ typedef enum usb_msg_module: uint8_t {
 	MODULE_SYSTEM,
     MODULE_ACTION,
     MODULE_STATUS,
+    MODULE_SPLIT,
     USB_MODULE_COUNT
 } usb_msg_module_t;
 

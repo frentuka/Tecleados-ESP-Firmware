@@ -17,6 +17,8 @@ export interface DeviceStatus {
     profile: number;
     pairing: number;
     bitmap: number;
+    split_state: number; // split_state_t (0=disabled…5=disconnected)
+    split_role: number;  // split_role_t (0=none, 1=master, 2=slave)
 }
 
 /** A single entry in the communication log */

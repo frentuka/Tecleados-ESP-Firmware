@@ -40,10 +40,43 @@ static const uint32_t MIN_REPORT_RATE_HZ  = 1;   // Minimum Hz for forced period
 static uint8_t s_injected_matrix[KB_MATRIX_BITMAP_BYTES];
 static portMUX_TYPE s_injected_matrix_lock = portMUX_INITIALIZER_UNLOCKED;
 
+/* ---- Remote half matrix (split keyboard MASTER mode) ---- */
+static uint8_t s_remote_matrix[KB_MATRIX_BITMAP_BYTES];
+static portMUX_TYPE s_remote_matrix_lock = portMUX_INITIALIZER_UNLOCKED;
+
+/* ---- Matrix-change callback (split keyboard SLAVE mode) ---- */
+typedef void (*matrix_cb_t)(const uint8_t *matrix, size_t len, uint8_t layer);
+static volatile matrix_cb_t s_matrix_cb = NULL;
+
 /* ---- Pause control ---- */
 static volatile bool s_paused = false;
 
 void kb_manager_set_paused(bool paused) { s_paused = paused; }
+
+/* ---- Scan-rate divisor (battery-aware power saving) ---- */
+static volatile uint8_t s_scan_divisor = 1;
+
+void kb_manager_set_scan_divisor(uint8_t divisor)
+{
+    s_scan_divisor = divisor ? divisor : 1;
+}
+
+void kb_manager_set_matrix_cb(void (*cb)(const uint8_t *matrix, size_t len,
+                                          uint8_t layer))
+{
+    s_matrix_cb = cb;
+}
+
+void kb_manager_set_remote_matrix(const uint8_t *bitmap)
+{
+    portENTER_CRITICAL(&s_remote_matrix_lock);
+    if (bitmap) {
+        memcpy(s_remote_matrix, bitmap, KB_MATRIX_BITMAP_BYTES);
+    } else {
+        memset(s_remote_matrix, 0, KB_MATRIX_BITMAP_BYTES);
+    }
+    portEXIT_CRITICAL(&s_remote_matrix_lock);
+}
 
 /* ---- Debounce ---- */
 static uint8_t s_debounce[KB_MATRIX_KEYS];
@@ -126,6 +159,11 @@ static void kb_manager_task(void *arg) {
     bool s_last_boot_protocol = false;
     bool s_matrix_nonempty    = false; // cached: true when s_matrix has any pressed keys
 
+    /* Callback prev-state (split SLAVE mode delta tracking) */
+    uint8_t s_cb_last[KB_MATRIX_BITMAP_BYTES];
+    bool    s_cb_last_valid = false;
+    memset(s_cb_last, 0, sizeof(s_cb_last));
+
     memset(s_matrix, 0, sizeof(s_matrix));
     memset(s_active_action_codes, 0, sizeof(s_active_action_codes));
 
@@ -137,8 +175,9 @@ static void kb_manager_task(void *arg) {
         int64_t now_us    = esp_timer_get_time();
         int64_t elapsed_us = now_us - s_seconds_timer;
 
-        /* Rate-limit scanning to MAX_POLLING_RATE_HZ */
-        if (now_us - s_last_scan_us < min_scan_interval_us) {
+        /* Rate-limit scanning to MAX_POLLING_RATE_HZ / s_scan_divisor */
+        int64_t effective_interval_us = min_scan_interval_us * (int64_t)s_scan_divisor;
+        if (now_us - s_last_scan_us < effective_interval_us) {
             /* If no keys are held, sleep in interrupt mode until a key wakes us.
              * s_matrix_nonempty is updated after every debounce; use the cached value. */
             if (!s_matrix_nonempty && !s_paused) {
@@ -181,6 +220,14 @@ static void kb_manager_task(void *arg) {
         }
 
         debounce_update(s_raw_matrix, s_matrix);
+
+        /* Merge remote half matrix (split keyboard MASTER mode; zero when slave/disconnected) */
+        portENTER_CRITICAL(&s_remote_matrix_lock);
+        for (size_t i = 0; i < KB_MATRIX_BITMAP_BYTES; i++) {
+            s_matrix[i] |= s_remote_matrix[i];
+        }
+        portEXIT_CRITICAL(&s_remote_matrix_lock);
+
         s_scan_count++;
         s_last_scan_us = now_us;
 
@@ -213,6 +260,21 @@ static void kb_manager_task(void *arg) {
             s_report_count        = 0;
             s_min_report_interval_us = LLONG_MAX;
             s_seconds_timer       = now_us;
+        }
+
+        /* --- Matrix-change callback (split SLAVE mode) --- */
+        matrix_cb_t mcb = s_matrix_cb;
+        if (mcb) {
+            bool cb_changed = !s_cb_last_valid ||
+                              memcmp(s_matrix, s_cb_last, KB_MATRIX_BITMAP_BYTES) != 0;
+            if (cb_changed) {
+                mcb(s_matrix, KB_MATRIX_BITMAP_BYTES, kb_macro_get_active_layer());
+                memcpy(s_cb_last, s_matrix, KB_MATRIX_BITMAP_BYTES);
+                s_cb_last_valid = true;
+            }
+        } else {
+            // Reset tracking so next registration gets a fresh full-state send
+            s_cb_last_valid = false;
         }
 
         /* --- Process matrix edges --- */
@@ -299,13 +361,14 @@ void kb_manager_start(void) {
     cfg_layout_load_all();
 
     memset(s_injected_matrix, 0, sizeof(s_injected_matrix));
+    memset(s_remote_matrix,   0, sizeof(s_remote_matrix));
     usbmod_register_callback(MODULE_SYSTEM, kb_system_usb_callback);
     kb_matrix_gpio_init();
 
     vTaskDelay(pdMS_TO_TICKS(500)); // Allow USB/GPIO to settle before scanning
 
     BaseType_t ret = xTaskCreateWithCaps(
-        kb_manager_task, "kb_mgr", 6144, NULL, 5, NULL,
+        kb_manager_task, "kb_mgr", 2048, NULL, 5, NULL,
         MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT
     );
     if (ret != pdPASS) {

@@ -8,6 +8,7 @@ static const char *TAG = "event_bus";
 ESP_EVENT_DEFINE_BASE(KB_EVENTS);
 ESP_EVENT_DEFINE_BASE(BLE_EVENTS);
 ESP_EVENT_DEFINE_BASE(CONFIG_EVENTS);
+ESP_EVENT_DEFINE_BASE(SPLIT_EVENTS);
 
 esp_err_t event_bus_init(void) {
     esp_err_t err = esp_event_loop_create_default();

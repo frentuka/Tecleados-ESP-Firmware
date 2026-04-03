@@ -14,6 +14,7 @@ import {
     MODULE_CONFIG,
     MODULE_SYSTEM,
     MODULE_STATUS,
+    MODULE_SPLIT,
     CFG_CMD_GET,
     CFG_CMD_SET,
     CFG_KEY_MACROS,
@@ -23,6 +24,10 @@ import {
     CFG_KEY_CKEY_SINGLE,
     SYS_CMD_INJECT_KEY,
     SYS_CMD_CLEAR_INJECTED,
+    SPLIT_CMD_START_PAIRING,
+    SPLIT_CMD_CANCEL_PAIRING,
+    SPLIT_CMD_UNPAIR,
+    SPLIT_CMD_GET_REMOTE_MATRIX,
 } from '../types/protocol';
 
 import type { CommandResponse, DeviceStatus } from '../types/device';
@@ -99,6 +104,8 @@ export class DeviceController {
                     profile: data.profile,
                     pairing: data.pairing ?? -1,
                     bitmap: data.bitmap,
+                    split_state: data.split_state ?? 0,
+                    split_role: data.split_role ?? 0,
                 };
             } catch (e) {
                 console.error('Failed to parse status JSON:', e);
@@ -119,6 +126,53 @@ export class DeviceController {
         if (!this.isConnected()) return false;
         const payload = new Uint8Array([MODULE_SYSTEM, SYS_CMD_CLEAR_INJECTED]);
         return this.transport.sendCustomCommReport(payload);
+    }
+
+    // ── Split keyboard commands ─────────────────────────────────────────
+
+    public async splitStartPairing(timeoutMs = 0): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        const payload = new Uint8Array(6);
+        payload[0] = MODULE_SPLIT;
+        payload[1] = SPLIT_CMD_START_PAIRING;
+        // Encode 4-byte LE timeout
+        payload[2] = (timeoutMs >>> 0) & 0xFF;
+        payload[3] = (timeoutMs >>> 8) & 0xFF;
+        payload[4] = (timeoutMs >>> 16) & 0xFF;
+        payload[5] = (timeoutMs >>> 24) & 0xFF;
+        return this.transport.sendCustomCommReport(payload);
+    }
+
+    public async splitCancelPairing(): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        return this.transport.sendCustomCommReport(
+            new Uint8Array([MODULE_SPLIT, SPLIT_CMD_CANCEL_PAIRING])
+        );
+    }
+
+    public async splitUnpair(): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        return this.transport.sendCustomCommReport(
+            new Uint8Array([MODULE_SPLIT, SPLIT_CMD_UNPAIR])
+        );
+    }
+
+    /**
+     * Request the current remote matrix from the MASTER half.
+     * Returns a 14-byte Uint8Array (SPLIT_MATRIX_BYTES) on success, or null.
+     */
+    public async splitGetRemoteMatrix(): Promise<Uint8Array | null> {
+        if (!this.isConnected()) return null;
+        const resp = await this.sendCommand(
+            new Uint8Array([MODULE_SPLIT, SPLIT_CMD_GET_REMOTE_MATRIX])
+        );
+        if (resp && resp.status === 0 && resp.jsonText.length > 0) {
+            try {
+                const parsed = JSON.parse(resp.jsonText) as number[];
+                return new Uint8Array(parsed);
+            } catch { /* fall through */ }
+        }
+        return null;
     }
 
     // ── Macros ──────────────────────────────────────────────────────────

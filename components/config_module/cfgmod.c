@@ -40,6 +40,7 @@ static const char *const s_kind_ns[CFGMOD_KIND_MAX] = {
     [CFGMOD_KIND_SYSTEM]     = NULL,
     [CFGMOD_KIND_PHYSICAL]   = NULL,
     [CFGMOD_KIND_CKEY]       = "cfg_ck",
+    [CFGMOD_KIND_SPLIT]      = "cfg_spl",
 };
 
 typedef struct {

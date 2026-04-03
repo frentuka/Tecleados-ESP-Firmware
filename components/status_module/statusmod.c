@@ -5,6 +5,7 @@
 #include "usb_send.h"
 #include "usb_callbacks_tx.h"
 #include "event_bus.h"
+#include "splitmod.h"
 #include "esp_log.h"
 #include <string.h>
 
@@ -19,11 +20,15 @@ static struct {
     uint8_t  selected_profile;
     uint8_t  pairing_profile;       // 0xFF = not pairing
     uint16_t connected_bitmap;
+    uint8_t  split_state;           // split_state_t
+    uint8_t  split_role;            // split_role_t
 } s_cache = {
     .transport_mode    = 0xFF,  // Invalid — forces first push
     .selected_profile  = 0xFF,
     .pairing_profile   = 0xFF,
     .connected_bitmap  = 0xFFFF,
+    .split_state       = (uint8_t)SPLIT_STATE_DISABLED,
+    .split_role        = (uint8_t)SPLIT_ROLE_NONE,
 };
 
 /* =========================================================================
@@ -31,13 +36,16 @@ static struct {
  * ========================================================================= */
 
 static bool send_status_push(void) {
-    char json_buf[128];
+    char json_buf[160];
     snprintf(json_buf, sizeof(json_buf),
-             "{\"mode\":%d,\"profile\":%d,\"pairing\":%d,\"bitmap\":%u}",
+             "{\"mode\":%d,\"profile\":%d,\"pairing\":%d,\"bitmap\":%u"
+             ",\"split_state\":%u,\"split_role\":%u}",
              s_cache.transport_mode,
              s_cache.selected_profile,
              (int8_t)s_cache.pairing_profile,  // cast to show -1 for "none"
-             s_cache.connected_bitmap);
+             s_cache.connected_bitmap,
+             s_cache.split_state,
+             s_cache.split_role);
 
     ESP_LOGI(TAG, "Pushing status: P=%d, Pair=%d, Mode=%d, Bm=%04X",
              s_cache.selected_profile, (int8_t)s_cache.pairing_profile,
@@ -45,7 +53,7 @@ static bool send_status_push(void) {
 
     uint8_t header[7] = {MODULE_STATUS, 0, 0, 0, 0, 0, 0};
     size_t json_len = strlen(json_buf);
-    uint8_t full_resp[7 + 128]; /* 7-byte header + max JSON (128 chars) */
+    uint8_t full_resp[7 + 160]; /* 7-byte header + max JSON */
     memcpy(full_resp, header, 7);
     memcpy(full_resp + 7, json_buf, json_len);
 
@@ -109,6 +117,41 @@ static void status_on_config_event(void *arg, esp_event_base_t base,
     }
 }
 
+static void status_on_split_event(void *arg, esp_event_base_t base,
+                                   int32_t event_id, void *data) {
+    switch ((split_event_id_t)event_id) {
+    case SPLIT_EVENT_CONNECTED: {
+        const split_peer_info_t *info = (const split_peer_info_t *)data;
+        s_cache.split_state = (uint8_t)SPLIT_STATE_CONNECTED;
+        s_cache.split_role  = info->role;
+        break;
+    }
+    case SPLIT_EVENT_DISCONNECTED:
+        s_cache.split_state = (uint8_t)SPLIT_STATE_DISCONNECTED;
+        s_cache.split_role  = (uint8_t)SPLIT_ROLE_NONE;
+        break;
+    case SPLIT_EVENT_ROLE_CHANGED:
+        s_cache.split_role = *(const uint8_t *)data;
+        break;
+    case SPLIT_EVENT_PAIR_STARTED:
+        s_cache.split_state = (uint8_t)SPLIT_STATE_PAIRING;
+        break;
+    case SPLIT_EVENT_PAIR_COMPLETE:
+        s_cache.split_state = (uint8_t)SPLIT_STATE_CONNECTING;
+        break;
+    case SPLIT_EVENT_PAIR_FAILED:
+        s_cache.split_state = (uint8_t)SPLIT_STATE_IDLE;
+        break;
+    case SPLIT_EVENT_STALE:
+    case SPLIT_EVENT_STALE_RECOVERED:
+        // State hasn't changed — just re-push so configurator sees it
+        break;
+    default:
+        return; // Unknown event — skip push
+    }
+    send_status_push();
+}
+
 /* Manual status request from configurator (USB callback) */
 static bool status_module_callback(uint8_t *data, uint16_t data_len) {
     ESP_LOGI(TAG, "Manual status request received");
@@ -121,18 +164,24 @@ static bool status_module_callback(uint8_t *data, uint16_t data_len) {
  * ========================================================================= */
 
 void status_module_init(void) {
-    // Seed cache once from current config state.
+    // Seed cache once from current config / module state.
     const cfg_ble_state_t *st = cfg_ble_get_state();
     s_cache.transport_mode   = st->ble_routing_enabled ? 1 : 0;
     s_cache.selected_profile = st->selected_profile;
     s_cache.pairing_profile  = 0xFF;
     s_cache.connected_bitmap = 0;
 
-    // Subscribe to BLE events (all IDs) and config connection updates.
+    split_status_t sst = splitmod_get_status();
+    s_cache.split_state = (uint8_t)sst.state;
+    s_cache.split_role  = (uint8_t)sst.role;
+
+    // Subscribe to BLE events (all IDs), config connection updates, and split events.
     esp_event_handler_register(BLE_EVENTS, ESP_EVENT_ANY_ID,
                                status_on_ble_event, NULL);
     esp_event_handler_register(CONFIG_EVENTS, CONFIG_EVENT_KIND_UPDATED,
                                status_on_config_event, NULL);
+    esp_event_handler_register(SPLIT_EVENTS, ESP_EVENT_ANY_ID,
+                               status_on_split_event, NULL);
 
     // Register manual-poll USB callback.
     usbmod_register_callback(MODULE_STATUS, status_module_callback);

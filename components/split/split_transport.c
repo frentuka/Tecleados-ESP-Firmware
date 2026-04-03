@@ -1,0 +1,275 @@
+#include "split_transport.h"
+#include "split_protocol.h"
+
+#include <string.h>
+
+#include "esp_log.h"
+#include "esp_mac.h"
+#include "esp_wifi.h"
+#include "esp_event.h"
+#include "nvs_flash.h"
+
+#define TAG "SPLIT_TR"
+
+/* =========================================================================
+ * Internal State
+ * ========================================================================= */
+
+#define MAX_PROTOCOLS 4
+
+typedef struct {
+    uint8_t                   proto_id;
+    split_transport_recv_cb_t cb;
+} proto_handler_t;
+
+static proto_handler_t         s_handlers[MAX_PROTOCOLS];
+static uint8_t                 s_handler_count = 0;
+static split_transport_send_cb_t s_send_cb     = NULL;
+static bool                    s_initialized   = false;
+
+/* =========================================================================
+ * ESP-NOW Callbacks (called from WiFi task context)
+ * ========================================================================= */
+
+static void on_espnow_recv(const esp_now_recv_info_t *info,
+                           const uint8_t *data, int len)
+{
+    if (!data || len < (int)SPLIT_FRAME_OVERHEAD) {
+        return;
+    }
+
+    split_frame_header_t header;
+    const uint8_t *payload = NULL;
+    size_t payload_len = 0;
+
+    if (!split_protocol_parse_frame(data, (size_t)len, &header, &payload, &payload_len)) {
+        ESP_LOGD(TAG, "dropped invalid frame from " MACSTR, MAC2STR(info->src_addr));
+        return;
+    }
+
+    // MIC is the last SPLIT_FRAME_MIC_SIZE bytes of the raw frame
+    const uint8_t *mic = data + SPLIT_FRAME_HEADER_SIZE + payload_len;
+
+    // Dispatch to registered protocol handler
+    for (int i = 0; i < s_handler_count; i++) {
+        if (s_handlers[i].proto_id == header.proto) {
+            s_handlers[i].cb(info->src_addr, header.type, header.seq,
+                             payload, payload_len, mic);
+            return;
+        }
+    }
+
+    ESP_LOGD(TAG, "no handler for proto 0x%02X", header.proto);
+}
+
+static void on_espnow_send(const wifi_tx_info_t *tx_info, esp_now_send_status_t status)
+{
+    if (s_send_cb && tx_info) {
+        s_send_cb(tx_info->des_addr, status);
+    }
+}
+
+/* =========================================================================
+ * WiFi Init (station mode, no connection — just for ESP-NOW)
+ * ========================================================================= */
+
+static esp_err_t wifi_init_for_espnow(void)
+{
+    esp_err_t ret;
+
+    ret = esp_netif_init();
+    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
+        return ret;
+    }
+
+    // Event loop may already exist (event_bus_init creates it)
+    ret = esp_event_loop_create_default();
+    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
+        return ret;
+    }
+
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ret = esp_wifi_init(&cfg);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "esp_wifi_init failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    ret = esp_wifi_set_storage(WIFI_STORAGE_RAM);
+    if (ret != ESP_OK) return ret;
+
+    ret = esp_wifi_set_mode(WIFI_MODE_STA);
+    if (ret != ESP_OK) return ret;
+
+    ret = esp_wifi_start();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "esp_wifi_start failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    // Set channel (default 1). ESP-NOW needs WiFi started first.
+    ret = esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "set channel failed: %s", esp_err_to_name(ret));
+    }
+
+    // Disable modem power save. The default WIFI_PS_MIN_MODEM can add up to one
+    // DTIM interval (~100 ms) of receive latency, which is unacceptable for a
+    // keyboard. WIFI_PS_NONE keeps the radio fully awake at the cost of ~20 mA
+    // extra draw — acceptable since the keyboard is always in active use.
+    ret = esp_wifi_set_ps(WIFI_PS_NONE);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "esp_wifi_set_ps(NONE) failed: %s", esp_err_to_name(ret));
+    }
+
+    ESP_LOGI(TAG, "WiFi STA initialized for ESP-NOW (modem power save disabled)");
+    return ESP_OK;
+}
+
+/* =========================================================================
+ * Public API
+ * ========================================================================= */
+
+esp_err_t split_transport_init(void)
+{
+    if (s_initialized) {
+        return ESP_OK;
+    }
+
+    esp_err_t ret = wifi_init_for_espnow();
+    if (ret != ESP_OK) {
+        return ret;
+    }
+
+    ret = esp_now_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "esp_now_init failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    ret = esp_now_register_recv_cb(on_espnow_recv);
+    if (ret != ESP_OK) goto fail;
+
+    ret = esp_now_register_send_cb(on_espnow_send);
+    if (ret != ESP_OK) goto fail;
+
+    // Add broadcast peer so we can send discovery beacons
+    const uint8_t broadcast[] = SPLIT_BROADCAST_MAC;
+    ret = split_transport_add_peer(broadcast, 0);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "broadcast peer add failed (may already exist)");
+    }
+
+    s_initialized = true;
+    ESP_LOGI(TAG, "ESP-NOW transport initialized");
+    return ESP_OK;
+
+fail:
+    esp_now_deinit();
+    return ret;
+}
+
+esp_err_t split_transport_deinit(void)
+{
+    if (!s_initialized) {
+        return ESP_OK;
+    }
+
+    esp_now_deinit();
+    esp_wifi_stop();
+    esp_wifi_deinit();
+
+    s_handler_count = 0;
+    s_send_cb = NULL;
+    s_initialized = false;
+
+    ESP_LOGI(TAG, "ESP-NOW transport deinitialized");
+    return ESP_OK;
+}
+
+esp_err_t split_transport_register_protocol(uint8_t proto_id,
+                                            split_transport_recv_cb_t cb)
+{
+    if (!cb) return ESP_ERR_INVALID_ARG;
+    if (s_handler_count >= MAX_PROTOCOLS) return ESP_ERR_NO_MEM;
+
+    // Check for duplicate
+    for (int i = 0; i < s_handler_count; i++) {
+        if (s_handlers[i].proto_id == proto_id) {
+            s_handlers[i].cb = cb;
+            return ESP_OK;
+        }
+    }
+
+    s_handlers[s_handler_count].proto_id = proto_id;
+    s_handlers[s_handler_count].cb = cb;
+    s_handler_count++;
+
+    ESP_LOGD(TAG, "registered handler for proto 0x%02X", proto_id);
+    return ESP_OK;
+}
+
+void split_transport_set_send_cb(split_transport_send_cb_t cb)
+{
+    s_send_cb = cb;
+}
+
+esp_err_t split_transport_send(const uint8_t *dst_mac,
+                               uint8_t proto_id, uint8_t type, uint16_t seq,
+                               const uint8_t *payload, size_t payload_len)
+{
+    if (!s_initialized) return ESP_ERR_INVALID_STATE;
+    if (payload_len > SPLIT_MAX_PAYLOAD) return ESP_ERR_INVALID_SIZE;
+
+    uint8_t frame_buf[SPLIT_ESP_NOW_MAX];
+    size_t frame_len = split_protocol_build_frame(frame_buf, sizeof(frame_buf),
+                                                   proto_id, type, seq,
+                                                   payload, payload_len);
+    if (frame_len == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    return esp_now_send(dst_mac, frame_buf, frame_len);
+}
+
+esp_err_t split_transport_add_peer(const uint8_t *mac, uint8_t channel)
+{
+    if (esp_now_is_peer_exist(mac)) {
+        return ESP_OK;
+    }
+
+    esp_now_peer_info_t peer = {
+        .channel = channel,
+        .ifidx = WIFI_IF_STA,
+        .encrypt = false,  // We handle encryption at the protocol layer
+    };
+    memcpy(peer.peer_addr, mac, 6);
+
+    return esp_now_add_peer(&peer);
+}
+
+esp_err_t split_transport_remove_peer(const uint8_t *mac)
+{
+    if (!esp_now_is_peer_exist(mac)) {
+        return ESP_OK;
+    }
+    return esp_now_del_peer(mac);
+}
+
+bool split_transport_peer_exists(const uint8_t *mac)
+{
+    return esp_now_is_peer_exist(mac);
+}
+
+esp_err_t split_transport_set_channel(uint8_t channel)
+{
+    return esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+}
+
+uint8_t split_transport_get_channel(void)
+{
+    uint8_t primary = 0;
+    wifi_second_chan_t secondary;
+    esp_wifi_get_channel(&primary, &secondary);
+    return primary;
+}

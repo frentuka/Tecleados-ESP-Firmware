@@ -12,6 +12,7 @@
 ESP_EVENT_DECLARE_BASE(KB_EVENTS);
 ESP_EVENT_DECLARE_BASE(BLE_EVENTS);
 ESP_EVENT_DECLARE_BASE(CONFIG_EVENTS);
+ESP_EVENT_DECLARE_BASE(SPLIT_EVENTS);
 
 /* =========================================================================
  * KB_EVENTS IDs
@@ -42,6 +43,22 @@ typedef enum {
 } ble_event_id_t;
 
 /* =========================================================================
+ * SPLIT_EVENTS IDs
+ * ========================================================================= */
+
+typedef enum {
+    SPLIT_EVENT_CONNECTED = 0,     // payload: split_peer_info_t
+    SPLIT_EVENT_DISCONNECTED,      // payload: uint8_t reason
+    SPLIT_EVENT_ROLE_CHANGED,      // payload: uint8_t (split_role_t)
+    SPLIT_EVENT_PAIR_STARTED,      // payload: none
+    SPLIT_EVENT_PAIR_COMPLETE,     // payload: split_peer_info_t
+    SPLIT_EVENT_PAIR_FAILED,       // payload: uint8_t reason
+    SPLIT_EVENT_REMOTE_MATRIX,     // payload: uint8_t[14] bitmap
+    SPLIT_EVENT_STALE,             // payload: none — no message from peer for >500 ms
+    SPLIT_EVENT_STALE_RECOVERED,   // payload: none — peer traffic resumed after stale
+} split_event_id_t;
+
+/* =========================================================================
  * CONFIG_EVENTS IDs
  * ========================================================================= */
 
@@ -69,6 +86,12 @@ typedef struct {
     uint8_t addr_type;
     uint8_t addr[6];
 } ble_pairing_result_t;
+
+/** @brief Payload for SPLIT_EVENT_CONNECTED / SPLIT_EVENT_PAIR_COMPLETE. */
+typedef struct {
+    uint8_t mac[6];    // Peer MAC address
+    uint8_t role;      // Local role after connection (split_role_t)
+} split_peer_info_t;
 
 /**
  * @brief Payload for CONFIG_EVENT_KIND_UPDATED.

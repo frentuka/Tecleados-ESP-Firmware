@@ -1,4 +1,5 @@
 #include "blemod.h"
+#include "battery.h"
 
 #include <assert.h>
 #include <stdbool.h>
@@ -206,7 +207,7 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
     // When Android subscribes to notifications, push the battery level
     if (event->subscribe.cur_notify == 1) {
       int bat_rc =
-          ble_hid_notify_battery_level(event->subscribe.conn_handle, 69);
+          ble_hid_notify_battery_level(event->subscribe.conn_handle, battery_get_level_pct());
       ESP_LOGI(TAG, "Sent battery notification on subscribe, rc=%d", bat_rc);
     }
     break;

@@ -1,4 +1,12 @@
 import React, { useState, useEffect } from 'react';
+import {
+  SPLIT_STATE_CONNECTED,
+  SPLIT_STATE_PAIRING,
+  SPLIT_STATE_CONNECTING,
+  SPLIT_STATE_DISCONNECTED,
+  SPLIT_ROLE_MASTER,
+  SPLIT_ROLE_SLAVE,
+} from './types/protocol';
 
 interface StatusWidgetProps {
   isConnected: boolean;
@@ -6,14 +14,24 @@ interface StatusWidgetProps {
   selectedProfile: number; // 0-8 (displayed as 1-9)
   pairingProfile: number; // 0-8, or -1 if none
   connectedBitmap: number; // 16-bit bitmap
+  splitState?: number;  // split_state_t
+  splitRole?: number;   // split_role_t
   onExpandChange?: (isExpanded: boolean) => void;
   onOfflineClick?: () => void;
 }
 
-const StatusWidget: React.FC<StatusWidgetProps> = ({ isConnected, transportMode, selectedProfile, pairingProfile, connectedBitmap, onExpandChange, onOfflineClick }) => {
+const StatusWidget: React.FC<StatusWidgetProps> = ({ isConnected, transportMode, selectedProfile, pairingProfile, connectedBitmap, splitState = 0, splitRole = 0, onExpandChange, onOfflineClick }) => {
   const [isPersistent, setIsPersistent] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
   const isBle = transportMode === 1;
+
+  // Split state helpers
+  const isSplitConnected = splitState === SPLIT_STATE_CONNECTED;
+  const isSplitPairing   = splitState === SPLIT_STATE_PAIRING || splitState === SPLIT_STATE_CONNECTING;
+  const isSplitDisconnected = splitState === SPLIT_STATE_DISCONNECTED;
+  const splitActive = isSplitConnected || isSplitPairing || isSplitDisconnected;
+  const splitColor = isSplitConnected ? '#2ecc71' : isSplitPairing ? '#f39c12' : isSplitDisconnected ? '#e74c3c' : 'rgba(255,255,255,0.3)';
+  const splitRoleLabel = splitRole === SPLIT_ROLE_MASTER ? 'M' : splitRole === SPLIT_ROLE_SLAVE ? 'S' : '';
   const profileRange = Array.from({ length: 9 }, (_, i) => i); // Indexes 0-8
 
   // Track expansion state for collision avoidance
@@ -92,6 +110,29 @@ const StatusWidget: React.FC<StatusWidgetProps> = ({ isConnected, transportMode,
               </div>
             </div>
           </div>
+
+          {/* Split keyboard indicator */}
+          {splitActive && (
+            <>
+              <div className="status-divider-v"></div>
+              <div
+                className="status-section"
+                title={`Split: ${isSplitConnected ? 'Connected' : isSplitPairing ? 'Pairing' : 'Disconnected'}${splitRoleLabel ? ` (${splitRoleLabel === 'M' ? 'Master' : 'Slave'})` : ''}`}
+                style={{ gap: 4, paddingRight: 4 }}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={splitColor} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="2" y="7" width="20" height="14" rx="2" ry="2"/>
+                  <path d="M16 3h-4M12 3v4M8 3h4"/>
+                  <line x1="12" y1="7" x2="12" y2="21"/>
+                </svg>
+                {splitRoleLabel && (
+                  <span style={{ fontSize: 9, fontWeight: 800, color: splitColor, letterSpacing: 0.5 }}>
+                    {splitRoleLabel}
+                  </span>
+                )}
+              </div>
+            </>
+          )}
         </div>
       )}
 
