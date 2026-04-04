@@ -133,7 +133,10 @@ const DeviceIdentityDashboard: React.FC<DeviceIdentityDashboardProps> = ({ isCon
                                 {draft.device_name.length}/31
                             </span>
                         </div>
-                        <p style={hintStyle}>Bluetooth device name shown to hosts on pairing.</p>
+                        <p style={hintStyle}>
+                            Bluetooth and USB device name shown to hosts on pairing.<br/>
+                            <span style={{color: 'rgba(230, 200, 100, 0.9)'}}>Note: Name changes take effect after you reconnect or restart the device.</span>
+                        </p>
                     </Section>
 
                     {/* ── Split ──────────────────────────────────────── */}

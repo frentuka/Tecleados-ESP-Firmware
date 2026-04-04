@@ -9,12 +9,14 @@
 #include "usb_callbacks_tx.h"
 #include "usb_descriptors.h"
 #include "usbmod.h"
+#include "cfg_system.h"
 
 
 
 
 #include "esp_err.h"
 #include "esp_log.h"
+#include "esp_mac.h"
 
 
 #include "tinyusb.h"
@@ -155,6 +157,25 @@ void usb_init() {
   tinyusb_config_t tusb_cfg = TINYUSB_DEFAULT_CONFIG();
   tusb_cfg.descriptor.device = &desc_device;
   tusb_cfg.descriptor.full_speed_config = desc_configuration;
+
+  static char s_override_product_name[32];
+  static char s_override_serial_number[16];
+
+  cfg_system_t sys;
+  if (cfg_system_get(&sys) == ESP_OK && sys.device_name[0] != '\0') {
+      strncpy(s_override_product_name, sys.device_name, sizeof(s_override_product_name) - 1);
+      s_override_product_name[sizeof(s_override_product_name) - 1] = '\0';
+      string_desc_arr[2] = s_override_product_name;
+  }
+
+  uint8_t mac[6];
+  if (esp_read_mac(mac, ESP_MAC_WIFI_STA) == ESP_OK) {
+      snprintf(s_override_serial_number, sizeof(s_override_serial_number),
+               "%02X%02X%02X%02X%02X%02X",
+               mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+      string_desc_arr[3] = s_override_serial_number;
+  }
+
   tusb_cfg.descriptor.string = (const char **)string_desc_arr;
   tusb_cfg.descriptor.string_count =
       sizeof(string_desc_arr) / sizeof(string_desc_arr[0]);

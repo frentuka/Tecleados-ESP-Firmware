@@ -147,7 +147,7 @@ static uint8_t const desc_configuration[] = {
 
     // Interface 1: HID Comm (bidirectional)
     TUD_HID_INOUT_DESCRIPTOR(ITF_NUM_HID_COMM, // bInterfaceNumber
-                             0,                // iInterface (no string)
+                             0,                // iInterface (Index 5: "Tecleados Comms ITF")
                              false,            // protocol (0=no boot interface)
                              sizeof(desc_hid_report_comm), // wDescriptorLength
                              EPNUM_HID_COMM_OUT, // bEndpointAddress (OUT)

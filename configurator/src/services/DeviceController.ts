@@ -28,6 +28,9 @@ import {
     SPLIT_CMD_CANCEL_PAIRING,
     SPLIT_CMD_UNPAIR,
     SPLIT_CMD_GET_REMOTE_MATRIX,
+    SPLIT_CMD_ROLE_SWAP,
+    SPLIT_CMD_RUN_BENCH,
+    SPLIT_CMD_GET_BENCH,
     CFG_KEY_SYSTEM,
 } from '../types/protocol';
 
@@ -166,10 +169,6 @@ export class DeviceController {
         );
     }
 
-    /**
-     * Request the current remote matrix from the MASTER half.
-     * Returns a 14-byte Uint8Array (SPLIT_MATRIX_BYTES) on success, or null.
-     */
     public async splitGetRemoteMatrix(): Promise<Uint8Array | null> {
         if (!this.isConnected()) return null;
         const resp = await this.sendCommand(
@@ -179,6 +178,33 @@ export class DeviceController {
             try {
                 const parsed = JSON.parse(resp.jsonText) as number[];
                 return new Uint8Array(parsed);
+            } catch { /* fall through */ }
+        }
+        return null;
+    }
+
+    public async splitRoleSwap(): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        return this.transport.sendCustomCommReport(
+            new Uint8Array([MODULE_SPLIT, SPLIT_CMD_ROLE_SWAP])
+        );
+    }
+
+    public async splitRunBenchmark(): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        return this.transport.sendCustomCommReport(
+            new Uint8Array([MODULE_SPLIT, SPLIT_CMD_RUN_BENCH])
+        );
+    }
+
+    public async splitGetBench(): Promise<{active: boolean, min: number, avg: number, max: number, lost: number} | null> {
+        if (!this.isConnected()) return null;
+        const resp = await this.sendCommand(
+            new Uint8Array([MODULE_SPLIT, SPLIT_CMD_GET_BENCH]), 1000
+        );
+        if (resp && resp.status === 0 && resp.jsonText.length > 0) {
+            try {
+                return JSON.parse(resp.jsonText);
             } catch { /* fall through */ }
         }
         return null;

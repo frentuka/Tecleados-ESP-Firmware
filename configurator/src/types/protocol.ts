@@ -37,8 +37,10 @@ export const MODULE_SPLIT  = 0x04;
 export const SPLIT_CMD_START_PAIRING  = 0x01; // [cmd, timeout_ms_le32 (opt)]
 export const SPLIT_CMD_CANCEL_PAIRING = 0x02;
 export const SPLIT_CMD_UNPAIR         = 0x03;
-export const SPLIT_CMD_GET_STATUS     = 0x04;
 export const SPLIT_CMD_GET_REMOTE_MATRIX = 0x05;
+export const SPLIT_CMD_ROLE_SWAP         = 0x06;
+export const SPLIT_CMD_RUN_BENCH         = 0x07;
+export const SPLIT_CMD_GET_BENCH         = 0x08;
 
 // ── Split State / Role (mirrors split_state_t / split_role_t) ───────────
 export const SPLIT_STATE_DISABLED     = 0;

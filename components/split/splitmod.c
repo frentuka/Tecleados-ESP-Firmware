@@ -103,6 +103,10 @@ typedef struct {
     uint32_t  rtt_us[BENCH_PROBES];            // RTT per probe (0 = not yet received)
     TickType_t last_probe_tx;                   // Tick of last PING send
     TickType_t started_at;                      // Tick when benchmark began (after settle)
+    uint32_t  res_min_us;
+    uint32_t  res_avg_us;
+    uint32_t  res_max_us;
+    uint8_t   res_lost;
 } bench_t;
 
 static bench_t s_bench = {0};
@@ -140,6 +144,11 @@ static void bench_finish(void)
     uint32_t avg_us = sum_us / valid;
     uint8_t  lost   = BENCH_PROBES - valid;
 
+    s_bench.res_min_us = min_us;
+    s_bench.res_avg_us = avg_us;
+    s_bench.res_max_us = max_us;
+    s_bench.res_lost = lost;
+
     ESP_LOGI(TAG, "RTT benchmark (%u/%u): min=%lu us  avg=%lu us  max=%lu us  lost=%u",
              valid, BENCH_PROBES,
              (unsigned long)min_us,
@@ -149,41 +158,6 @@ static void bench_finish(void)
 
     if (lost > 0) {
         ESP_LOGW(TAG, "  %u probe(s) lost — check for radio contention or BLE coexistence", lost);
-    }
-}
-
-/* =========================================================================
- * One-shot config sync runner
- *
- * split_config_sync_push_all reads NVS (cfgmod_read_storage → nvs_get_blob),
- * which disables the SPI flash cache. On ESP32-S3 that also disables SPIRAM
- * (both go through the same cache), so it MUST run on an internal-DRAM stack.
- *
- * split_task has a SPIRAM stack (needed to keep total DRAM usage viable), so
- * we spawn this tiny dedicated task instead. It self-deletes when done.
- * 3584 bytes is enough for the NVS page-read call chain (~2 KB internal use)
- * plus the split_config_sync frame.
- * ========================================================================= */
-
-static void s_config_sync_task_fn(void *arg)
-{
-    (void)arg;
-    ESP_LOGI(TAG, "cfg_sync task: pushing config to slave");
-    split_config_sync_push_all(s_peer_mac, &s_tx_seq);
-    ESP_LOGI(TAG, "cfg_sync task: done");
-    vTaskDelete(NULL);
-}
-
-static void spawn_config_sync_task(volatile bool *pending_flag)
-{
-    BaseType_t r = xTaskCreateWithCaps(
-        s_config_sync_task_fn, "cfg_sync", 3584, NULL, 4, NULL,
-        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT  // MUST be DRAM — NVS reads disable flash cache
-    );
-    if (r != pdPASS) {
-        // DRAM heap temporarily too fragmented; retry in the next 10 ms cycle.
-        ESP_LOGW(TAG, "cfg_sync task spawn failed — will retry");
-        *pending_flag = true;
     }
 }
 
@@ -512,8 +486,6 @@ static void on_split_message(const uint8_t *src_mac,
                     // dangerous because split_config_sync_push_all calls vTaskDelay on
                     // retry, which blocks the WiFi task and prevents PONG reception.
                     s_config_sync_pending = true;
-                    // Schedule RTT benchmark (starts after BENCH_SETTLE_MS)
-                    bench_start();
                 }
             }
         } else if (s_state == SPLIT_STATE_CONNECTED) {
@@ -726,14 +698,13 @@ static void split_task(void *arg)
             }
 
             // Config sync deferred from WiFi task so vTaskDelay (used on retry)
-            // never blocks the WiFi receive path.  Spawned as a one-shot DRAM
-            // task because NVS reads disable the SPI cache which also disables
-            // SPIRAM \u2014 a SPIRAM-stacked caller would crash (cache sanity assert).
+            // never blocks the WiFi receive path.
             // 300 ms settle: avoids overlapping the role-negotiate radio burst.
             if (s_role == SPLIT_ROLE_MASTER && s_config_sync_pending
                 && (now - s_connected_at) >= pdMS_TO_TICKS(300)) {
                 s_config_sync_pending = false;
-                spawn_config_sync_task(&s_config_sync_pending);
+                ESP_LOGI(TAG, "running config sync from split_task");
+                split_config_sync_push_all(s_peer_mac, &s_tx_seq);
             }
             // Slave sends heartbeat; master responds inside on_split_message
             if (s_role == SPLIT_ROLE_SLAVE) {
@@ -824,6 +795,9 @@ static void split_task(void *arg)
 #define SPLIT_USB_CMD_UNPAIR            0x03
 #define SPLIT_USB_CMD_GET_STATUS        0x04
 #define SPLIT_USB_CMD_GET_REMOTE_MATRIX 0x05
+#define SPLIT_USB_CMD_ROLE_SWAP         0x06
+#define SPLIT_USB_CMD_RUN_BENCH         0x07
+#define SPLIT_USB_CMD_GET_BENCH         0x08
 
 static bool split_usb_callback(uint8_t *data, uint16_t data_len)
 {
@@ -853,7 +827,6 @@ static bool split_usb_callback(uint8_t *data, uint16_t data_len)
         break;
     case SPLIT_USB_CMD_GET_REMOTE_MATRIX: {
         // Return the current remote matrix as a JSON byte array.
-        // Response format: [MODULE_SPLIT, 0, 0, ...json_payload]
         uint8_t rm[SPLIT_MATRIX_BYTES];
         split_sync_get_remote_matrix(rm);
 
@@ -869,15 +842,50 @@ static bool split_usb_callback(uint8_t *data, uint16_t data_len)
         json[pos++] = ']';
         json[pos]   = '\0';
 
-        // Pack as a USB response: [MODULE_SPLIT, 0x00(ok), 0x00, ...json]
+        // Pack as a standard 7-byte USB response
         size_t json_len = (size_t)pos;
-        uint8_t *resp = malloc(3 + json_len);
+        uint8_t *resp = malloc(7 + json_len);
         if (resp) {
             resp[0] = MODULE_SPLIT;
-            resp[1] = 0x00; // status OK
-            resp[2] = 0x00;
-            memcpy(resp + 3, json, json_len);
-            send_payload(resp, (uint16_t)(3 + json_len));
+            resp[1] = SPLIT_USB_CMD_GET_REMOTE_MATRIX;
+            resp[2] = 0x00; // key ID (unused)
+            resp[3] = 0x00; // status OK
+            resp[4] = 0x00;
+            resp[5] = 0x00;
+            resp[6] = 0x00;
+            memcpy(resp + 7, json, json_len);
+            send_payload(resp, (uint16_t)(7 + json_len));
+            free(resp);
+        }
+        break;
+    }
+    case SPLIT_USB_CMD_ROLE_SWAP:
+        splitmod_request_role_swap();
+        break;
+    case SPLIT_USB_CMD_RUN_BENCH:
+        bench_start();
+        break;
+    case SPLIT_USB_CMD_GET_BENCH: {
+        char json[128];
+        int pos = snprintf(json, sizeof(json), "{\"active\":%s,\"min\":%lu,\"avg\":%lu,\"max\":%lu,\"lost\":%u}",
+                 s_bench.active ? "true" : "false",
+                 (unsigned long)s_bench.res_min_us,
+                 (unsigned long)s_bench.res_avg_us,
+                 (unsigned long)s_bench.res_max_us,
+                 s_bench.res_lost);
+
+        size_t json_len = (size_t)pos;
+        uint8_t *resp = malloc(7 + json_len);
+        if (resp) {
+            resp[0] = MODULE_SPLIT;
+            resp[1] = SPLIT_USB_CMD_GET_BENCH;
+            resp[2] = 0x00; // key ID (unused)
+            resp[3] = 0x00; // status OK
+            resp[4] = 0x00;
+            resp[5] = 0x00;
+            resp[6] = 0x00;
+            memcpy(resp + 7, json, json_len);
+            send_payload(resp, (uint16_t)(7 + json_len));
             free(resp);
         }
         break;
@@ -923,11 +931,12 @@ esp_err_t splitmod_init(void)
     }
 
     BaseType_t xret = xTaskCreateWithCaps(
-        split_task, "split", 6144, NULL, 5, &s_task_handle,
-        // SPIRAM stack is fine here — split_task no longer calls NVS directly.
-        // NVS/cfgmod reads happen only inside the one-shot cfg_sync task which
-        // is spawned with a small internal-DRAM stack (see s_config_sync_task_fn).
-        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
+        split_task, "split", 4096, NULL, 5, &s_task_handle,
+        // MUST be internal DRAM: split_task handles config sync which calls NVS.
+        // NVS reads disable the SPI cache. Since SPIRAM goes through the same
+        // cache, a SPIRAM stack would crash the system. 4KB is sufficient since
+        // config sync proved to work natively on the WiFi task's 4KB stack.
+        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT
     );
     if (xret != pdPASS) {
         ESP_LOGE(TAG, "failed to create split task");

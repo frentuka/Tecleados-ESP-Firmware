@@ -261,9 +261,11 @@ static void kb_manager_task(void *arg) {
             uint32_t peak_hz = (s_min_report_interval_us > 0 && s_min_report_interval_us != LLONG_MAX)
                                ? (uint32_t)(1000000LL / s_min_report_interval_us) : 0;
 
+            static bool s_logged_boot_protocol = false;
             bool boot_proto_now = usb_keyboard_use_boot_protocol();
-            if (boot_proto_now != s_last_boot_protocol) {
+            if (boot_proto_now != s_logged_boot_protocol) {
                 ESP_LOGI(TAG, "Boot protocol: now %s", boot_proto_now ? "6KRO" : "NKRO");
+                s_logged_boot_protocol = boot_proto_now;
             }
 
             if (reports_per_sec < MIN_REPORT_RATE_HZ / 2) {
