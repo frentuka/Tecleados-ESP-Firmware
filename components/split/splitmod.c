@@ -11,6 +11,7 @@
 #include "esp_mac.h"
 #include "esp_timer.h"
 #include "esp_event.h"
+#include "esp_heap_caps.h"
 #if CONFIG_PM_ENABLE
 #include "esp_pm.h"
 #endif
@@ -37,9 +38,9 @@
  * Timing constants
  * ========================================================================= */
 
-#define SPLIT_HEARTBEAT_MS      200   // Slave → Master keepalive interval
-#define SPLIT_STALE_MS          500   // Silence this long → link stale (warn)
-#define SPLIT_DISCONNECT_MS    2000   // Silence this long → peer disconnected
+#define SPLIT_HEARTBEAT_MS      150   // Slave → Master keepalive interval
+#define SPLIT_STALE_MS         1500   // Silence this long → link stale (warn)  [was 500 — too tight under BLE coexistence]
+#define SPLIT_DISCONNECT_MS    5000   // Silence this long → peer disconnected   [was 2000]
 #define SPLIT_DISCOVERY_MS      500   // Interval between DISCOVERY broadcasts
 #define SPLIT_ROLE_NEG_MS       500   // Retransmit ROLE_NEGOTIATE at this rate
 #define SPLIT_RECONNECT_MS_MIN  500   // Initial reconnect backoff
@@ -56,6 +57,7 @@ static uint8_t        s_peer_mac[6] = {0};
 static int8_t         s_peer_rssi   = 0;
 static uint16_t       s_latency_us  = 0;
 static uint16_t       s_tx_seq      = 0;
+static portMUX_TYPE   s_seq_mux     = portMUX_INITIALIZER_UNLOCKED; // protects s_tx_seq (accessed from split_task, kb_manager_task, WiFi-task)
 
 static uint8_t        s_session_key[SPLIT_CRYPTO_KEY_SIZE] = {0};
 static bool           s_session_key_set = false;
@@ -75,6 +77,115 @@ static uint32_t       s_reconnect_interval = SPLIT_RECONNECT_MS_MIN;
 static bool           s_link_stale     = false;
 
 static TaskHandle_t   s_task_handle = NULL;
+
+// Config sync is deferred to split_task so the WiFi task is never blocked by
+// vTaskDelay calls inside split_config_sync_push_all (which would prevent PONG
+// reception and corrupt the RTT benchmark).
+static volatile bool      s_config_sync_pending = false;
+static          TickType_t s_connected_at        = 0;  // tick when we last entered CONNECTED
+
+/* =========================================================================
+ * RTT benchmark — run once on every SPLIT_STATE_CONNECTED transition
+ * (Master only; slave simply echoes PING as PONG)
+ * ========================================================================= */
+
+#define BENCH_PROBES      10          // Number of PING probes per benchmark run
+#define BENCH_PROBE_MS    50          // Interval between probes (ms)
+#define BENCH_SETTLE_MS 1500          // Wait after connect before first probe
+                                      //   (must be > config sync duration to avoid
+                                      //    measuring under queue congestion)
+#define BENCH_TIMEOUT_MS (BENCH_PROBE_MS * (BENCH_PROBES + 6))  // Max wait for all pongs
+
+typedef struct {
+    bool      active;                           // Benchmark in progress
+    uint8_t   probes_sent;                      // How many PINGs have been sent
+    uint8_t   pongs_received;                   // How many PONGs have come back
+    uint32_t  rtt_us[BENCH_PROBES];            // RTT per probe (0 = not yet received)
+    TickType_t last_probe_tx;                   // Tick of last PING send
+    TickType_t started_at;                      // Tick when benchmark began (after settle)
+} bench_t;
+
+static bench_t s_bench = {0};
+
+static void bench_start(void)
+{
+    memset(&s_bench, 0, sizeof(s_bench));
+    s_bench.active      = true;
+    s_bench.started_at  = xTaskGetTickCount();
+    s_bench.last_probe_tx = s_bench.started_at - pdMS_TO_TICKS(BENCH_PROBE_MS); // trigger first immediately
+    ESP_LOGI(TAG, "RTT benchmark started (%d probes, %d ms apart)", BENCH_PROBES, BENCH_PROBE_MS);
+}
+
+static void bench_finish(void)
+{
+    s_bench.active = false;
+
+    uint32_t min_us = UINT32_MAX, max_us = 0, sum_us = 0;
+    uint8_t  valid  = 0;
+
+    for (int i = 0; i < BENCH_PROBES; i++) {
+        if (s_bench.rtt_us[i] > 0) {
+            if (s_bench.rtt_us[i] < min_us) min_us = s_bench.rtt_us[i];
+            if (s_bench.rtt_us[i] > max_us) max_us = s_bench.rtt_us[i];
+            sum_us += s_bench.rtt_us[i];
+            valid++;
+        }
+    }
+
+    if (valid == 0) {
+        ESP_LOGW(TAG, "RTT benchmark: no pongs received (all %d timed out)", BENCH_PROBES);
+        return;
+    }
+
+    uint32_t avg_us = sum_us / valid;
+    uint8_t  lost   = BENCH_PROBES - valid;
+
+    ESP_LOGI(TAG, "RTT benchmark (%u/%u): min=%lu us  avg=%lu us  max=%lu us  lost=%u",
+             valid, BENCH_PROBES,
+             (unsigned long)min_us,
+             (unsigned long)avg_us,
+             (unsigned long)max_us,
+             lost);
+
+    if (lost > 0) {
+        ESP_LOGW(TAG, "  %u probe(s) lost — check for radio contention or BLE coexistence", lost);
+    }
+}
+
+/* =========================================================================
+ * One-shot config sync runner
+ *
+ * split_config_sync_push_all reads NVS (cfgmod_read_storage → nvs_get_blob),
+ * which disables the SPI flash cache. On ESP32-S3 that also disables SPIRAM
+ * (both go through the same cache), so it MUST run on an internal-DRAM stack.
+ *
+ * split_task has a SPIRAM stack (needed to keep total DRAM usage viable), so
+ * we spawn this tiny dedicated task instead. It self-deletes when done.
+ * 3584 bytes is enough for the NVS page-read call chain (~2 KB internal use)
+ * plus the split_config_sync frame.
+ * ========================================================================= */
+
+static void s_config_sync_task_fn(void *arg)
+{
+    (void)arg;
+    ESP_LOGI(TAG, "cfg_sync task: pushing config to slave");
+    split_config_sync_push_all(s_peer_mac, &s_tx_seq);
+    ESP_LOGI(TAG, "cfg_sync task: done");
+    vTaskDelete(NULL);
+}
+
+static void spawn_config_sync_task(volatile bool *pending_flag)
+{
+    BaseType_t r = xTaskCreateWithCaps(
+        s_config_sync_task_fn, "cfg_sync", 3584, NULL, 4, NULL,
+        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT  // MUST be DRAM — NVS reads disable flash cache
+    );
+    if (r != pdPASS) {
+        // DRAM heap temporarily too fragmented; retry in the next 10 ms cycle.
+        ESP_LOGW(TAG, "cfg_sync task spawn failed — will retry");
+        *pending_flag = true;
+    }
+}
 
 /* =========================================================================
  * Power Management helpers
@@ -108,6 +219,21 @@ static void pm_apply_slave_idle(void)
 #endif  // CONFIG_PM_ENABLE
 
 /* =========================================================================
+ * Sequence number allocator — must be called instead of s_tx_seq++ everywhere.
+ * s_tx_seq is accessed from split_task, kb_manager_task (via matrix_cb), AND
+ * the WiFi task (heartbeat echo). On dual-core ESP32-S3 these run in parallel;
+ * a raw ++ causes duplicates that the anti-replay filter silently drops.
+ * ========================================================================= */
+
+static inline uint16_t next_seq(void)
+{
+    portENTER_CRITICAL(&s_seq_mux);
+    uint16_t s = s_tx_seq++;
+    portEXIT_CRITICAL(&s_seq_mux);
+    return s;
+}
+
+/* =========================================================================
  * Internal helpers
  * ========================================================================= */
 
@@ -120,7 +246,7 @@ static void send_role_negotiate(void)
     memcpy(rp.device_id, s_own_mac, 6);
 
     split_transport_send(s_peer_mac, SPLIT_PROTO_SPLIT, SPLIT_MSG_ROLE_NEGOTIATE,
-                         s_tx_seq++, (const uint8_t *)&rp, sizeof(rp));
+                         next_seq(), (const uint8_t *)&rp, sizeof(rp));
 }
 
 static void on_disconnect(const char *reason)
@@ -166,19 +292,19 @@ static void on_matrix_change(const uint8_t *matrix, size_t len, uint8_t layer)
         if (matrix[i]) { any_pressed = true; break; }
     }
     if (any_pressed) pm_apply_active();
-    // else             pm_apply_slave_idle();
 #endif
 
-    bool layer_changed = (layer != s_prev_layer);
+    // Always send FULL state — never deltas.
+    //
+    // Rationale: ESP-NOW is an unreliable transport (fire-and-forget, no ACK at
+    // the application layer). Under BLE/WiFi radio coexistence a single dropped
+    // delta permanently corrupts the master's view of the remote matrix: the
+    // master applies subsequent deltas to the wrong base and keystrokes are lost
+    // or stuck until the next full-state send (previously only on layer change
+    // or after 1500 ms stale). The full state packet is 14 bytes — negligible
+    // overhead — and guarantees the master can always resync on each event.
+    split_sync_send_full_state(s_peer_mac, matrix, layer, &s_tx_seq);
 
-    if (layer_changed) {
-        // Layer change: send full state so master has accurate context
-        split_sync_send_full_state(s_peer_mac, matrix, layer, &s_tx_seq);
-    } else {
-        split_sync_send_delta(s_peer_mac, s_prev_matrix, matrix, layer, &s_tx_seq);
-    }
-
-    memcpy(s_prev_matrix, matrix, SPLIT_MATRIX_BYTES < len ? SPLIT_MATRIX_BYTES : len);
     s_prev_layer = layer;
 }
 
@@ -346,6 +472,7 @@ static void on_split_message(const uint8_t *src_mac,
                 s_role = decided;
                 s_state = SPLIT_STATE_CONNECTED;
                 s_peer_last_seen = xTaskGetTickCount();
+                s_connected_at   = xTaskGetTickCount();  // timestamp for post-connect stagger
                 s_reconnect_interval = SPLIT_RECONNECT_MS_MIN;
 
                 split_peer_info_t info = {.role = (uint8_t)s_role};
@@ -381,8 +508,12 @@ static void on_split_message(const uint8_t *src_mac,
                     // Remote matrix starts zeroed until slave reports its state
                     uint8_t zero[SPLIT_MATRIX_BYTES] = {0};
                     kb_manager_set_remote_matrix(zero);
-                    // Kick off config sync: push our config to the newly-connected slave
-                    split_config_sync_push_all(s_peer_mac, &s_tx_seq);
+                    // Defer config sync to split_task: running it here (WiFi task) is
+                    // dangerous because split_config_sync_push_all calls vTaskDelay on
+                    // retry, which blocks the WiFi task and prevents PONG reception.
+                    s_config_sync_pending = true;
+                    // Schedule RTT benchmark (starts after BENCH_SETTLE_MS)
+                    bench_start();
                 }
             }
         } else if (s_state == SPLIT_STATE_CONNECTED) {
@@ -399,7 +530,7 @@ static void on_split_message(const uint8_t *src_mac,
             split_role_payload_t ack = {.proposed_role = (uint8_t)new_role};
             memcpy(ack.device_id, s_own_mac, 6);
             split_transport_send(s_peer_mac, SPLIT_PROTO_SPLIT, SPLIT_MSG_ROLE_SWAP_ACK,
-                                 s_tx_seq++, (const uint8_t *)&ack, sizeof(ack));
+                                 next_seq(), (const uint8_t *)&ack, sizeof(ack));
 
             s_role = new_role;
             esp_event_post(SPLIT_EVENTS, SPLIT_EVENT_ROLE_CHANGED,
@@ -464,7 +595,7 @@ static void on_split_message(const uint8_t *src_mac,
                     .sent_us     = hb->sent_us,
                 };
                 split_transport_send(s_peer_mac, SPLIT_PROTO_SPLIT, SPLIT_MSG_HEARTBEAT,
-                                     s_tx_seq++, (const uint8_t *)&resp, sizeof(resp));
+                                     next_seq(), (const uint8_t *)&resp, sizeof(resp));
             } else if (s_state == SPLIT_STATE_CONNECTED && s_role == SPLIT_ROLE_SLAVE) {
                 // Measure RTT from the echoed timestamp
                 if (hb->sent_us != 0) {
@@ -493,6 +624,33 @@ static void on_split_message(const uint8_t *src_mac,
         split_config_sync_on_ack(payload, len);
         break;
 
+    /* ---- RTT benchmark (Master → Slave: PING;  Slave → Master: PONG) ---- */
+
+    case SPLIT_MSG_PING:
+        // Slave: echo payload back as PONG (zero processing, just reflect)
+        if (s_state == SPLIT_STATE_CONNECTED && s_role == SPLIT_ROLE_SLAVE) {
+            split_transport_send(s_peer_mac, SPLIT_PROTO_SPLIT, SPLIT_MSG_PONG,
+                                 next_seq(), payload, len);
+        }
+        break;
+
+    case SPLIT_MSG_PONG:
+        // Master: record RTT for this probe
+        if (s_state == SPLIT_STATE_CONNECTED && s_role == SPLIT_ROLE_MASTER
+            && s_bench.active && len >= sizeof(split_ping_payload_t)) {
+            const split_ping_payload_t *p = (const split_ping_payload_t *)payload;
+            if (p->probe_idx < BENCH_PROBES) {
+                uint32_t rtt = (uint32_t)esp_timer_get_time() - p->sent_us;
+                s_bench.rtt_us[p->probe_idx] = rtt;
+                s_bench.pongs_received++;
+                ESP_LOGD(TAG, "PONG #%u: RTT = %lu us", p->probe_idx, (unsigned long)rtt);
+                if (s_bench.pongs_received >= BENCH_PROBES) {
+                    bench_finish();
+                }
+            }
+        }
+        break;
+
     default:
         ESP_LOGD(TAG, "unhandled msg type 0x%02X", type);
         break;
@@ -508,11 +666,24 @@ static void split_task(void *arg)
     (void)arg;
     ESP_LOGI(TAG, "split task started");
 
-    const TickType_t tick_period = pdMS_TO_TICKS(10);
+    const TickType_t tick_period     = pdMS_TO_TICKS(10);
+    TickType_t       s_last_mem_log  = 0;  // periodic memory snapshot
 
     for (;;) {
         vTaskDelay(tick_period);
         TickType_t now = xTaskGetTickCount();
+
+        // Periodic memory snapshot — helps identify heap/stack pressure over time.
+        // "int" = internal SRAM only (what WiFi/ESP-NOW DMA buffers draw from).
+        if ((now - s_last_mem_log) >= pdMS_TO_TICKS(10000)) {
+            ESP_LOGI(TAG, "[mem] heap=%lu int=%lu min=%lu | stack HWM=%lu B | state=%u role=%u",
+                     (unsigned long)esp_get_free_heap_size(),
+                     (unsigned long)heap_caps_get_free_size(MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL),
+                     (unsigned long)esp_get_minimum_free_heap_size(),
+                     (unsigned long)(uxTaskGetStackHighWaterMark(NULL) * sizeof(StackType_t)),
+                     (unsigned)s_state, (unsigned)s_role);
+            s_last_mem_log = now;
+        }
 
         switch (s_state) {
 
@@ -526,7 +697,7 @@ static void split_task(void *arg)
                 if (disc_len > 0) {
                     static const uint8_t bcast[] = SPLIT_BROADCAST_MAC;
                     split_transport_send(bcast, SPLIT_PROTO_SPLIT,
-                                         SPLIT_MSG_DISCOVERY, s_tx_seq++,
+                                         SPLIT_MSG_DISCOVERY, next_seq(),
                                          disc_buf, disc_len);
                 }
                 s_last_discovery_tx = now;
@@ -553,6 +724,17 @@ static void split_task(void *arg)
                 ESP_LOGW(TAG, "link stale — no heartbeat for >%u ms", SPLIT_STALE_MS);
                 esp_event_post(SPLIT_EVENTS, SPLIT_EVENT_STALE, NULL, 0, 0);
             }
+
+            // Config sync deferred from WiFi task so vTaskDelay (used on retry)
+            // never blocks the WiFi receive path.  Spawned as a one-shot DRAM
+            // task because NVS reads disable the SPI cache which also disables
+            // SPIRAM \u2014 a SPIRAM-stacked caller would crash (cache sanity assert).
+            // 300 ms settle: avoids overlapping the role-negotiate radio burst.
+            if (s_role == SPLIT_ROLE_MASTER && s_config_sync_pending
+                && (now - s_connected_at) >= pdMS_TO_TICKS(300)) {
+                s_config_sync_pending = false;
+                spawn_config_sync_task(&s_config_sync_pending);
+            }
             // Slave sends heartbeat; master responds inside on_split_message
             if (s_role == SPLIT_ROLE_SLAVE) {
                 if ((now - s_last_heartbeat_tx) >= pdMS_TO_TICKS(SPLIT_HEARTBEAT_MS)) {
@@ -571,9 +753,33 @@ static void split_task(void *arg)
                         .sent_us     = (uint32_t)esp_timer_get_time(),
                     };
                     split_transport_send(s_peer_mac, SPLIT_PROTO_SPLIT,
-                                         SPLIT_MSG_HEARTBEAT, s_tx_seq++,
+                                         SPLIT_MSG_HEARTBEAT, next_seq(),
                                          (const uint8_t *)&hb, sizeof(hb));
                     s_last_heartbeat_tx = now;
+                }
+            } else if (s_role == SPLIT_ROLE_MASTER && s_bench.active) {
+                // RTT benchmark scheduler
+                TickType_t bench_elapsed = now - s_bench.started_at;
+
+                // Abort if total timeout exceeded
+                if (bench_elapsed >= pdMS_TO_TICKS(BENCH_SETTLE_MS + BENCH_TIMEOUT_MS)) {
+                    ESP_LOGW(TAG, "RTT benchmark timed out (%u/%u pongs)",
+                             s_bench.pongs_received, s_bench.probes_sent);
+                    bench_finish();
+                } else if (bench_elapsed >= pdMS_TO_TICKS(BENCH_SETTLE_MS)
+                           && s_bench.probes_sent < BENCH_PROBES
+                           && (now - s_bench.last_probe_tx) >= pdMS_TO_TICKS(BENCH_PROBE_MS)) {
+                    // Send next probe
+                    split_ping_payload_t ping = {
+                        .probe_idx = s_bench.probes_sent,
+                        .sent_us   = (uint32_t)esp_timer_get_time(),
+                    };
+                    if (split_transport_send(s_peer_mac, SPLIT_PROTO_SPLIT, SPLIT_MSG_PING,
+                                            next_seq(), (const uint8_t *)&ping, sizeof(ping)) == ESP_OK) {
+                        ESP_LOGD(TAG, "PING #%u sent", ping.probe_idx);
+                        s_bench.probes_sent++;
+                    }
+                    s_bench.last_probe_tx = now;
                 }
             }
             break;
@@ -718,6 +924,9 @@ esp_err_t splitmod_init(void)
 
     BaseType_t xret = xTaskCreateWithCaps(
         split_task, "split", 6144, NULL, 5, &s_task_handle,
+        // SPIRAM stack is fine here — split_task no longer calls NVS directly.
+        // NVS/cfgmod reads happen only inside the one-shot cfg_sync task which
+        // is spawned with a small internal-DRAM stack (see s_config_sync_task_fn).
         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
     );
     if (xret != pdPASS) {
@@ -744,7 +953,7 @@ esp_err_t splitmod_deinit(void)
 {
     if (s_state == SPLIT_STATE_CONNECTED) {
         split_transport_send(s_peer_mac, SPLIT_PROTO_SPLIT, SPLIT_MSG_DISCONNECT,
-                             s_tx_seq++, NULL, 0);
+                             next_seq(), NULL, 0);
     }
 
     if (s_task_handle) {
@@ -791,7 +1000,7 @@ esp_err_t splitmod_unpair(void)
 {
     if (s_state == SPLIT_STATE_CONNECTED) {
         split_transport_send(s_peer_mac, SPLIT_PROTO_SPLIT, SPLIT_MSG_DISCONNECT,
-                             s_tx_seq++, NULL, 0);
+                             next_seq(), NULL, 0);
         split_transport_remove_peer(s_peer_mac);
     }
 
@@ -821,7 +1030,7 @@ esp_err_t splitmod_request_role_swap(void)
     memcpy(req.device_id, s_own_mac, 6);
 
     return split_transport_send(s_peer_mac, SPLIT_PROTO_SPLIT, SPLIT_MSG_ROLE_SWAP_REQ,
-                                s_tx_seq++, (const uint8_t *)&req, sizeof(req));
+                                next_seq(), (const uint8_t *)&req, sizeof(req));
 }
 
 split_status_t splitmod_get_status(void)

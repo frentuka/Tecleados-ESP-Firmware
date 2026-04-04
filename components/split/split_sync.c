@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/portmacro.h"
 
@@ -101,7 +102,14 @@ esp_err_t split_sync_send_full_state(const uint8_t *peer_mac,
                                          (*tx_seq)++,
                                          (const uint8_t *)&p, sizeof(p));
     if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "send FULL failed: %s", esp_err_to_name(ret));
+        // ESP_ERR_ESPNOW_NO_MEM usually means the ESP-NOW TX queue is full,
+        // not a heap exhaustion. Log both so we can distinguish.
+        ESP_LOGW(TAG, "send FULL failed: %s | heap free=%lu int=%lu min=%lu | stack HWM=%lu B",
+                 esp_err_to_name(ret),
+                 (unsigned long)esp_get_free_heap_size(),
+                 (unsigned long)heap_caps_get_free_size(MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL),
+                 (unsigned long)esp_get_minimum_free_heap_size(),
+                 (unsigned long)(uxTaskGetStackHighWaterMark(NULL) * sizeof(StackType_t)));
     }
     return ret;
 }

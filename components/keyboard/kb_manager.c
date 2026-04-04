@@ -53,6 +53,9 @@ static volatile bool s_paused = false;
 
 void kb_manager_set_paused(bool paused) { s_paused = paused; }
 
+/* ---- Task handle (used to wake the task from kb_manager_set_remote_matrix) ---- */
+static volatile TaskHandle_t s_kb_task_handle = NULL;
+
 /* ---- Scan-rate divisor (battery-aware power saving) ---- */
 static volatile uint8_t s_scan_divisor = 1;
 
@@ -69,13 +72,26 @@ void kb_manager_set_matrix_cb(void (*cb)(const uint8_t *matrix, size_t len,
 
 void kb_manager_set_remote_matrix(const uint8_t *bitmap)
 {
+    bool has_keys = false;
     portENTER_CRITICAL(&s_remote_matrix_lock);
     if (bitmap) {
         memcpy(s_remote_matrix, bitmap, KB_MATRIX_BITMAP_BYTES);
+        for (size_t i = 0; i < KB_MATRIX_BITMAP_BYTES; i++) {
+            if (s_remote_matrix[i]) { has_keys = true; break; }
+        }
     } else {
         memset(s_remote_matrix, 0, KB_MATRIX_BITMAP_BYTES);
     }
     portEXIT_CRITICAL(&s_remote_matrix_lock);
+
+    // Wake the kb_manager_task if it is sleeping in ulTaskNotifyTake.
+    // Without this, incoming remote keystrokes from the slave are delayed
+    // up to 100 ms (the ulTaskNotifyTake timeout) before the master scans
+    // and processes them.  The notify is a no-op if the task is already awake.
+    if (has_keys) {
+        TaskHandle_t h = s_kb_task_handle;
+        if (h) xTaskNotifyGive(h);
+    }
 }
 
 /* ---- Debounce ---- */
@@ -168,6 +184,7 @@ static void kb_manager_task(void *arg) {
     memset(s_active_action_codes, 0, sizeof(s_active_action_codes));
 
     kb_matrix_init_isr(xTaskGetCurrentTaskHandle());
+    s_kb_task_handle = xTaskGetCurrentTaskHandle(); // expose handle for remote-matrix wakeup
 
     const int64_t min_scan_interval_us = 1000000LL / (int64_t)MAX_POLLING_RATE_HZ;
 

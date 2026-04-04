@@ -89,7 +89,12 @@ esp_err_t split_config_sync_push(const uint8_t *peer_mac, uint16_t *tx_seq,
             ret = split_transport_send(peer_mac, SPLIT_PROTO_SPLIT,
                                        SPLIT_MSG_CONFIG_SYNC, (*tx_seq)++,
                                        frame, SPLIT_CONFIG_SYNC_HDR_SIZE + chunk_len);
-            if (ret == ESP_OK) break;
+            if (ret == ESP_OK) {
+                // Space out fragments! Flooding 20+ fragments instantly fills the
+                // MAC TX queue (NO_MEM) and causes peak current spikes.
+                vTaskDelay(pdMS_TO_TICKS(SPLIT_CFG_RETRY_DELAY_MS));
+                break;
+            }
             ESP_LOGW(TAG, "fragment %u/%u send attempt %d/%d failed: %s",
                      idx + 1, total_fragments, attempt + 1, SPLIT_CFG_SEND_RETRIES,
                      esp_err_to_name(ret));

@@ -50,6 +50,10 @@ typedef enum split_msg_type : uint8_t {
     // Configuration (0x4_)
     SPLIT_MSG_CONFIG_SYNC     = 0x40,  // Config data fragment
     SPLIT_MSG_CONFIG_SYNC_ACK = 0x41,  // Config sync acknowledged
+
+    // Diagnostics (0x5_)
+    SPLIT_MSG_PING            = 0x50,  // RTT benchmark probe  (Master → Slave)
+    SPLIT_MSG_PONG            = 0x51,  // RTT benchmark reply  (Slave  → Master)
 } split_msg_type_t;
 
 /* =========================================================================
@@ -147,6 +151,16 @@ typedef struct __attribute__((packed)) split_config_sync_ack_payload {
     uint8_t  key[SPLIT_CONFIG_SYNC_KEY_LEN];
     uint8_t  status;    // 0 = ESP_OK
 } split_config_sync_ack_payload_t;
+
+/** SPLIT_MSG_PING / SPLIT_MSG_PONG — RTT benchmark.
+ *  Master sends PING with probe_idx and sent_us filled.
+ *  Slave echoes the entire payload back as PONG (no modification).
+ *  Master computes RTT = now_us - sent_us when PONG is received. */
+typedef struct __attribute__((packed)) split_ping_payload {
+    uint8_t  probe_idx;     // Probe index (0-based) so master can match pongs out-of-order
+    uint8_t  _pad[3];       // Alignment padding
+    uint32_t sent_us;       // esp_timer_get_time() low 32 bits at send time
+} split_ping_payload_t;
 
 /* =========================================================================
  * Serialization helpers (implemented in split_protocol.c)
