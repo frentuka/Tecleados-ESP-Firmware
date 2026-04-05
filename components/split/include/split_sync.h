@@ -51,25 +51,24 @@ bool split_sync_remote_matrix_changed(void);
  * @param peer_mac      Master's MAC
  * @param matrix        Local matrix bitmap (SPLIT_MATRIX_BYTES)
  * @param active_layer  Current active layer index
- * @param tx_seq        Sequence counter (incremented on success)
+ * @param seq           Sequence number for this frame (caller allocates via next_seq())
  */
 esp_err_t split_sync_send_full_state(const uint8_t *peer_mac,
                                       const uint8_t *matrix,
                                       uint8_t active_layer,
-                                      uint16_t *tx_seq);
+                                      uint16_t seq);
 
 /**
  * @brief Send a delta (only bytes that changed) to the master.
- *        Falls back to a full-state send if more than 8 bytes changed.
  *
  * @param peer_mac      Master's MAC
  * @param old_matrix    Previous matrix state
  * @param new_matrix    Current matrix state
  * @param active_layer  Current active layer index
- * @param tx_seq        Sequence counter (incremented on success)
+ * @param seq           Sequence number for this frame (caller allocates via next_seq())
  */
 esp_err_t split_sync_send_delta(const uint8_t *peer_mac,
                                  const uint8_t *old_matrix,
                                  const uint8_t *new_matrix,
                                  uint8_t active_layer,
-                                 uint16_t *tx_seq);
+                                 uint16_t seq);

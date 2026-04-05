@@ -13,6 +13,10 @@
 
 #define TAG "SPLIT_CR"
 
+// KDF: SHA-256(shared_secret || KDF_LABEL) → first 16 bytes become the session key.
+#define KDF_LABEL     "split_v1"
+#define KDF_LABEL_LEN (sizeof(KDF_LABEL) - 1)
+
 /* =========================================================================
  * Internal helpers
  * ========================================================================= */
@@ -25,7 +29,7 @@ static void build_nonce(uint16_t seq, uint8_t nonce[SPLIT_CRYPTO_NONCE_SIZE])
     memset(nonce + 2, 0, SPLIT_CRYPTO_NONCE_SIZE - 2);
 }
 
-// Allocate and seed an RNG (caller must free both pointers).
+// Allocate and seed an RNG (caller must free both pointers via rng_free).
 static esp_err_t rng_alloc(mbedtls_entropy_context **out_e,
                             mbedtls_ctr_drbg_context **out_d)
 {
@@ -96,8 +100,9 @@ esp_err_t split_crypto_ecdh_get_public(split_crypto_ecdh_t handle,
     esp_err_t ret = rng_alloc(&e, &d);
     if (ret != ESP_OK) return ret;
 
-    // Output format for CURVE25519: [1 byte = 32][32 bytes x-coordinate] = 33 bytes
-    uint8_t pub_buf[36];
+    // mbedtls encodes X25519 public key as [1-byte length prefix | 32-byte x-coordinate].
+    // Allocate with a small safety margin over the known 33-byte output.
+    uint8_t pub_buf[1 + SPLIT_CRYPTO_PUBKEY_SIZE + 3];
     size_t  pub_len = 0;
     int rc = mbedtls_ecdh_make_public(ctx, &pub_len, pub_buf, sizeof(pub_buf),
                                       mbedtls_ctr_drbg_random, d);
@@ -108,11 +113,12 @@ esp_err_t split_crypto_ecdh_get_public(split_crypto_ecdh_t handle,
         return ESP_FAIL;
     }
 
-    // Strip the 1-byte length prefix to get the raw 32-byte x-coordinate
-    if (pub_len < 33 || pub_buf[0] != 32) {
+    if (pub_len < 1 + SPLIT_CRYPTO_PUBKEY_SIZE || pub_buf[0] != SPLIT_CRYPTO_PUBKEY_SIZE) {
         ESP_LOGE(TAG, "unexpected pub key encoding (len=%u prefix=%u)", (unsigned)pub_len, pub_buf[0]);
         return ESP_FAIL;
     }
+
+    // Strip the 1-byte length prefix to get the raw 32-byte x-coordinate.
     memcpy(out_pub, pub_buf + 1, SPLIT_CRYPTO_PUBKEY_SIZE);
     return ESP_OK;
 }
@@ -124,9 +130,9 @@ esp_err_t split_crypto_ecdh_derive_key(split_crypto_ecdh_t handle,
     if (!handle || !peer_pub || !out_key) return ESP_ERR_INVALID_ARG;
     mbedtls_ecdh_context *ctx = (mbedtls_ecdh_context *)handle;
 
-    // Re-encode peer public key with 1-byte length prefix for mbedtls
-    uint8_t peer_tls[33];
-    peer_tls[0] = 32;
+    // Re-encode peer public key with the 1-byte length prefix mbedtls expects.
+    uint8_t peer_tls[1 + SPLIT_CRYPTO_PUBKEY_SIZE];
+    peer_tls[0] = SPLIT_CRYPTO_PUBKEY_SIZE;
     memcpy(peer_tls + 1, peer_pub, SPLIT_CRYPTO_PUBKEY_SIZE);
 
     int rc = mbedtls_ecdh_read_public(ctx, peer_tls, sizeof(peer_tls));
@@ -140,7 +146,7 @@ esp_err_t split_crypto_ecdh_derive_key(split_crypto_ecdh_t handle,
     esp_err_t ret = rng_alloc(&e, &d);
     if (ret != ESP_OK) return ret;
 
-    uint8_t secret[32];
+    uint8_t secret[SPLIT_CRYPTO_PUBKEY_SIZE];
     size_t  secret_len = 0;
     rc = mbedtls_ecdh_calc_secret(ctx, &secret_len, secret, sizeof(secret),
                                   mbedtls_ctr_drbg_random, d);
@@ -151,15 +157,15 @@ esp_err_t split_crypto_ecdh_derive_key(split_crypto_ecdh_t handle,
         return ESP_FAIL;
     }
 
-    // KDF: SHA-256(secret || "split_v1") → first 16 bytes
-    uint8_t kdf_input[32 + 8];
-    memcpy(kdf_input,      secret,     32);
-    memcpy(kdf_input + 32, "split_v1",  8);
+    // KDF: SHA-256(secret || KDF_LABEL) → first 16 bytes become the AES-128 session key.
+    uint8_t kdf_input[SPLIT_CRYPTO_PUBKEY_SIZE + KDF_LABEL_LEN];
+    memcpy(kdf_input,                         secret,    SPLIT_CRYPTO_PUBKEY_SIZE);
+    memcpy(kdf_input + SPLIT_CRYPTO_PUBKEY_SIZE, KDF_LABEL, KDF_LABEL_LEN);
 
     uint8_t digest[32];
     rc = mbedtls_sha256(kdf_input, sizeof(kdf_input), digest, 0 /* SHA-256 */);
 
-    // Zero sensitive material immediately
+    // Zero sensitive material immediately.
     memset(secret,    0, sizeof(secret));
     memset(kdf_input, 0, sizeof(kdf_input));
 
@@ -199,7 +205,7 @@ esp_err_t split_crypto_encrypt(const uint8_t key[SPLIT_CRYPTO_KEY_SIZE],
     uint8_t nonce[SPLIT_CRYPTO_NONCE_SIZE];
     build_nonce(seq, nonce);
 
-    // Temp output buffer to avoid in-place aliasing issues
+    // Temporary output buffer to avoid in-place aliasing issues with mbedtls CCM.
     uint8_t *out_buf = (len > 0) ? malloc(len) : NULL;
     if (len > 0 && !out_buf) {
         mbedtls_ccm_free(&ctx);

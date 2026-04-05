@@ -243,7 +243,7 @@ esp_err_t split_transport_add_peer(const uint8_t *mac, uint8_t channel)
         .ifidx = WIFI_IF_STA,
         .encrypt = false,  // We handle encryption at the protocol layer
     };
-    memcpy(peer.peer_addr, mac, 6);
+    memcpy(peer.peer_addr, mac, ESP_NOW_ETH_ALEN);
 
     return esp_now_add_peer(&peer);
 }

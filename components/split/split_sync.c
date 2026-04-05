@@ -38,14 +38,13 @@ esp_err_t split_sync_on_key_state_full(const uint8_t *payload, size_t len)
 
 esp_err_t split_sync_on_key_state_delta(const uint8_t *payload, size_t len)
 {
-    // Minimum: active_layer(1) + changed_mask(2) = 3 bytes
-    if (len < 3) return ESP_ERR_INVALID_SIZE;
+    if (len < sizeof(split_key_state_delta_payload_t)) return ESP_ERR_INVALID_SIZE;
     const split_key_state_delta_payload_t *p = (const split_key_state_delta_payload_t *)payload;
 
     uint16_t mask     = p->changed_mask;
     size_t   n_values = (size_t)__builtin_popcount(mask);
 
-    if (len < 3 + n_values) return ESP_ERR_INVALID_SIZE;
+    if (len < sizeof(split_key_state_delta_payload_t) + n_values) return ESP_ERR_INVALID_SIZE;
 
     portENTER_CRITICAL(&s_lock);
     const uint8_t *v = p->values;
@@ -79,7 +78,7 @@ void split_sync_clear_remote_matrix(void)
 bool split_sync_remote_matrix_changed(void)
 {
     portENTER_CRITICAL(&s_lock);
-    bool v  = s_changed;
+    bool v    = s_changed;
     s_changed = false;
     portEXIT_CRITICAL(&s_lock);
     return v;
@@ -92,18 +91,17 @@ bool split_sync_remote_matrix_changed(void)
 esp_err_t split_sync_send_full_state(const uint8_t *peer_mac,
                                       const uint8_t *matrix,
                                       uint8_t active_layer,
-                                      uint16_t *tx_seq)
+                                      uint16_t seq)
 {
     split_key_state_full_payload_t p = {.active_layer = active_layer};
     memcpy(p.matrix, matrix, SPLIT_MATRIX_BYTES);
 
     esp_err_t ret = split_transport_send(peer_mac, SPLIT_PROTO_SPLIT,
-                                         SPLIT_MSG_KEY_STATE_FULL,
-                                         (*tx_seq)++,
+                                         SPLIT_MSG_KEY_STATE_FULL, seq,
                                          (const uint8_t *)&p, sizeof(p));
     if (ret != ESP_OK) {
         // ESP_ERR_ESPNOW_NO_MEM usually means the ESP-NOW TX queue is full,
-        // not a heap exhaustion. Log both so we can distinguish.
+        // not heap exhaustion. Log both so we can distinguish.
         ESP_LOGW(TAG, "send FULL failed: %s | heap free=%lu int=%lu min=%lu | stack HWM=%lu B",
                  esp_err_to_name(ret),
                  (unsigned long)esp_get_free_heap_size(),
@@ -118,15 +116,17 @@ esp_err_t split_sync_send_delta(const uint8_t *peer_mac,
                                  const uint8_t *old_matrix,
                                  const uint8_t *new_matrix,
                                  uint8_t active_layer,
-                                 uint16_t *tx_seq)
+                                 uint16_t seq)
 {
-    // Buffer: active_layer(1) + changed_mask(2) + up to SPLIT_MATRIX_BYTES values
-    uint8_t buf[3 + SPLIT_MATRIX_BYTES];
-    buf[0] = active_layer;
+    // Build the payload: fixed header struct followed by changed byte values.
+    uint8_t buf[sizeof(split_key_state_delta_payload_t) + SPLIT_MATRIX_BYTES];
+    split_key_state_delta_payload_t *hdr = (split_key_state_delta_payload_t *)buf;
+
+    hdr->active_layer = active_layer;
 
     uint16_t mask     = 0;
     uint8_t  n_values = 0;
-    uint8_t *values   = buf + 3;
+    uint8_t *values   = buf + sizeof(split_key_state_delta_payload_t);
 
     for (int i = 0; i < SPLIT_MATRIX_BYTES; i++) {
         if (old_matrix[i] != new_matrix[i]) {
@@ -135,14 +135,11 @@ esp_err_t split_sync_send_delta(const uint8_t *peer_mac,
         }
     }
 
-    // Store mask (little-endian, matches packed uint16_t)
-    buf[1] = (uint8_t)(mask & 0xFF);
-    buf[2] = (uint8_t)(mask >> 8);
+    hdr->changed_mask = mask;
 
-    size_t payload_len = 3 + n_values;
+    size_t payload_len = sizeof(split_key_state_delta_payload_t) + n_values;
     esp_err_t ret = split_transport_send(peer_mac, SPLIT_PROTO_SPLIT,
-                                         SPLIT_MSG_KEY_STATE_DELTA,
-                                         (*tx_seq)++,
+                                         SPLIT_MSG_KEY_STATE_DELTA, seq,
                                          buf, payload_len);
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "send DELTA failed: %s", esp_err_to_name(ret));

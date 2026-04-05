@@ -11,8 +11,8 @@
 #include "esp_err.h"
 #include "cfg_storage_keys.h"
 
-#define SPLIT_CFG_SEND_RETRIES  3      // Max attempts per fragment
-#define SPLIT_CFG_RETRY_DELAY_MS 10    // Delay between retries
+#define SPLIT_CFG_SEND_RETRIES   3    // Max attempts per fragment
+#define SPLIT_CFG_RETRY_DELAY_MS 10   // Delay between retries (and after success, to pace the burst)
 
 #define TAG "SPLIT_CFG"
 
@@ -21,16 +21,46 @@
  * ========================================================================= */
 
 const split_sync_entry_t SPLIT_SYNC_ENTRIES[] = {
-    { CFGMOD_KIND_LAYOUT,  CFG_ST_LAYER_0 },
-    { CFGMOD_KIND_LAYOUT,  CFG_ST_LAYER_1 },
-    { CFGMOD_KIND_LAYOUT,  CFG_ST_LAYER_2 },
-    { CFGMOD_KIND_LAYOUT,  CFG_ST_LAYER_3 },
-    { CFGMOD_KIND_SYSTEM,  "system"        },
+    { CFGMOD_KIND_LAYOUT,   CFG_ST_LAYER_0 },
+    { CFGMOD_KIND_LAYOUT,   CFG_ST_LAYER_1 },
+    { CFGMOD_KIND_LAYOUT,   CFG_ST_LAYER_2 },
+    { CFGMOD_KIND_LAYOUT,   CFG_ST_LAYER_3 },
+    { CFGMOD_KIND_SYSTEM,   "system"        },
     { CFGMOD_KIND_PHYSICAL, CFG_ST_PHYSICAL_LAYOUT },
 };
 
 const size_t SPLIT_SYNC_ENTRY_COUNT =
     sizeof(SPLIT_SYNC_ENTRIES) / sizeof(SPLIT_SYNC_ENTRIES[0]);
+
+/* =========================================================================
+ * Internal helpers
+ * ========================================================================= */
+
+// Send one fragment with retry. Paces the send with a short delay on success
+// to avoid flooding the ESP-NOW TX queue when pushing many fragments.
+static esp_err_t send_fragment_with_retry(const uint8_t *peer_mac, uint16_t *tx_seq,
+                                           const uint8_t *frame, size_t frame_len,
+                                           uint8_t idx, uint8_t total)
+{
+    for (int attempt = 0; attempt < SPLIT_CFG_SEND_RETRIES; attempt++) {
+        esp_err_t ret = split_transport_send(peer_mac, SPLIT_PROTO_SPLIT,
+                                             SPLIT_MSG_CONFIG_SYNC, (*tx_seq)++,
+                                             frame, frame_len);
+        if (ret == ESP_OK) {
+            // Space out fragments to avoid filling the MAC TX queue and causing
+            // peak current spikes when pushing 20+ fragments back-to-back.
+            vTaskDelay(pdMS_TO_TICKS(SPLIT_CFG_RETRY_DELAY_MS));
+            return ESP_OK;
+        }
+        ESP_LOGW(TAG, "fragment %u/%u attempt %d/%d: %s",
+                 idx + 1, total, attempt + 1, SPLIT_CFG_SEND_RETRIES, esp_err_to_name(ret));
+        if (attempt + 1 < SPLIT_CFG_SEND_RETRIES) {
+            vTaskDelay(pdMS_TO_TICKS(SPLIT_CFG_RETRY_DELAY_MS));
+        }
+    }
+    ESP_LOGW(TAG, "fragment %u/%u failed after %d attempts", idx + 1, total, SPLIT_CFG_SEND_RETRIES);
+    return ESP_FAIL;
+}
 
 /* =========================================================================
  * MASTER — send fragments for one (kind, key) blob
@@ -41,19 +71,20 @@ esp_err_t split_config_sync_push(const uint8_t *peer_mac, uint16_t *tx_seq,
 {
     if (!peer_mac || !tx_seq || !key) return ESP_ERR_INVALID_ARG;
 
-    // Read raw blob from NVS
-    uint8_t *blob = malloc(SPLIT_CONFIG_SYNC_DATA_MAX * 255); // max ~57 KB, but only alloc needed
+    // cfgmod_read_storage requires a pre-allocated buffer; we pass the protocol
+    // maximum so any blob that fits within the fragmentation scheme can be read
+    // in a single call. (255 fragments × SPLIT_CONFIG_SYNC_DATA_MAX bytes each.)
+    size_t   blob_len = SPLIT_CONFIG_SYNC_DATA_MAX * 255;
+    uint8_t *blob     = malloc(blob_len);
     if (!blob) return ESP_ERR_NO_MEM;
 
-    // First pass: find out required size
-    size_t blob_len = SPLIT_CONFIG_SYNC_DATA_MAX * 255;
     esp_err_t ret = cfgmod_read_storage(kind, key, blob, &blob_len);
     if (ret != ESP_OK) {
         if (ret != ESP_ERR_NOT_FOUND) {
             ESP_LOGW(TAG, "read_storage(%u, %s): %s — skipping", kind, key, esp_err_to_name(ret));
         }
         free(blob);
-        return ESP_OK; // Not an error — entry may not yet be written on a fresh device
+        return ESP_OK; // Not an error — entry may not yet exist on a fresh device.
     }
 
     if (blob_len == 0) {
@@ -63,12 +94,10 @@ esp_err_t split_config_sync_push(const uint8_t *peer_mac, uint16_t *tx_seq,
 
     uint8_t total_fragments = (uint8_t)((blob_len + SPLIT_CONFIG_SYNC_DATA_MAX - 1)
                                          / SPLIT_CONFIG_SYNC_DATA_MAX);
-    if (total_fragments == 0) total_fragments = 1;
 
     ESP_LOGD(TAG, "pushing kind=%u key=%s blob_len=%u fragments=%u",
              kind, key, (unsigned)blob_len, total_fragments);
 
-    // Frame buffer: header + data
     uint8_t frame[SPLIT_CONFIG_SYNC_HDR_SIZE + SPLIT_CONFIG_SYNC_DATA_MAX];
 
     for (uint8_t idx = 0; idx < total_fragments; idx++) {
@@ -84,27 +113,10 @@ esp_err_t split_config_sync_push(const uint8_t *peer_mac, uint16_t *tx_seq,
         strncpy((char *)hdr->key, key, SPLIT_CONFIG_SYNC_KEY_LEN - 1);
         memcpy(frame + SPLIT_CONFIG_SYNC_HDR_SIZE, blob + offset, chunk_len);
 
-        ret = ESP_FAIL;
-        for (int attempt = 0; attempt < SPLIT_CFG_SEND_RETRIES; attempt++) {
-            ret = split_transport_send(peer_mac, SPLIT_PROTO_SPLIT,
-                                       SPLIT_MSG_CONFIG_SYNC, (*tx_seq)++,
-                                       frame, SPLIT_CONFIG_SYNC_HDR_SIZE + chunk_len);
-            if (ret == ESP_OK) {
-                // Space out fragments! Flooding 20+ fragments instantly fills the
-                // MAC TX queue (NO_MEM) and causes peak current spikes.
-                vTaskDelay(pdMS_TO_TICKS(SPLIT_CFG_RETRY_DELAY_MS));
-                break;
-            }
-            ESP_LOGW(TAG, "fragment %u/%u send attempt %d/%d failed: %s",
-                     idx + 1, total_fragments, attempt + 1, SPLIT_CFG_SEND_RETRIES,
-                     esp_err_to_name(ret));
-            if (attempt + 1 < SPLIT_CFG_SEND_RETRIES) {
-                vTaskDelay(pdMS_TO_TICKS(SPLIT_CFG_RETRY_DELAY_MS));
-            }
-        }
+        ret = send_fragment_with_retry(peer_mac, tx_seq,
+                                       frame, SPLIT_CONFIG_SYNC_HDR_SIZE + chunk_len,
+                                       idx, total_fragments);
         if (ret != ESP_OK) {
-            ESP_LOGW(TAG, "fragment %u/%u permanently failed after %d attempts",
-                     idx + 1, total_fragments, SPLIT_CFG_SEND_RETRIES);
             free(blob);
             return ret;
         }
@@ -123,7 +135,7 @@ esp_err_t split_config_sync_push_all(const uint8_t *peer_mac, uint16_t *tx_seq)
                                                 SPLIT_SYNC_ENTRIES[i].key);
         if (ret != ESP_OK) {
             ESP_LOGW(TAG, "push entry %u failed: %s", (unsigned)i, esp_err_to_name(ret));
-            // Continue — best-effort sync
+            // Continue — best-effort sync.
         }
     }
     return ESP_OK;
@@ -154,10 +166,10 @@ typedef struct {
     uint8_t   kind;
     char      key[SPLIT_CONFIG_SYNC_KEY_LEN + 1];
     uint8_t   total;
-    uint8_t   received;        // bitmask of received fragment indices (max 8 for now)
+    uint8_t   received;      // bitmask of received fragment indices (supports up to 8 fragments)
     uint8_t  *buf;
-    size_t    buf_len;         // allocated size
-    size_t    data_len;        // total expected data length (known after first fragment)
+    size_t    buf_len;       // allocated size
+    size_t    data_len;      // total expected data length (known after last fragment arrives)
 } reassembly_t;
 
 static reassembly_t s_rx = {0};
@@ -186,7 +198,7 @@ esp_err_t split_config_sync_on_fragment(const uint8_t *src_mac,
     memcpy(key, frag->key, SPLIT_CONFIG_SYNC_KEY_LEN);
     key[SPLIT_CONFIG_SYNC_KEY_LEN] = '\0';
 
-    // New transfer or different (kind, key) → reset reassembly
+    // New transfer or different (kind, key) → reset and start fresh.
     if (!s_rx.active || s_rx.kind != frag->kind ||
         strncmp(s_rx.key, key, SPLIT_CONFIG_SYNC_KEY_LEN) != 0 ||
         s_rx.total != frag->fragment_total) {
@@ -197,7 +209,6 @@ esp_err_t split_config_sync_on_fragment(const uint8_t *src_mac,
         s_rx.active   = true;
         memcpy(s_rx.key, key, sizeof(s_rx.key));
 
-        // Allocate buffer for the full blob
         s_rx.buf_len = (size_t)frag->fragment_total * SPLIT_CONFIG_SYNC_DATA_MAX;
         s_rx.buf     = malloc(s_rx.buf_len);
         if (!s_rx.buf) {
@@ -212,17 +223,16 @@ esp_err_t split_config_sync_on_fragment(const uint8_t *src_mac,
         return ESP_ERR_INVALID_ARG;
     }
 
-    // Copy fragment data into reassembly buffer
     size_t offset = (size_t)frag->fragment_idx * SPLIT_CONFIG_SYNC_DATA_MAX;
     if (offset + data_len > s_rx.buf_len) {
-        ESP_LOGW(TAG, "fragment overflows buffer");
+        ESP_LOGW(TAG, "fragment overflows reassembly buffer");
         split_config_sync_reset();
         return ESP_ERR_INVALID_SIZE;
     }
     memcpy(s_rx.buf + offset, payload + SPLIT_CONFIG_SYNC_HDR_SIZE, data_len);
     s_rx.received |= (uint8_t)(1u << frag->fragment_idx);
 
-    // Track total data length from the last fragment
+    // Track total data length from the last fragment.
     if (frag->fragment_idx == frag->fragment_total - 1) {
         s_rx.data_len = offset + data_len;
     }
@@ -230,13 +240,12 @@ esp_err_t split_config_sync_on_fragment(const uint8_t *src_mac,
     ESP_LOGD(TAG, "rx fragment %u/%u kind=%u key=%s",
              frag->fragment_idx + 1, frag->fragment_total, frag->kind, key);
 
-    // Check if all fragments received
     uint8_t full_mask = (uint8_t)((1u << frag->fragment_total) - 1u);
     if ((s_rx.received & full_mask) != full_mask || s_rx.data_len == 0) {
-        return ESP_OK; // still waiting for more fragments
+        return ESP_OK; // Still waiting for more fragments.
     }
 
-    // All fragments received — write to NVS
+    // All fragments received — write to NVS.
     esp_err_t ret = cfgmod_write_storage((cfgmod_kind_t)s_rx.kind, s_rx.key,
                                           s_rx.buf, s_rx.data_len);
     if (ret == ESP_OK) {
@@ -247,7 +256,6 @@ esp_err_t split_config_sync_on_fragment(const uint8_t *src_mac,
                  s_rx.kind, s_rx.key, esp_err_to_name(ret));
     }
 
-    // Send ACK
     if (reply_mac && tx_seq) {
         split_config_sync_ack_payload_t ack = {
             .kind   = s_rx.kind,

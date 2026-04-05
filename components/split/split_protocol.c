@@ -61,7 +61,5 @@ bool split_protocol_parse_frame(const uint8_t *data, size_t len,
         *out_payload_len = payload_len;
     }
 
-    // TODO: MIC verification will be added with split_crypto
-
     return true;
 }

@@ -3,8 +3,14 @@
 
 #include <string.h>
 #include "esp_log.h"
+#include "esp_mac.h"
 
 #define TAG "SPLIT_ROLE"
+
+static split_role_t flip_role(split_role_t current)
+{
+    return (current == SPLIT_ROLE_MASTER) ? SPLIT_ROLE_SLAVE : SPLIT_ROLE_MASTER;
+}
 
 split_role_t split_role_decide(const uint8_t own_mac[6],
                                 const uint8_t peer_mac[6],
@@ -16,11 +22,11 @@ split_role_t split_role_decide(const uint8_t own_mac[6],
     bool peer_wants_master = (peer_pref == SPLIT_ROLE_MASTER);
     bool peer_wants_slave  = (peer_pref == SPLIT_ROLE_SLAVE);
 
-    // Unambiguous explicit preference
+    // Unambiguous explicit preference wins.
     if (own_wants_master && !peer_wants_master) return SPLIT_ROLE_MASTER;
     if (own_wants_slave  && !peer_wants_slave)  return SPLIT_ROLE_SLAVE;
 
-    // Tiebreaker: higher MAC = MASTER
+    // Tiebreaker: higher MAC = MASTER.
     int cmp = memcmp(own_mac, peer_mac, 6);
     split_role_t role = (cmp > 0) ? SPLIT_ROLE_MASTER : SPLIT_ROLE_SLAVE;
 
@@ -40,8 +46,8 @@ esp_err_t split_role_on_negotiate(const uint8_t *src_mac,
 
     const split_role_payload_t *p = (const split_role_payload_t *)payload;
 
-    ESP_LOGD(TAG, "ROLE_NEGOTIATE from %02X:%02X:%02X:%02X:%02X:%02X proposed_role=%u",
-            src_mac[0], src_mac[1], src_mac[2], src_mac[3], src_mac[4], src_mac[5], p->proposed_role);
+    ESP_LOGD(TAG, "ROLE_NEGOTIATE from " MACSTR " proposed_role=%u",
+             MAC2STR(src_mac), p->proposed_role);
 
     *out_role = split_role_decide(own_mac, src_mac, own_pref, p->proposed_role);
     return ESP_OK;
@@ -49,14 +55,10 @@ esp_err_t split_role_on_negotiate(const uint8_t *src_mac,
 
 void split_role_on_swap_req(split_role_t current_role, split_role_t *out_new_role)
 {
-    *out_new_role = (current_role == SPLIT_ROLE_MASTER)
-                   ? SPLIT_ROLE_SLAVE
-                   : SPLIT_ROLE_MASTER;
+    *out_new_role = flip_role(current_role);
 }
 
 void split_role_on_swap_ack(split_role_t current_role, split_role_t *out_new_role)
 {
-    *out_new_role = (current_role == SPLIT_ROLE_MASTER)
-                   ? SPLIT_ROLE_SLAVE
-                   : SPLIT_ROLE_MASTER;
+    *out_new_role = flip_role(current_role);
 }
