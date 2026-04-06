@@ -6,6 +6,7 @@
 
 #include "esp_err.h"
 #include "esp_now.h"
+#include "split_crypto.h"
 #include "split_protocol.h"
 
 /* =========================================================================
@@ -57,6 +58,20 @@ esp_err_t split_transport_init(void);
  * @brief Deinitialize the transport layer and release ESP-NOW resources.
  */
 esp_err_t split_transport_deinit(void);
+
+/**
+ * @brief Set (or clear) the AES-128-CCM session key used for all sends and receives.
+ *
+ * When a key is set every outgoing frame is encrypted and every incoming frame
+ * is authenticated before being dispatched to the registered protocol handler.
+ * Frames that fail authentication are silently dropped.
+ *
+ * Pass key=NULL to clear the key and revert to plaintext mode (used during
+ * pairing, when no shared secret has been established yet).
+ *
+ * @param key  16-byte AES-128 session key, or NULL to disable encryption.
+ */
+void split_transport_set_session_key(const uint8_t *key);
 
 /* =========================================================================
  * Protocol Registration

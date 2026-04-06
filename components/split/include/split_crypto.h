@@ -93,3 +93,24 @@ esp_err_t split_crypto_decrypt(const uint8_t key[SPLIT_CRYPTO_KEY_SIZE],
                                 const uint8_t *aad, size_t aad_len,
                                 uint8_t *buf, size_t len,
                                 const uint8_t mic[SPLIT_CRYPTO_MIC_SIZE]);
+
+/**
+ * @brief Derive a per-session AES-128 key from the long-term stored key and
+ *        two ephemeral nonces (one from each side).
+ *
+ * Formula: SHA-256(stored_key || nonce_a XOR nonce_b) → first 16 bytes.
+ *
+ * XOR makes the result symmetric — both sides arrive at the same key regardless
+ * of which nonce is "ours" and which is the "peer's".  A fresh nonce from at
+ * least one side guarantees a new key every session, providing per-session
+ * forward secrecy without re-pairing.
+ *
+ * @param stored_key  Long-term key from NVS (SPLIT_CRYPTO_KEY_SIZE bytes)
+ * @param nonce_a     First  ephemeral nonce  (SPLIT_CRYPTO_KEY_SIZE bytes)
+ * @param nonce_b     Second ephemeral nonce  (SPLIT_CRYPTO_KEY_SIZE bytes)
+ * @param out_key     Derived session key output (SPLIT_CRYPTO_KEY_SIZE bytes)
+ */
+esp_err_t split_crypto_derive_session_key(const uint8_t stored_key[SPLIT_CRYPTO_KEY_SIZE],
+                                           const uint8_t nonce_a[SPLIT_CRYPTO_KEY_SIZE],
+                                           const uint8_t nonce_b[SPLIT_CRYPTO_KEY_SIZE],
+                                           uint8_t out_key[SPLIT_CRYPTO_KEY_SIZE]);

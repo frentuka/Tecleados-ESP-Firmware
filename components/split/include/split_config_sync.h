@@ -5,6 +5,16 @@
 #include "esp_err.h"
 #include "cfgmod.h"
 
+/**
+ * @brief Sequence-number allocator callback.
+ *
+ * Callers must provide a thread-safe function that returns the next outgoing
+ * sequence number (typically next_seq() from splitmod.c, protected by a
+ * critical section).  Passing raw &s_tx_seq and doing (*tx_seq)++ inside this
+ * module would bypass that critical section on a dual-core ESP32-S3.
+ */
+typedef uint16_t (*split_seq_alloc_fn_t)(void);
+
 /* =========================================================================
  * Config kinds that are synced over split link
  *
@@ -29,13 +39,13 @@ extern const size_t             SPLIT_SYNC_ENTRY_COUNT;
  * @brief Push all syncable config entries to the slave (called on connect).
  *        Sends CONFIG_SYNC fragments for every entry in SPLIT_SYNC_ENTRIES.
  */
-esp_err_t split_config_sync_push_all(const uint8_t *peer_mac, uint16_t *tx_seq);
+esp_err_t split_config_sync_push_all(const uint8_t *peer_mac, split_seq_alloc_fn_t get_seq);
 
 /**
  * @brief Push a single (kind, key) entry to the slave.
  *        Called by the CONFIG_EVENT_KIND_UPDATED handler for incremental sync.
  */
-esp_err_t split_config_sync_push(const uint8_t *peer_mac, uint16_t *tx_seq,
+esp_err_t split_config_sync_push(const uint8_t *peer_mac, split_seq_alloc_fn_t get_seq,
                                   cfgmod_kind_t kind, const char *key);
 
 /**
@@ -54,7 +64,7 @@ void split_config_sync_on_ack(const uint8_t *payload, size_t len);
 esp_err_t split_config_sync_on_fragment(const uint8_t *src_mac,
                                          const uint8_t *payload, size_t len,
                                          const uint8_t *reply_mac,
-                                         uint16_t *tx_seq);
+                                         split_seq_alloc_fn_t get_seq);
 
 /**
  * @brief Reset any in-progress reassembly (call on disconnect).

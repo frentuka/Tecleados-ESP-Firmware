@@ -283,3 +283,36 @@ done:
     mbedtls_ccm_free(&ctx);
     return ret;
 }
+
+/* =========================================================================
+ * Per-session key derivation
+ * ========================================================================= */
+
+esp_err_t split_crypto_derive_session_key(const uint8_t stored_key[SPLIT_CRYPTO_KEY_SIZE],
+                                           const uint8_t nonce_a[SPLIT_CRYPTO_KEY_SIZE],
+                                           const uint8_t nonce_b[SPLIT_CRYPTO_KEY_SIZE],
+                                           uint8_t out_key[SPLIT_CRYPTO_KEY_SIZE])
+{
+    if (!stored_key || !nonce_a || !nonce_b || !out_key) return ESP_ERR_INVALID_ARG;
+
+    // kdf_input = stored_key || (nonce_a XOR nonce_b)
+    // XOR is commutative — both sides arrive at the same key regardless of which
+    // nonce is "ours" and which is the peer's.
+    uint8_t kdf_input[SPLIT_CRYPTO_KEY_SIZE * 2];
+    memcpy(kdf_input, stored_key, SPLIT_CRYPTO_KEY_SIZE);
+    for (int i = 0; i < SPLIT_CRYPTO_KEY_SIZE; i++) {
+        kdf_input[SPLIT_CRYPTO_KEY_SIZE + i] = nonce_a[i] ^ nonce_b[i];
+    }
+
+    uint8_t digest[32];
+    int rc = mbedtls_sha256(kdf_input, sizeof(kdf_input), digest, 0 /* SHA-256 */);
+    memset(kdf_input, 0, sizeof(kdf_input));
+
+    if (rc != 0) {
+        ESP_LOGE(TAG, "derive_session_key sha256: -0x%04X", (unsigned)(-rc));
+        return ESP_FAIL;
+    }
+
+    memcpy(out_key, digest, SPLIT_CRYPTO_KEY_SIZE);
+    return ESP_OK;
+}

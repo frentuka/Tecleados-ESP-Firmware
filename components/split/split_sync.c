@@ -112,37 +112,3 @@ esp_err_t split_sync_send_full_state(const uint8_t *peer_mac,
     return ret;
 }
 
-esp_err_t split_sync_send_delta(const uint8_t *peer_mac,
-                                 const uint8_t *old_matrix,
-                                 const uint8_t *new_matrix,
-                                 uint8_t active_layer,
-                                 uint16_t seq)
-{
-    // Build the payload: fixed header struct followed by changed byte values.
-    uint8_t buf[sizeof(split_key_state_delta_payload_t) + SPLIT_MATRIX_BYTES];
-    split_key_state_delta_payload_t *hdr = (split_key_state_delta_payload_t *)buf;
-
-    hdr->active_layer = active_layer;
-
-    uint16_t mask     = 0;
-    uint8_t  n_values = 0;
-    uint8_t *values   = buf + sizeof(split_key_state_delta_payload_t);
-
-    for (int i = 0; i < SPLIT_MATRIX_BYTES; i++) {
-        if (old_matrix[i] != new_matrix[i]) {
-            mask |= (uint16_t)(1u << i);
-            values[n_values++] = new_matrix[i];
-        }
-    }
-
-    hdr->changed_mask = mask;
-
-    size_t payload_len = sizeof(split_key_state_delta_payload_t) + n_values;
-    esp_err_t ret = split_transport_send(peer_mac, SPLIT_PROTO_SPLIT,
-                                         SPLIT_MSG_KEY_STATE_DELTA, seq,
-                                         buf, payload_len);
-    if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "send DELTA failed: %s", esp_err_to_name(ret));
-    }
-    return ret;
-}

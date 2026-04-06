@@ -1,5 +1,6 @@
 #include "split_transport.h"
 #include "split_protocol.h"
+#include "split_crypto.h"
 
 #include <string.h>
 
@@ -27,6 +28,10 @@ static uint8_t                 s_handler_count = 0;
 static split_transport_send_cb_t s_send_cb     = NULL;
 static bool                    s_initialized   = false;
 
+// Session key for AES-128-CCM.  Zeroed = plaintext mode (during pairing).
+static uint8_t                 s_session_key[SPLIT_CRYPTO_KEY_SIZE] = {0};
+static bool                    s_session_key_set                    = false;
+
 /* =========================================================================
  * ESP-NOW Callbacks (called from WiFi task context)
  * ========================================================================= */
@@ -34,23 +39,40 @@ static bool                    s_initialized   = false;
 static void on_espnow_recv(const esp_now_recv_info_t *info,
                            const uint8_t *data, int len)
 {
-    if (!data || len < (int)SPLIT_FRAME_OVERHEAD) {
+    if (!data || len < (int)SPLIT_FRAME_OVERHEAD || (size_t)len > SPLIT_ESP_NOW_MAX) {
         return;
     }
 
+    // Work on a mutable copy: decryption operates in-place, and data is const.
+    uint8_t frame_buf[SPLIT_ESP_NOW_MAX];
+    memcpy(frame_buf, data, (size_t)len);
+
     split_frame_header_t header;
-    const uint8_t *payload = NULL;
     size_t payload_len = 0;
 
-    if (!split_protocol_parse_frame(data, (size_t)len, &header, &payload, &payload_len)) {
+    if (!split_protocol_parse_frame(frame_buf, (size_t)len, &header, NULL, &payload_len)) {
         ESP_LOGD(TAG, "dropped invalid frame from " MACSTR, MAC2STR(info->src_addr));
         return;
     }
 
-    // MIC is the last SPLIT_FRAME_MIC_SIZE bytes of the raw frame
-    const uint8_t *mic = data + SPLIT_FRAME_HEADER_SIZE + payload_len;
+    uint8_t       *payload = frame_buf + SPLIT_FRAME_HEADER_SIZE;
+    const uint8_t *mic     = frame_buf + SPLIT_FRAME_HEADER_SIZE + payload_len;
 
-    // Dispatch to registered protocol handler
+    if (s_session_key_set) {
+        // header bytes are the AAD (authenticated, not encrypted).
+        esp_err_t crypt_ret = split_crypto_decrypt(s_session_key, header.seq,
+                                                   frame_buf, SPLIT_FRAME_HEADER_SIZE,
+                                                   payload, payload_len, mic);
+        if (crypt_ret != ESP_OK) {
+            ESP_LOGD(TAG, "decrypt/auth failed from " MACSTR " (seq=%u) — dropped",
+                     MAC2STR(info->src_addr), header.seq);
+            return;
+        }
+    }
+
+    // Dispatch to registered protocol handler.
+    // MIC has already been verified above (or the frame is legitimately plaintext);
+    // pass the in-frame bytes to satisfy the callback signature.
     for (int i = 0; i < s_handler_count; i++) {
         if (s_handlers[i].proto_id == header.proto) {
             s_handlers[i].cb(info->src_addr, header.type, header.seq,
@@ -182,6 +204,8 @@ esp_err_t split_transport_deinit(void)
     s_handler_count = 0;
     s_send_cb = NULL;
     s_initialized = false;
+    memset(s_session_key, 0, SPLIT_CRYPTO_KEY_SIZE);
+    s_session_key_set = false;
 
     ESP_LOGI(TAG, "ESP-NOW transport deinitialized");
     return ESP_OK;
@@ -214,6 +238,19 @@ void split_transport_set_send_cb(split_transport_send_cb_t cb)
     s_send_cb = cb;
 }
 
+void split_transport_set_session_key(const uint8_t *key)
+{
+    if (key) {
+        memcpy(s_session_key, key, SPLIT_CRYPTO_KEY_SIZE);
+        s_session_key_set = true;
+        ESP_LOGD(TAG, "session key set — encryption enabled");
+    } else {
+        memset(s_session_key, 0, SPLIT_CRYPTO_KEY_SIZE);
+        s_session_key_set = false;
+        ESP_LOGD(TAG, "session key cleared — plaintext mode");
+    }
+}
+
 esp_err_t split_transport_send(const uint8_t *dst_mac,
                                uint8_t proto_id, uint8_t type, uint16_t seq,
                                const uint8_t *payload, size_t payload_len)
@@ -227,6 +264,20 @@ esp_err_t split_transport_send(const uint8_t *dst_mac,
                                                    payload, payload_len);
     if (frame_len == 0) {
         return ESP_ERR_INVALID_ARG;
+    }
+
+    if (s_session_key_set) {
+        // Encrypt payload in-place; fill the MIC trailer that build_frame zeroed.
+        uint8_t *enc_payload = frame_buf + SPLIT_FRAME_HEADER_SIZE;
+        uint8_t *mic_out     = frame_buf + SPLIT_FRAME_HEADER_SIZE + payload_len;
+        esp_err_t crypt_ret  = split_crypto_encrypt(s_session_key, seq,
+                                                    frame_buf, SPLIT_FRAME_HEADER_SIZE,
+                                                    enc_payload, payload_len,
+                                                    mic_out);
+        if (crypt_ret != ESP_OK) {
+            ESP_LOGE(TAG, "encrypt failed: %s", esp_err_to_name(crypt_ret));
+            return crypt_ret;
+        }
     }
 
     return esp_now_send(dst_mac, frame_buf, frame_len);

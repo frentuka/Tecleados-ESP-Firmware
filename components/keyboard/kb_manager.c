@@ -224,17 +224,15 @@ static void kb_manager_task(void *arg) {
         kb_matrix_scan(s_raw_matrix);
 
         /* Merge injected test keys (or clear them if USB is gone) */
+        portENTER_CRITICAL(&s_injected_matrix_lock);
         if (tud_suspended() || !tud_ready()) {
-            portENTER_CRITICAL(&s_injected_matrix_lock);
             memset(s_injected_matrix, 0, sizeof(s_injected_matrix));
-            portEXIT_CRITICAL(&s_injected_matrix_lock);
         } else {
-            portENTER_CRITICAL(&s_injected_matrix_lock);
             for (size_t i = 0; i < sizeof(s_raw_matrix); i++) {
                 s_raw_matrix[i] |= s_injected_matrix[i];
             }
-            portEXIT_CRITICAL(&s_injected_matrix_lock);
         }
+        portEXIT_CRITICAL(&s_injected_matrix_lock);
 
         debounce_update(s_raw_matrix, s_matrix);
 

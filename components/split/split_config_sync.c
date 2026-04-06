@@ -38,13 +38,13 @@ const size_t SPLIT_SYNC_ENTRY_COUNT =
 
 // Send one fragment with retry. Paces the send with a short delay on success
 // to avoid flooding the ESP-NOW TX queue when pushing many fragments.
-static esp_err_t send_fragment_with_retry(const uint8_t *peer_mac, uint16_t *tx_seq,
+static esp_err_t send_fragment_with_retry(const uint8_t *peer_mac, split_seq_alloc_fn_t get_seq,
                                            const uint8_t *frame, size_t frame_len,
                                            uint8_t idx, uint8_t total)
 {
     for (int attempt = 0; attempt < SPLIT_CFG_SEND_RETRIES; attempt++) {
         esp_err_t ret = split_transport_send(peer_mac, SPLIT_PROTO_SPLIT,
-                                             SPLIT_MSG_CONFIG_SYNC, (*tx_seq)++,
+                                             SPLIT_MSG_CONFIG_SYNC, get_seq(),
                                              frame, frame_len);
         if (ret == ESP_OK) {
             // Space out fragments to avoid filling the MAC TX queue and causing
@@ -66,10 +66,10 @@ static esp_err_t send_fragment_with_retry(const uint8_t *peer_mac, uint16_t *tx_
  * MASTER — send fragments for one (kind, key) blob
  * ========================================================================= */
 
-esp_err_t split_config_sync_push(const uint8_t *peer_mac, uint16_t *tx_seq,
+esp_err_t split_config_sync_push(const uint8_t *peer_mac, split_seq_alloc_fn_t get_seq,
                                   cfgmod_kind_t kind, const char *key)
 {
-    if (!peer_mac || !tx_seq || !key) return ESP_ERR_INVALID_ARG;
+    if (!peer_mac || !get_seq || !key) return ESP_ERR_INVALID_ARG;
 
     // cfgmod_read_storage requires a pre-allocated buffer; we pass the protocol
     // maximum so any blob that fits within the fragmentation scheme can be read
@@ -113,7 +113,7 @@ esp_err_t split_config_sync_push(const uint8_t *peer_mac, uint16_t *tx_seq,
         strncpy((char *)hdr->key, key, SPLIT_CONFIG_SYNC_KEY_LEN - 1);
         memcpy(frame + SPLIT_CONFIG_SYNC_HDR_SIZE, blob + offset, chunk_len);
 
-        ret = send_fragment_with_retry(peer_mac, tx_seq,
+        ret = send_fragment_with_retry(peer_mac, get_seq,
                                        frame, SPLIT_CONFIG_SYNC_HDR_SIZE + chunk_len,
                                        idx, total_fragments);
         if (ret != ESP_OK) {
@@ -126,11 +126,11 @@ esp_err_t split_config_sync_push(const uint8_t *peer_mac, uint16_t *tx_seq,
     return ESP_OK;
 }
 
-esp_err_t split_config_sync_push_all(const uint8_t *peer_mac, uint16_t *tx_seq)
+esp_err_t split_config_sync_push_all(const uint8_t *peer_mac, split_seq_alloc_fn_t get_seq)
 {
     ESP_LOGI(TAG, "pushing %u config entries to slave", (unsigned)SPLIT_SYNC_ENTRY_COUNT);
     for (size_t i = 0; i < SPLIT_SYNC_ENTRY_COUNT; i++) {
-        esp_err_t ret = split_config_sync_push(peer_mac, tx_seq,
+        esp_err_t ret = split_config_sync_push(peer_mac, get_seq,
                                                 SPLIT_SYNC_ENTRIES[i].kind,
                                                 SPLIT_SYNC_ENTRIES[i].key);
         if (ret != ESP_OK) {
@@ -186,7 +186,7 @@ void split_config_sync_reset(void)
 esp_err_t split_config_sync_on_fragment(const uint8_t *src_mac,
                                          const uint8_t *payload, size_t len,
                                          const uint8_t *reply_mac,
-                                         uint16_t *tx_seq)
+                                         split_seq_alloc_fn_t get_seq)
 {
     (void)src_mac;
     if (len < SPLIT_CONFIG_SYNC_HDR_SIZE) return ESP_ERR_INVALID_SIZE;
@@ -256,14 +256,14 @@ esp_err_t split_config_sync_on_fragment(const uint8_t *src_mac,
                  s_rx.kind, s_rx.key, esp_err_to_name(ret));
     }
 
-    if (reply_mac && tx_seq) {
+    if (reply_mac && get_seq) {
         split_config_sync_ack_payload_t ack = {
             .kind   = s_rx.kind,
             .status = (ret == ESP_OK) ? 0 : 1,
         };
         memcpy(ack.key, s_rx.key, SPLIT_CONFIG_SYNC_KEY_LEN);
         split_transport_send(reply_mac, SPLIT_PROTO_SPLIT, SPLIT_MSG_CONFIG_SYNC_ACK,
-                             (*tx_seq)++, (const uint8_t *)&ack, sizeof(ack));
+                             get_seq(), (const uint8_t *)&ack, sizeof(ack));
     }
 
     split_config_sync_reset();
