@@ -1,4 +1,64 @@
-# Power Management — enables esp_pm_configure() and light-sleep via FreeRTOS tickless idle.
+# mbedTLS hardware AES acceleration is disabled here because the ESP32-S3 hardware AES
+# driver internally allocates DMA descriptors from internal SRAM heap. With BLE (NimBLE)
+# and WiFi (ESP-NOW) both active, internal SRAM is too scarce (~7 KB) for those
+# per-call allocations to succeed reliably. Software AES uses CPU registers only — no
+# heap, no DMA — and is fast enough for the <250-byte frames this firmware encrypts.
+CONFIG_MBEDTLS_HARDWARE_AES=n
+
+# ── NimBLE memory tuning ──────────────────────────────────────────────────────
+#
+# Baseline (generated defaults):
+#   MAX_CONNECTIONS=9, MSYS1=128×256=32 KB, MSYS2=64×320=20 KB,
+#   ACL_FROM_LL=64×255=16 KB, EVT=64×70=4.5 KB  →  ~73 KB internal SRAM
+#
+# This is a HID keyboard: reports are ≤20 bytes, 1 active host at a time.
+# Tuned targets — approximate savings per pool vs. defaults:
+#
+#   MAX_CONNECTIONS  9 → 3    host conn structs  ~3 KB
+#   MSYS_1          128 → 24  32 KB → 6 KB      ~26 KB
+#   MSYS_2           64 → 8   20 KB → 2.5 KB    ~17.5 KB
+#   ACL_FROM_LL      64 → 10  16 KB → 2.5 KB    ~13.5 KB
+#   EVT              64 → 16   4.5 KB → 1.1 KB   ~3.4 KB
+#   MAX_CCCDS        40 → 15  (small structs)    ~0.3 KB
+#   ATT_PREP          64 → 4  (small structs)    ~0.5 KB
+#   WHITELIST        12 → 9   (match MAX_BONDS)  negligible
+#
+# Total estimated savings: ~64 KB of internal SRAM returned to the heap.
+#
+# If BLE becomes unstable (assert/mbuf alloc failed in logs), increment the
+# block counts in steps of 4 until stable.
+
+# Max simultaneous connections — 3 is generous for any keyboard use case.
+# MAX_BONDS stays at 9 (stored in NVS, negligible RAM cost).
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=3
+CONFIG_BT_NIMBLE_WHITELIST_SIZE=9
+
+# MSYS mbuf pools — the dominant RAM consumers.
+# MSYS1 (small): HCI commands, ATT PDUs, HID reports (all well under 256 B).
+# MSYS2 (large): initial descriptor exchange and connection setup bursts.
+# After connection is established the keyboard only ever sends tiny reports,
+# so the pool drains quickly and blocks are recycled.
+CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT=24
+CONFIG_BT_NIMBLE_MSYS_2_BLOCK_COUNT=8
+
+# ACL buffers between LL controller and host.  One or two in-flight per
+# connection is typical for HID; 10 gives headroom for 3 concurrent.
+CONFIG_BT_NIMBLE_TRANSPORT_ACL_FROM_LL_COUNT=10
+
+# HCI event buffers.  Once connections are up the event rate is very low
+# (mostly connection-parameter and security events).
+CONFIG_BT_NIMBLE_TRANSPORT_EVT_COUNT=16
+CONFIG_BT_NIMBLE_TRANSPORT_EVT_DISCARD_COUNT=4
+
+# CCCDs (client characteristic config descriptors).  A keyboard HID profile
+# needs ~4–5 per connection (keyboard report, boot report, battery, consumer).
+# 15 = 5 × 3 connections with a small buffer.
+CONFIG_BT_NIMBLE_MAX_CCCDS=15
+
+# ATT prepared-write queue.  Long writes are never used by HID.  Minimum = 1.
+CONFIG_BT_NIMBLE_ATT_MAX_PREP_ENTRIES=4
+
+# ── Power Management — enables esp_pm_configure() and light-sleep via FreeRTOS tickless idle.
 # Required by the split module's SLAVE power-save profile (split_pm.h).
 CONFIG_PM_ENABLE=y
 

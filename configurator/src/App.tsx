@@ -175,6 +175,10 @@ function App() {
             splitState={deviceStatus?.split_state ?? 0}
             splitRole={deviceStatus?.split_role ?? 0}
             onOfflineClick={handleConnect}
+            onBleToggleRouting={() => hidService.bleToggleRouting()}
+            onBleConnect={p => hidService.bleConnect(p)}
+            onBleToggleConn={p => hidService.bleToggleConn(p)}
+            onBlePair={p => hidService.blePair(p)}
           />
         </div>
 

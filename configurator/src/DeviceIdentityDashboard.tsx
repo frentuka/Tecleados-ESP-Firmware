@@ -16,6 +16,8 @@ const DEFAULT_IDENTITY: DeviceIdentity = {
     is_split: false,
     split_col_offset: 0,
     split_variant: '',
+    ble_shared_name: '',
+    ble_shared_addr: '',
 };
 
 // ── Component ──────────────────────────────────────────────────────────────────
@@ -29,10 +31,12 @@ const DeviceIdentityDashboard: React.FC<DeviceIdentityDashboardProps> = ({ isCon
     const [saveResult, setSaveResult] = useState<'ok' | 'err' | null>(null);
 
     const isDirty =
-        draft.device_name     !== saved.device_name     ||
-        draft.is_split        !== saved.is_split         ||
-        draft.split_col_offset !== saved.split_col_offset ||
-        draft.split_variant   !== saved.split_variant;
+        draft.device_name      !== saved.device_name      ||
+        draft.is_split         !== saved.is_split          ||
+        draft.split_col_offset !== saved.split_col_offset  ||
+        draft.split_variant    !== saved.split_variant     ||
+        draft.ble_shared_name  !== saved.ble_shared_name   ||
+        draft.ble_shared_addr  !== saved.ble_shared_addr;
 
     // ── Fetch ──────────────────────────────────────────────────────────────
 
@@ -69,7 +73,7 @@ const DeviceIdentityDashboard: React.FC<DeviceIdentityDashboardProps> = ({ isCon
         setSaveResult(ok ? 'ok' : 'err');
         if (ok) {
             setSaved(draft);
-            onLog(`Device Identity: saved (name="${draft.device_name}", split=${draft.is_split}, offset=${draft.split_col_offset}, variant="${draft.split_variant}")`);
+            onLog(`Device Identity: saved (name="${draft.device_name}", ble_name="${draft.ble_shared_name}", split=${draft.is_split})`);
         } else {
             onLog('Device Identity: save failed');
         }
@@ -187,6 +191,53 @@ const DeviceIdentityDashboard: React.FC<DeviceIdentityDashboardProps> = ({ isCon
                                 />
                             </FieldGroup>
                         </div>
+                    </Section>
+
+                    {/* ── BLE Identity (Split) ───────────────────────── */}
+                    <Section label="BLE Identity (Split)">
+                        <p style={{ ...hintStyle, marginTop: 0, marginBottom: 12 }}>
+                            Set these to the same values on both halves so they share one BLE identity.
+                            The host will reconnect automatically when roles swap.
+                        </p>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                            <FieldGroup
+                                label="BLE Name"
+                                hint="Overrides Device Name in BLE advertisements. Leave blank to use Device Name."
+                            >
+                                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                                    <input
+                                        id="di-ble-shared-name"
+                                        type="text"
+                                        maxLength={31}
+                                        value={draft.ble_shared_name}
+                                        onChange={e => setField('ble_shared_name', e.target.value)}
+                                        placeholder={draft.device_name || 'Antigravity KB'}
+                                        style={inputStyle}
+                                    />
+                                    <span style={{ fontSize: 11, opacity: 0.4, whiteSpace: 'nowrap' }}>
+                                        {draft.ble_shared_name.length}/31
+                                    </span>
+                                </div>
+                            </FieldGroup>
+
+                            <FieldGroup
+                                label="BLE MAC Address"
+                                hint='Shared static random address base, e.g. "C2:13:57:9B:EF:01". Leave blank for auto. Set bit 7+6 of first byte for Static Random type (e.g. C2:…).'
+                            >
+                                <input
+                                    id="di-ble-shared-addr"
+                                    type="text"
+                                    maxLength={17}
+                                    value={draft.ble_shared_addr}
+                                    onChange={e => setField('ble_shared_addr', e.target.value.toUpperCase())}
+                                    placeholder="AA:BB:CC:DD:EE:FF"
+                                    style={{ ...inputStyle, fontFamily: 'monospace', letterSpacing: 1 }}
+                                />
+                            </FieldGroup>
+                        </div>
+                        <p style={{ ...hintStyle, marginTop: 10 }}>
+                            Changes take effect after restarting both halves.
+                        </p>
                     </Section>
 
                     {/* ── Apply button ─────────────────────────────────── */}

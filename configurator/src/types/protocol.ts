@@ -32,6 +32,13 @@ export const MODULE_SYSTEM = 0x01;
 export const MODULE_ACTION = 0x02;
 export const MODULE_STATUS = 0x03;
 export const MODULE_SPLIT  = 0x04;
+export const MODULE_BLE    = 0x05;
+
+// ── BLE Commands (MODULE_BLE payload byte 0) ────────────────────────────────
+export const BLE_CMD_TOGGLE_ROUTING = 0x01; // Toggle BLE on/off
+export const BLE_CMD_PAIR           = 0x02; // [cmd, profile_id]
+export const BLE_CMD_CONNECT        = 0x03; // [cmd, profile_id]
+export const BLE_CMD_TOGGLE_CONN    = 0x04; // [cmd, profile_id]
 
 // ── Split Commands (MODULE_SPLIT payload byte 0) ────────────────────────
 export const SPLIT_CMD_START_PAIRING  = 0x01; // [cmd, timeout_ms_le32 (opt)]

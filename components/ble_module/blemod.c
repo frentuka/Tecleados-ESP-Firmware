@@ -312,15 +312,27 @@ static void ble_hid_advertise(void) {
   // Stop any existing advertising first
   ble_gap_adv_stop();
 
-  // Generate a Static Random Address derived from the public MAC + profile ID
-  uint8_t base_mac[6] = {0};
-  ble_hs_id_copy_addr(BLE_ADDR_PUBLIC, base_mac, NULL);
-
+  // Generate a Static Random Address.
+  // If a shared BLE address is configured (for split keyboards so both halves share
+  // the same BLE identity), use that as the base. Otherwise derive from public MAC.
   uint8_t rand_addr[6];
-  memcpy(rand_addr, base_mac, 6);
+  cfg_system_t sys_for_addr;
+  bool use_shared = false;
+  if (cfg_system_get(&sys_for_addr) == ESP_OK) {
+      for (int i = 0; i < 6; i++) {
+          if (sys_for_addr.ble_shared_addr[i]) { use_shared = true; break; }
+      }
+  }
+  if (use_shared) {
+      memcpy(rand_addr, sys_for_addr.ble_shared_addr, 6);
+  } else {
+      uint8_t base_mac[6] = {0};
+      ble_hs_id_copy_addr(BLE_ADDR_PUBLIC, base_mac, NULL);
+      memcpy(rand_addr, base_mac, 6);
+  }
   rand_addr[5] |= 0xC0; // Set highest 2 bits of MSB for Static Random Address type
 
-  // Rotate LSB based on profile ID AND nonce to change identity on re-pair
+  // Rotate LSB based on profile ID AND nonce to change identity on re-pair.
   rand_addr[0] = (rand_addr[0] + active_profile + st->profiles[active_profile].addr_nonce) & 0xFF;
 
   rc = ble_hs_id_set_rnd(rand_addr);
@@ -440,10 +452,15 @@ void ble_hid_init(void) {
   ble_hid_svc_register();
 
   // 6. Set device name and appearance (GAP)
+  // Priority: ble_shared_name (split identity) > device_name > compile-time fallback.
   cfg_system_t sys;
   const char *dev_name = BLE_DEVICE_NAME; // fallback
-  if (cfg_system_get(&sys) == ESP_OK && sys.device_name[0] != '\0') {
-      dev_name = sys.device_name;
+  if (cfg_system_get(&sys) == ESP_OK) {
+      if (sys.ble_shared_name[0] != '\0') {
+          dev_name = sys.ble_shared_name;
+      } else if (sys.device_name[0] != '\0') {
+          dev_name = sys.device_name;
+      }
   }
   ret = ble_svc_gap_device_name_set(dev_name);
   assert(ret == 0);

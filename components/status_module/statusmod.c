@@ -142,6 +142,17 @@ static void status_on_split_event(void *arg, esp_event_base_t base,
     case SPLIT_EVENT_PAIR_FAILED:
         s_cache.split_state = (uint8_t)SPLIT_STATE_IDLE;
         break;
+    case SPLIT_EVENT_BLE_STATUS_UPDATED: {
+        // Master pushed its live BLE state — use it so the slave configurator
+        // shows the correct mode/profile/bitmap instead of stale local values.
+        const split_ble_status_t *bst = (const split_ble_status_t *)data;
+        s_cache.transport_mode   = bst->routing_active ? 1 : 0;
+        s_cache.selected_profile = bst->selected_profile;
+        s_cache.connected_bitmap = bst->connected_bitmap;
+        s_cache.pairing_profile  = (bst->pairing_profile < 0)
+                                   ? 0xFF : (uint8_t)bst->pairing_profile;
+        break;
+    }
     case SPLIT_EVENT_STALE:
     case SPLIT_EVENT_STALE_RECOVERED:
         // State hasn't changed — just re-push so configurator sees it

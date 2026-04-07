@@ -2,6 +2,7 @@
 #include "cJSON.h"
 #include "cfgmod.h"
 #include <string.h>
+#include <stdio.h>
 
 
 static cfg_system_t s_sys;
@@ -19,17 +20,21 @@ static void sys_default(void *out_struct) {
   s->is_split = false;
   s->split_col_offset = 0;
   s->split_variant[0] = '\0';
+  s->ble_shared_name[0] = '\0';
+  memset(s->ble_shared_addr, 0, sizeof(s->ble_shared_addr));
 }
 
 static bool sys_deserialize(cJSON *root, void *out_struct) {
   cfg_system_t *s = (cfg_system_t *)out_struct;
-  cJSON *name     = cJSON_GetObjectItem(root, "name");
-  cJSON *sleep    = cJSON_GetObjectItem(root, "sleep");
-  cJSON *rgb      = cJSON_GetObjectItem(root, "rgb_brightness");
-  cJSON *bt       = cJSON_GetObjectItem(root, "bt_en");
-  cJSON *is_split = cJSON_GetObjectItem(root, "is_split");
-  cJSON *offset   = cJSON_GetObjectItem(root, "split_col_offset");
-  cJSON *variant  = cJSON_GetObjectItem(root, "split_variant");
+  cJSON *name       = cJSON_GetObjectItem(root, "name");
+  cJSON *sleep      = cJSON_GetObjectItem(root, "sleep");
+  cJSON *rgb        = cJSON_GetObjectItem(root, "rgb_brightness");
+  cJSON *bt         = cJSON_GetObjectItem(root, "bt_en");
+  cJSON *is_split   = cJSON_GetObjectItem(root, "is_split");
+  cJSON *offset     = cJSON_GetObjectItem(root, "split_col_offset");
+  cJSON *variant    = cJSON_GetObjectItem(root, "split_variant");
+  cJSON *ble_name   = cJSON_GetObjectItem(root, "ble_shared_name");
+  cJSON *ble_addr   = cJSON_GetObjectItem(root, "ble_shared_addr");
 
   if (cJSON_IsString(name)) {
     strncpy(s->device_name, name->valuestring, sizeof(s->device_name) - 1);
@@ -49,6 +54,17 @@ static bool sys_deserialize(cJSON *root, void *out_struct) {
     strncpy(s->split_variant, variant->valuestring, sizeof(s->split_variant) - 1);
     s->split_variant[sizeof(s->split_variant) - 1] = '\0';
   }
+  if (cJSON_IsString(ble_name)) {
+    strncpy(s->ble_shared_name, ble_name->valuestring, sizeof(s->ble_shared_name) - 1);
+    s->ble_shared_name[sizeof(s->ble_shared_name) - 1] = '\0';
+  }
+  if (cJSON_IsString(ble_addr) && strlen(ble_addr->valuestring) == 17) {
+    unsigned int b[6];
+    if (sscanf(ble_addr->valuestring, "%02X:%02X:%02X:%02X:%02X:%02X",
+               &b[0], &b[1], &b[2], &b[3], &b[4], &b[5]) == 6) {
+      for (int i = 0; i < 6; i++) s->ble_shared_addr[i] = (uint8_t)b[i];
+    }
+  }
 
   return true;
 }
@@ -66,6 +82,20 @@ static cJSON *sys_serialize(const void *in_struct) {
   cJSON_AddBoolToObject(root, "is_split", s->is_split);
   cJSON_AddNumberToObject(root, "split_col_offset", (double)s->split_col_offset);
   cJSON_AddStringToObject(root, "split_variant", s->split_variant);
+  cJSON_AddStringToObject(root, "ble_shared_name", s->ble_shared_name);
+  // Serialize zero address as empty string so the UI can tell "not configured"
+  // from a real address. All-zero address is not a valid static random address anyway.
+  bool addr_nonzero = false;
+  for (int i = 0; i < 6; i++) { if (s->ble_shared_addr[i]) { addr_nonzero = true; break; } }
+  if (addr_nonzero) {
+    char addr_str[18];
+    snprintf(addr_str, sizeof(addr_str), "%02X:%02X:%02X:%02X:%02X:%02X",
+             s->ble_shared_addr[0], s->ble_shared_addr[1], s->ble_shared_addr[2],
+             s->ble_shared_addr[3], s->ble_shared_addr[4], s->ble_shared_addr[5]);
+    cJSON_AddStringToObject(root, "ble_shared_addr", addr_str);
+  } else {
+    cJSON_AddStringToObject(root, "ble_shared_addr", "");
+  }
 
   return root;
 }

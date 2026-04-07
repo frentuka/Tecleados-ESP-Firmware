@@ -32,6 +32,11 @@ import {
     SPLIT_CMD_RUN_BENCH,
     SPLIT_CMD_GET_BENCH,
     CFG_KEY_SYSTEM,
+    MODULE_BLE,
+    BLE_CMD_TOGGLE_ROUTING,
+    BLE_CMD_PAIR,
+    BLE_CMD_CONNECT,
+    BLE_CMD_TOGGLE_CONN,
 } from '../types/protocol';
 
 import type { CommandResponse, DeviceStatus } from '../types/device';
@@ -40,10 +45,14 @@ import type { CustomKey } from '../types/customKeys';
 
 // ── Device Identity ─────────────────────────────────────────────────────────
 export interface DeviceIdentity {
-    device_name: string;       // BLE advertised name
+    device_name: string;       // BLE advertised name (per-device fallback)
     is_split: boolean;         // Whether this unit is part of a split keyboard
     split_col_offset: number;  // int8: added to raw col when is_split is true
     split_variant: string;     // e.g. "Left", "Right", "Numpad"
+    // Shared BLE identity — set the same values on both halves so they present
+    // as one device to the host and can hand off BLE connections on role swap.
+    ble_shared_name: string;   // BLE advertised name override (empty = use device_name)
+    ble_shared_addr: string;   // Shared static random BLE address "AA:BB:CC:DD:EE:FF" (empty = auto)
 }
 
 // Re-export transport for backward compatibility
@@ -210,6 +219,38 @@ export class DeviceController {
         return null;
     }
 
+    // ── BLE commands ───────────────────────────────────────────────────────
+    // These work regardless of which half is USB-connected: if the connected
+    // device is the slave it forwards the command to master over the split link.
+
+    public async bleToggleRouting(): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        return this.transport.sendCustomCommReport(
+            new Uint8Array([MODULE_BLE, BLE_CMD_TOGGLE_ROUTING])
+        );
+    }
+
+    public async blePair(profileId: number): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        return this.transport.sendCustomCommReport(
+            new Uint8Array([MODULE_BLE, BLE_CMD_PAIR, profileId])
+        );
+    }
+
+    public async bleConnect(profileId: number): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        return this.transport.sendCustomCommReport(
+            new Uint8Array([MODULE_BLE, BLE_CMD_CONNECT, profileId])
+        );
+    }
+
+    public async bleToggleConn(profileId: number): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        return this.transport.sendCustomCommReport(
+            new Uint8Array([MODULE_BLE, BLE_CMD_TOGGLE_CONN, profileId])
+        );
+    }
+
     // ── Device Identity ─────────────────────────────────────────────────────
 
     public async fetchDeviceIdentity(): Promise<DeviceIdentity | null> {
@@ -220,10 +261,12 @@ export class DeviceController {
             try {
                 const d = JSON.parse(resp.jsonText);
                 return {
-                    device_name:      d.name          ?? 'Antigravity KB',
-                    is_split:         d.is_split       ?? false,
-                    split_col_offset: d.split_col_offset ?? 0,
-                    split_variant:    d.split_variant  ?? '',
+                    device_name:      d.name             ?? 'Antigravity KB',
+                    is_split:         d.is_split          ?? false,
+                    split_col_offset: d.split_col_offset  ?? 0,
+                    split_variant:    d.split_variant     ?? '',
+                    ble_shared_name:  d.ble_shared_name   ?? '',
+                    ble_shared_addr:  d.ble_shared_addr   ?? '',
                 };
             } catch (e) {
                 console.error('fetchDeviceIdentity parse error:', e);
@@ -239,6 +282,8 @@ export class DeviceController {
             is_split:         identity.is_split,
             split_col_offset: identity.split_col_offset,
             split_variant:    identity.split_variant,
+            ble_shared_name:  identity.ble_shared_name,
+            ble_shared_addr:  identity.ble_shared_addr.toUpperCase(),
         };
         const jsonBytes = new TextEncoder().encode(JSON.stringify(payload));
         const buf = new Uint8Array(3 + jsonBytes.length);

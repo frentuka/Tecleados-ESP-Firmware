@@ -4,7 +4,8 @@
 #include <stdlib.h>
 
 #include "esp_log.h"
-#include "esp_heap_caps.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 #include "mbedtls/ecdh.h"
 #include "mbedtls/entropy.h"
@@ -13,6 +14,30 @@
 #include "mbedtls/ccm.h"
 
 #define TAG "SPLIT_CR"
+
+/* Maximum ESP-NOW payload that will ever be encrypted/decrypted:
+ * SPLIT_ESP_NOW_MAX(250) - SPLIT_FRAME_OVERHEAD(10) = 240 bytes.
+ * Defined locally so split_crypto.c doesn't depend on split_protocol.h. */
+#define CRYPTO_BUF_MAX 240
+
+/* Single static DMA-capable bounce buffer shared by encrypt and decrypt.
+ * Protected by a binary semaphore so concurrent calls from the WiFi task and
+ * split_task cannot race.  Eliminates all per-call DMA heap allocations —
+ * avoids fragmentation failures when internal SRAM is tight (BLE + WiFi). */
+static uint8_t           s_dma_buf[CRYPTO_BUF_MAX];
+static SemaphoreHandle_t s_dma_sem = NULL;
+static portMUX_TYPE      s_init_mux = portMUX_INITIALIZER_UNLOCKED;
+
+static void ensure_dma_sem(void)
+{
+    if (s_dma_sem) return;
+    portENTER_CRITICAL(&s_init_mux);
+    if (!s_dma_sem) {
+        s_dma_sem = xSemaphoreCreateBinary();
+        if (s_dma_sem) xSemaphoreGive(s_dma_sem);
+    }
+    portEXIT_CRITICAL(&s_init_mux);
+}
 
 // KDF: SHA-256(shared_secret || KDF_LABEL) → first 16 bytes become the session key.
 #define KDF_LABEL     "split_v1"
@@ -199,21 +224,22 @@ esp_err_t split_crypto_encrypt(const uint8_t key[SPLIT_CRYPTO_KEY_SIZE],
                                 uint8_t out_mic[SPLIT_CRYPTO_MIC_SIZE])
 {
     if (!key || !out_mic) return ESP_ERR_INVALID_ARG;
+    if (len > CRYPTO_BUF_MAX) return ESP_ERR_INVALID_SIZE;
+
+    ensure_dma_sem();
+    if (!s_dma_sem) return ESP_ERR_NO_MEM;
+
+    // Wait up to 50 ms — no legitimate call should take longer than one AES op.
+    if (xSemaphoreTake(s_dma_sem, pdMS_TO_TICKS(50)) != pdTRUE) {
+        ESP_LOGE(TAG, "encrypt: timeout waiting for DMA buffer");
+        return ESP_ERR_TIMEOUT;
+    }
 
     mbedtls_ccm_context ctx;
     mbedtls_ccm_init(&ctx);
 
     uint8_t nonce[SPLIT_CRYPTO_NONCE_SIZE];
     build_nonce(seq, nonce);
-
-    // Temporary output buffer to avoid in-place aliasing issues with mbedtls CCM.
-    // Must be DMA-capable (internal DRAM) so the hardware AES engine can access it
-    // directly without needing to allocate a bounce buffer (which logs esp-aes errors).
-    uint8_t *out_buf = (len > 0) ? heap_caps_malloc(len, MALLOC_CAP_DMA | MALLOC_CAP_8BIT) : NULL;
-    if (len > 0 && !out_buf) {
-        mbedtls_ccm_free(&ctx);
-        return ESP_ERR_NO_MEM;
-    }
 
     esp_err_t ret = ESP_OK;
     int rc;
@@ -224,7 +250,7 @@ esp_err_t split_crypto_encrypt(const uint8_t key[SPLIT_CRYPTO_KEY_SIZE],
     rc = mbedtls_ccm_encrypt_and_tag(&ctx, len,
                                      nonce, SPLIT_CRYPTO_NONCE_SIZE,
                                      aad, aad_len,
-                                     buf, (len > 0) ? out_buf : NULL,
+                                     buf, (len > 0) ? s_dma_buf : NULL,
                                      out_mic, SPLIT_CRYPTO_MIC_SIZE);
     if (rc != 0) {
         ESP_LOGE(TAG, "ccm_encrypt_and_tag: -0x%04X", (unsigned)(-rc));
@@ -232,12 +258,13 @@ esp_err_t split_crypto_encrypt(const uint8_t key[SPLIT_CRYPTO_KEY_SIZE],
         goto done;
     }
     if (len > 0) {
-        memcpy(buf, out_buf, len);
+        memcpy(buf, s_dma_buf, len);
     }
 
 done:
-    if (out_buf) { memset(out_buf, 0, len); free(out_buf); }
+    if (len > 0) memset(s_dma_buf, 0, len);
     mbedtls_ccm_free(&ctx);
+    xSemaphoreGive(s_dma_sem);
     return ret;
 }
 
@@ -248,18 +275,21 @@ esp_err_t split_crypto_decrypt(const uint8_t key[SPLIT_CRYPTO_KEY_SIZE],
                                 const uint8_t mic[SPLIT_CRYPTO_MIC_SIZE])
 {
     if (!key || !mic) return ESP_ERR_INVALID_ARG;
+    if (len > CRYPTO_BUF_MAX) return ESP_ERR_INVALID_SIZE;
+
+    ensure_dma_sem();
+    if (!s_dma_sem) return ESP_ERR_NO_MEM;
+
+    if (xSemaphoreTake(s_dma_sem, pdMS_TO_TICKS(50)) != pdTRUE) {
+        ESP_LOGE(TAG, "decrypt: timeout waiting for DMA buffer");
+        return ESP_ERR_TIMEOUT;
+    }
 
     mbedtls_ccm_context ctx;
     mbedtls_ccm_init(&ctx);
 
     uint8_t nonce[SPLIT_CRYPTO_NONCE_SIZE];
     build_nonce(seq, nonce);
-
-    uint8_t *out_buf = (len > 0) ? malloc(len) : NULL;
-    if (len > 0 && !out_buf) {
-        mbedtls_ccm_free(&ctx);
-        return ESP_ERR_NO_MEM;
-    }
 
     esp_err_t ret = ESP_OK;
     int rc;
@@ -270,7 +300,7 @@ esp_err_t split_crypto_decrypt(const uint8_t key[SPLIT_CRYPTO_KEY_SIZE],
     rc = mbedtls_ccm_auth_decrypt(&ctx, len,
                                   nonce, SPLIT_CRYPTO_NONCE_SIZE,
                                   aad, aad_len,
-                                  buf, (len > 0) ? out_buf : NULL,
+                                  buf, (len > 0) ? s_dma_buf : NULL,
                                   mic, SPLIT_CRYPTO_MIC_SIZE);
     if (rc != 0) {
         ESP_LOGW(TAG, "ccm_auth_decrypt: MIC mismatch (-0x%04X)", (unsigned)(-rc));
@@ -278,12 +308,13 @@ esp_err_t split_crypto_decrypt(const uint8_t key[SPLIT_CRYPTO_KEY_SIZE],
         goto done;
     }
     if (len > 0) {
-        memcpy(buf, out_buf, len);
+        memcpy(buf, s_dma_buf, len);
     }
 
 done:
-    if (out_buf) { memset(out_buf, 0, len); free(out_buf); }
+    if (len > 0) memset(s_dma_buf, 0, len);
     mbedtls_ccm_free(&ctx);
+    xSemaphoreGive(s_dma_sem);
     return ret;
 }
 

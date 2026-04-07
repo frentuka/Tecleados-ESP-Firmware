@@ -11,6 +11,7 @@ typedef enum usb_msg_module: uint8_t {
     MODULE_ACTION,
     MODULE_STATUS,
     MODULE_SPLIT,
+    MODULE_BLE,        // BLE profile / routing control
     USB_MODULE_COUNT
 } usb_msg_module_t;
 

@@ -54,6 +54,10 @@ typedef enum split_msg_type : uint8_t {
     // Diagnostics (0x5_)
     SPLIT_MSG_PING            = 0x50,  // RTT benchmark probe  (Master → Slave)
     SPLIT_MSG_PONG            = 0x51,  // RTT benchmark reply  (Slave  → Master)
+
+    // BLE proxy (0x6_)
+    SPLIT_MSG_BLE_CMD         = 0x60,  // Slave → Master: forward a BLE command from USB
+    SPLIT_MSG_BLE_STATUS      = 0x61,  // Master → Slave: push live BLE state
 } split_msg_type_t;
 
 /* =========================================================================
@@ -151,6 +155,20 @@ typedef struct __attribute__((packed)) split_config_sync_ack_payload {
     uint8_t  key[SPLIT_CONFIG_SYNC_KEY_LEN];
     uint8_t  status;    // 0 = ESP_OK
 } split_config_sync_ack_payload_t;
+
+/** SPLIT_MSG_BLE_CMD — BLE command forwarded from slave to master via USB configurator. */
+typedef struct __attribute__((packed)) split_ble_cmd_payload {
+    uint8_t cmd;   // BLE_USB_CMD_* constant (see splitmod.c)
+    uint8_t arg;   // profile_id for pair/connect/toggle; 0 for toggle_routing
+} split_ble_cmd_payload_t;
+
+/** SPLIT_MSG_BLE_STATUS — master BLE state pushed to slave after every change. */
+typedef struct __attribute__((packed)) split_ble_status_payload {
+    uint8_t  routing_active;    // 1 = BLE routing enabled on master
+    uint8_t  selected_profile;
+    uint16_t connected_bitmap;
+    int8_t   pairing_profile;   // -1 = not pairing
+} split_ble_status_payload_t;
 
 /** SPLIT_MSG_PING / SPLIT_MSG_PONG — RTT benchmark.
  *  Master sends PING with probe_idx and sent_us filled.

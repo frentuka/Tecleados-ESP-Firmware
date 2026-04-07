@@ -23,6 +23,8 @@
 #include "usbmod.h"
 #include "usb_send.h"
 #include "battery.h"
+#include "blemod.h"
+#include "cfg_ble.h"
 
 #include "split_transport.h"
 #include "split_protocol.h"
@@ -93,6 +95,11 @@ static TaskHandle_t   s_task_handle = NULL;
 static volatile bool  s_config_sync_pending     = false;
 static volatile bool  s_config_sync_incremental = false;
 static TickType_t     s_connected_at            = 0;
+
+/* Forward declarations — defined after message handlers */
+static void apply_ble_routing_for_role(split_role_t role);
+static void execute_ble_cmd(uint8_t cmd, uint8_t arg);
+static void send_ble_status_to_slave(void);
 
 /* =========================================================================
  * RTT benchmark — run once on every SPLIT_STATE_CONNECTED transition
@@ -231,6 +238,8 @@ static void on_disconnect(const char *reason)
     kb_manager_set_remote_matrix(NULL);
     kb_manager_set_matrix_cb(NULL);
     kb_manager_set_paused(false);
+    // Restore BLE routing so either half works standalone after losing the link.
+    apply_ble_routing_for_role(SPLIT_ROLE_NONE);
     kb_manager_set_scan_divisor(1);
     split_config_sync_reset();
 
@@ -369,6 +378,22 @@ static void on_pairing_complete(void)
 }
 
 /* =========================================================================
+ * BLE routing helper — must be called whenever the local role changes.
+ * MASTER activates BLE so it can receive/forward reports to the host.
+ * SLAVE deactivates BLE so it doesn't compete with the MASTER.
+ * On disconnect (role = NONE) BLE is re-enabled for standalone operation.
+ * ========================================================================= */
+
+static void apply_ble_routing_for_role(split_role_t role)
+{
+    bool should_be_active = (role != SPLIT_ROLE_SLAVE);
+    if (ble_hid_is_routing_active() != should_be_active) {
+        ESP_LOGI(TAG, "BLE routing → %s (role=%u)", should_be_active ? "ON" : "OFF", (unsigned)role);
+        ble_hid_set_routing_active(should_be_active);
+    }
+}
+
+/* =========================================================================
  * Message-specific handlers (called from on_split_message)
  * ========================================================================= */
 
@@ -421,6 +446,13 @@ static void handle_role_negotiate_msg(const uint8_t *src_mac,
         // Defer config sync to split_task: running it here (WiFi task) would block
         // the WiFi receive path via vTaskDelay inside split_config_sync_push_all.
         s_config_sync_pending = true;
+    }
+    apply_ble_routing_for_role(s_role);
+
+    // If we became MASTER, immediately push our BLE state to the slave so its
+    // configurator shows the correct mode/profile without waiting for a BLE event.
+    if (s_role == SPLIT_ROLE_MASTER) {
+        send_ble_status_to_slave();
     }
 }
 
@@ -552,6 +584,8 @@ static void on_split_message(const uint8_t *src_mac,
             s_role = new_role;
             esp_event_post(SPLIT_EVENTS, SPLIT_EVENT_ROLE_CHANGED, &s_role, sizeof(s_role), 0);
             ESP_LOGI(TAG, "role swap: now %s", s_role == SPLIT_ROLE_MASTER ? "MASTER" : "SLAVE");
+            apply_ble_routing_for_role(s_role);
+            if (s_role == SPLIT_ROLE_MASTER) send_ble_status_to_slave();
         }
         break;
 
@@ -562,6 +596,8 @@ static void on_split_message(const uint8_t *src_mac,
             s_role = new_role;
             esp_event_post(SPLIT_EVENTS, SPLIT_EVENT_ROLE_CHANGED, &s_role, sizeof(s_role), 0);
             ESP_LOGI(TAG, "role swap ACK: now %s", s_role == SPLIT_ROLE_MASTER ? "MASTER" : "SLAVE");
+            apply_ble_routing_for_role(s_role);
+            if (s_role == SPLIT_ROLE_MASTER) send_ble_status_to_slave();
         }
         break;
 
@@ -625,6 +661,34 @@ static void on_split_message(const uint8_t *src_mac,
                     bench_finish();
                 }
             }
+        }
+        break;
+
+    /* ---- BLE proxy ---- */
+
+    case SPLIT_MSG_BLE_CMD:
+        // Slave forwarded a BLE command — master executes it.
+        if (s_state == SPLIT_STATE_CONNECTED && s_role == SPLIT_ROLE_MASTER
+            && len >= sizeof(split_ble_cmd_payload_t)) {
+            const split_ble_cmd_payload_t *p = (const split_ble_cmd_payload_t *)payload;
+            ESP_LOGI(TAG, "BLE cmd from slave: 0x%02X arg=%u", p->cmd, p->arg);
+            execute_ble_cmd(p->cmd, p->arg);
+        }
+        break;
+
+    case SPLIT_MSG_BLE_STATUS:
+        // Master pushed its BLE state — slave caches it via event bus.
+        if (s_state == SPLIT_STATE_CONNECTED && s_role == SPLIT_ROLE_SLAVE
+            && len >= sizeof(split_ble_status_payload_t)) {
+            const split_ble_status_payload_t *p = (const split_ble_status_payload_t *)payload;
+            split_ble_status_t ev = {
+                .routing_active   = p->routing_active != 0,
+                .selected_profile = p->selected_profile,
+                .connected_bitmap = p->connected_bitmap,
+                .pairing_profile  = p->pairing_profile,
+            };
+            esp_event_post(SPLIT_EVENTS, SPLIT_EVENT_BLE_STATUS_UPDATED,
+                           &ev, sizeof(ev), 0);
         }
         break;
 
@@ -818,6 +882,89 @@ static void split_task(void *arg)
 }
 
 /* =========================================================================
+ * BLE proxy — commands and status forwarding over the split link
+ *
+ * BLE actions arrive from two sources:
+ *   1. Physical key presses (ble_controller.c → ble_hid_*)
+ *   2. USB configurator (MODULE_BLE → ble_usb_callback below)
+ *
+ * When the configurator is connected to the SLAVE:
+ *   - BLE commands are forwarded to the MASTER via SPLIT_MSG_BLE_CMD.
+ *   - The MASTER executes them and its BLE events fire normally.
+ *   - After each BLE event the MASTER sends SPLIT_MSG_BLE_STATUS to the SLAVE.
+ *   - The SLAVE posts SPLIT_EVENT_BLE_STATUS_UPDATED so statusmod can push
+ *     the correct state (mode, profile, bitmap) back to the configurator.
+ * ========================================================================= */
+
+#define BLE_USB_CMD_TOGGLE_ROUTING 0x01
+#define BLE_USB_CMD_PAIR           0x02
+#define BLE_USB_CMD_CONNECT        0x03
+#define BLE_USB_CMD_TOGGLE_CONN    0x04
+
+static void execute_ble_cmd(uint8_t cmd, uint8_t arg)
+{
+    switch (cmd) {
+    case BLE_USB_CMD_TOGGLE_ROUTING:
+        ble_hid_set_routing_active(!ble_hid_is_routing_active());
+        break;
+    case BLE_USB_CMD_PAIR:
+        ble_hid_profile_pair(arg);
+        break;
+    case BLE_USB_CMD_CONNECT:
+        ble_hid_profile_connect_and_select(arg);
+        break;
+    case BLE_USB_CMD_TOGGLE_CONN:
+        ble_hid_profile_toggle_connection(arg);
+        break;
+    default:
+        ESP_LOGW(TAG, "unknown BLE cmd 0x%02X", cmd);
+        break;
+    }
+}
+
+// Called on MASTER whenever local BLE state changes.
+static void send_ble_status_to_slave(void)
+{
+    if (s_state != SPLIT_STATE_CONNECTED || s_role != SPLIT_ROLE_MASTER) return;
+    const cfg_ble_state_t *st = cfg_ble_get_state();
+    split_ble_status_payload_t p = {
+        .routing_active   = st->ble_routing_enabled ? 1 : 0,
+        .selected_profile = (uint8_t)st->selected_profile,
+        .connected_bitmap = ble_hid_get_connected_profiles_bitmap(),
+        .pairing_profile  = (int8_t)ble_hid_get_pairing_profile(),
+    };
+    split_transport_send(s_peer_mac, SPLIT_PROTO_SPLIT, SPLIT_MSG_BLE_STATUS,
+                         next_seq(), (const uint8_t *)&p, sizeof(p));
+}
+
+// Registered as a BLE_EVENTS handler so the master pushes status on every change.
+static void on_ble_event_for_slave(void *arg, esp_event_base_t base,
+                                    int32_t event_id, void *data)
+{
+    (void)arg; (void)base; (void)event_id; (void)data;
+    send_ble_status_to_slave();
+}
+
+// MODULE_BLE USB callback — executes locally if MASTER/standalone, forwards if SLAVE.
+static bool ble_usb_callback(uint8_t *data, uint16_t data_len)
+{
+    if (!data || data_len < 1) return false;
+    uint8_t cmd = data[0];
+    uint8_t arg = (data_len >= 2) ? data[1] : 0;
+
+    if (s_role == SPLIT_ROLE_SLAVE && s_state == SPLIT_STATE_CONNECTED) {
+        split_ble_cmd_payload_t payload = {.cmd = cmd, .arg = arg};
+        esp_err_t ret = split_transport_send(s_peer_mac, SPLIT_PROTO_SPLIT,
+                                             SPLIT_MSG_BLE_CMD, next_seq(),
+                                             (const uint8_t *)&payload, sizeof(payload));
+        return ret == ESP_OK;
+    }
+
+    execute_ble_cmd(cmd, arg);
+    return true;
+}
+
+/* =========================================================================
  * USB configurator callback — receives split commands from the host tool
  *
  * Command byte layout (first byte of payload):
@@ -968,9 +1115,11 @@ esp_err_t splitmod_init(void)
         return ESP_FAIL;
     }
 
-    esp_event_handler_register(KB_EVENTS,     KB_EVENT_SYSTEM_ACTION,    on_kb_system_action, NULL);
-    esp_event_handler_register(CONFIG_EVENTS, CONFIG_EVENT_KIND_UPDATED, on_config_updated,   NULL);
+    esp_event_handler_register(KB_EVENTS,     KB_EVENT_SYSTEM_ACTION,    on_kb_system_action,    NULL);
+    esp_event_handler_register(CONFIG_EVENTS, CONFIG_EVENT_KIND_UPDATED, on_config_updated,      NULL);
+    esp_event_handler_register(BLE_EVENTS,    ESP_EVENT_ANY_ID,          on_ble_event_for_slave, NULL);
     usbmod_register_callback(MODULE_SPLIT, split_usb_callback);
+    usbmod_register_callback(MODULE_BLE,   ble_usb_callback);
 
     ESP_LOGI(TAG, "splitmod initialised");
     return ESP_OK;

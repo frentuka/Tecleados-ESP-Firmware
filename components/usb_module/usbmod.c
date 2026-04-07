@@ -158,13 +158,19 @@ void usb_init() {
   tusb_cfg.descriptor.device = &desc_device;
   tusb_cfg.descriptor.full_speed_config = desc_configuration;
 
-  static char s_override_product_name[32];
+  // 32 (name) + 3 (" (") + 16 (variant) + 1 (")") + 1 (NUL) = 53
+  static char s_override_product_name[53];
   static char s_override_serial_number[16];
 
   cfg_system_t sys;
   if (cfg_system_get(&sys) == ESP_OK && sys.device_name[0] != '\0') {
-      strncpy(s_override_product_name, sys.device_name, sizeof(s_override_product_name) - 1);
-      s_override_product_name[sizeof(s_override_product_name) - 1] = '\0';
+      if (sys.split_variant[0] != '\0') {
+          snprintf(s_override_product_name, sizeof(s_override_product_name),
+                   "%s (%s)", sys.device_name, sys.split_variant);
+      } else {
+          strncpy(s_override_product_name, sys.device_name, sizeof(s_override_product_name) - 1);
+          s_override_product_name[sizeof(s_override_product_name) - 1] = '\0';
+      }
       string_desc_arr[2] = s_override_product_name;
   }
 

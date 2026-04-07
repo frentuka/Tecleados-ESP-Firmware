@@ -14,6 +14,10 @@ typedef struct {
   bool is_split;
   int8_t split_col_offset;   // added to raw col when is_split is true
   char split_variant[16];    // e.g. "Left", "Right", "Numpad"
+  // Shared BLE identity for split keyboards — configure the same values on both halves
+  // so they can seamlessly hand off BLE connections when roles swap.
+  char    ble_shared_name[32]; // BLE advertised name override (empty = use device_name)
+  uint8_t ble_shared_addr[6];  // Shared static random BLE address base (all-zero = auto-derive)
 } cfg_system_t;
 
 // Registers the system serializer with cfgmod

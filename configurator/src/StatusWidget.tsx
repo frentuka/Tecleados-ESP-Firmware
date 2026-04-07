@@ -18,9 +18,14 @@ interface StatusWidgetProps {
   splitRole?: number;   // split_role_t
   onExpandChange?: (isExpanded: boolean) => void;
   onOfflineClick?: () => void;
+  // BLE action callbacks — wired up from App to hidService.ble*()
+  onBleToggleRouting?: () => void;
+  onBleConnect?: (profileId: number) => void;
+  onBleToggleConn?: (profileId: number) => void;
+  onBlePair?: (profileId: number) => void;
 }
 
-const StatusWidget: React.FC<StatusWidgetProps> = ({ isConnected, transportMode, selectedProfile, pairingProfile, connectedBitmap, splitState = 0, splitRole = 0, onExpandChange, onOfflineClick }) => {
+const StatusWidget: React.FC<StatusWidgetProps> = ({ isConnected, transportMode, selectedProfile, pairingProfile, connectedBitmap, splitState = 0, splitRole = 0, onExpandChange, onOfflineClick, onBleToggleRouting, onBleConnect, onBleToggleConn, onBlePair }) => {
   const [isPersistent, setIsPersistent] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
   const isBle = transportMode === 1;
@@ -74,14 +79,19 @@ const StatusWidget: React.FC<StatusWidgetProps> = ({ isConnected, transportMode,
         <div className="status-expandable">
           <div className="status-divider-v"></div>
           <div className="status-section mode-section">
-            <div className={`mode-icon ${!isBle ? 'active' : ''}`} title="USB Mode">
+            <div className={`mode-icon ${!isBle ? 'active' : ''}`} title="USB Mode (always active when connected via USB)">
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="16 18 22 12 16 6"></polyline>
                 <polyline points="8 6 2 12 8 18"></polyline>
               </svg>
             </div>
             <div className="mode-separator">/</div>
-            <div className={`mode-icon ${isBle ? 'active' : ''}`} title="BLE Mode">
+            <div
+              className={`mode-icon ${isBle ? 'active' : ''}`}
+              title={isBle ? 'BLE active — click to disable' : 'BLE inactive — click to enable'}
+              onClick={e => { e.stopPropagation(); onBleToggleRouting?.(); }}
+              style={{ cursor: onBleToggleRouting ? 'pointer' : 'default' }}
+            >
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M7 7l10 10-5 5V2l5 5L7 17"></path>
               </svg>
@@ -97,11 +107,20 @@ const StatusWidget: React.FC<StatusWidgetProps> = ({ isConnected, transportMode,
                     const isSelected = selectedProfile === p;
                     const isConnectedProfile = (connectedBitmap & (1 << p)) !== 0;
                     const isPairing = pairingProfile === p;
+                    const canClick = !!(onBleConnect || onBleToggleConn || onBlePair);
+                    const tooltip = [
+                        `Profile ${p + 1}: ${isPairing ? 'Pairing…' : isConnectedProfile ? 'Connected' : 'Disconnected'}${isSelected ? ' (active)' : ''}`,
+                        canClick ? 'Click=connect  Dbl-click=toggle  Right-click=pair' : '',
+                    ].filter(Boolean).join(' · ');
                     return (
                       <div
                         key={p}
                         className={`profile-indicator ${isSelected ? 'selected' : ''} ${isConnectedProfile ? 'connected-p' : ''} ${isPairing ? 'pairing' : ''}`}
-                        title={`Profile ${p + 1}: ${isPairing ? 'Pairing...' : isConnectedProfile ? 'Connected' : 'Disconnected'}${isSelected ? ' (Selected)' : ''}`}
+                        title={tooltip}
+                        style={{ cursor: canClick ? 'pointer' : 'default' }}
+                        onClick={e => { e.stopPropagation(); onBleConnect?.(p); }}
+                        onDoubleClick={e => { e.stopPropagation(); onBleToggleConn?.(p); }}
+                        onContextMenu={e => { e.preventDefault(); e.stopPropagation(); onBlePair?.(p); }}
                       >
                         {p + 1}
                       </div>
