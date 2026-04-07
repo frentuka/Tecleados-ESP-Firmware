@@ -101,9 +101,6 @@ typedef struct __attribute__((packed)) split_pair_payload {
 typedef struct __attribute__((packed)) split_role_payload {
     uint8_t  proposed_role;     // Role sender wants to take (split_role_t)
     uint8_t  device_id[6];      // For tiebreaker comparison
-    uint8_t  session_nonce[16]; // Ephemeral nonce for per-session key derivation
-                                // Both sides XOR their nonces and SHA-256 the result
-                                // with the stored key to get a fresh per-connection key.
 } split_role_payload_t;
 
 /** SPLIT_MSG_KEY_STATE_FULL — complete matrix snapshot. */

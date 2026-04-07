@@ -295,6 +295,7 @@ typedef struct {
 
 ### Phase 8 — Configurator Integration
 - [x] Add split settings page to web configurator (`SplitDashboard.tsx` with status display, pairing controls, test mode)
+- [x] Pairing timeout enforcement (splitmod_start_pairing timeout_ms now respected; tick_pairing cancels and emits SPLIT_EVENT_PAIR_FAILED on expiry)
 - [ ] Key-ownership editor (visual half-assignment per key)
 - [x] Pairing status display (colored dot + state/role text in `SplitDashboard`)
 - [ ] Role preference selector

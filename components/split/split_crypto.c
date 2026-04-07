@@ -4,6 +4,7 @@
 #include <stdlib.h>
 
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 
 #include "mbedtls/ecdh.h"
 #include "mbedtls/entropy.h"
@@ -206,7 +207,9 @@ esp_err_t split_crypto_encrypt(const uint8_t key[SPLIT_CRYPTO_KEY_SIZE],
     build_nonce(seq, nonce);
 
     // Temporary output buffer to avoid in-place aliasing issues with mbedtls CCM.
-    uint8_t *out_buf = (len > 0) ? malloc(len) : NULL;
+    // Must be DMA-capable (internal DRAM) so the hardware AES engine can access it
+    // directly without needing to allocate a bounce buffer (which logs esp-aes errors).
+    uint8_t *out_buf = (len > 0) ? heap_caps_malloc(len, MALLOC_CAP_DMA | MALLOC_CAP_8BIT) : NULL;
     if (len > 0 && !out_buf) {
         mbedtls_ccm_free(&ctx);
         return ESP_ERR_NO_MEM;

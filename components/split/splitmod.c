@@ -9,7 +9,6 @@
 
 #include "esp_log.h"
 #include "esp_mac.h"
-#include "esp_random.h"
 #include "esp_timer.h"
 #include "esp_event.h"
 #include "esp_heap_caps.h"
@@ -64,15 +63,11 @@ static uint16_t       s_tx_seq      = 0;
 // must go through next_seq() to prevent sequence-number duplicates.
 static portMUX_TYPE   s_seq_mux     = portMUX_INITIALIZER_UNLOCKED;
 
-// Long-term key loaded from NVS after pairing.  Used to encrypt ROLE_NEGOTIATE
-// and as the base material for per-session key derivation.
+// Long-term AES-128 key derived from the X25519 exchange during pairing and
+// stored in NVS.  Used directly for all post-pairing encrypted communication.
+// (Per-session key derivation via nonce exchange is infrastructure-ready in
+// split_crypto but requires a two-phase commit protocol not yet implemented.)
 static uint8_t        s_stored_key[SPLIT_CRYPTO_KEY_SIZE] = {0};
-
-// Per-connection ephemeral nonce.  Regenerated each time we enter CONNECTING.
-// Both sides exchange their nonces via ROLE_NEGOTIATE and derive a fresh
-// per-session AES-128 key, so the effective encryption key changes every
-// reconnect without requiring re-pairing.
-static uint8_t        s_session_nonce[SPLIT_CRYPTO_KEY_SIZE] = {0};
 
 // Anti-replay: last seen sequence number from the peer (reset on connect/disconnect).
 static uint16_t       s_peer_seq_last  = 0;
@@ -87,6 +82,7 @@ static TickType_t     s_last_heartbeat_tx = 0;
 static uint32_t       s_reconnect_interval = SPLIT_RECONNECT_MS_MIN;
 
 static bool           s_link_stale = false;
+static TickType_t     s_pairing_deadline = 0; // 0 = no timeout
 
 static TaskHandle_t   s_task_handle = NULL;
 
@@ -215,8 +211,7 @@ static void send_role_negotiate(void)
     uint8_t pref = split_pair_get_data(&pd) ? pd.preferred_role : 0;
 
     split_role_payload_t rp = {.proposed_role = pref};
-    memcpy(rp.device_id,     s_own_mac,       6);
-    memcpy(rp.session_nonce, s_session_nonce, sizeof(rp.session_nonce));
+    memcpy(rp.device_id, s_own_mac, 6);
 
     split_transport_send(s_peer_mac, SPLIT_PROTO_SPLIT, SPLIT_MSG_ROLE_NEGOTIATE,
                          next_seq(), (const uint8_t *)&rp, sizeof(rp));
@@ -305,13 +300,15 @@ static void on_config_updated(void *arg, esp_event_base_t base,
                                int32_t event_id, void *event_data)
 {
     (void)arg; (void)base; (void)event_id;
-    if (s_state != SPLIT_STATE_CONNECTED || s_role != SPLIT_ROLE_MASTER) return;
+    if (s_state != SPLIT_STATE_CONNECTED) return;
 
     const config_update_event_t *ev = (const config_update_event_t *)event_data;
     if (is_syncable_config((cfgmod_kind_t)ev->kind, ev->key)) {
         // Signal split_task to do the push.  Calling split_config_sync_push directly
         // from here (event-bus task context) would block the event-bus receive loop
         // for up to N×10 ms due to vTaskDelay inside send_fragment_with_retry.
+        // Note: the sync receive path uses cfgmod_write_storage (not cfgmod_set_config),
+        // which does not fire CONFIG_EVENT_KIND_UPDATED — so there is no ping-pong risk.
         s_config_sync_incremental = true;
     }
 }
@@ -353,17 +350,12 @@ static void on_kb_system_action(void *arg, esp_event_base_t base,
 
 static void on_pairing_complete(void)
 {
+    s_pairing_deadline = 0;
+
     split_pair_data_t pd;
     split_pair_get_data(&pd);
     memcpy(s_peer_mac,   pd.peer_mac,   6);
     memcpy(s_stored_key, pd.shared_key, SPLIT_CRYPTO_KEY_SIZE);
-
-    // Generate a fresh nonce for this connection; the derived session key is set
-    // after ROLE_NEGOTIATE exchange (when both nonces are known).
-    esp_fill_random(s_session_nonce, sizeof(s_session_nonce));
-
-    // Use the stored key to encrypt ROLE_NEGOTIATE; will be replaced by the
-    // derived per-session key in handle_role_negotiate_msg.
     split_transport_set_session_key(s_stored_key);
 
     s_state = SPLIT_STATE_CONNECTING;
@@ -398,24 +390,6 @@ static void handle_role_negotiate_msg(const uint8_t *src_mac,
     esp_err_t ret = split_role_on_negotiate(src_mac, payload, len,
                                              s_own_mac, own_pref, &decided);
     if (ret != ESP_OK || decided == SPLIT_ROLE_NONE) return;
-
-    // Both nonces are now known — derive the per-session key and apply it.
-    // split_role_on_negotiate already validated len >= sizeof(split_role_payload_t).
-    {
-        const split_role_payload_t *p = (const split_role_payload_t *)payload;
-        uint8_t session_key[SPLIT_CRYPTO_KEY_SIZE];
-        esp_err_t kret = split_crypto_derive_session_key(s_stored_key,
-                                                          s_session_nonce,
-                                                          p->session_nonce,
-                                                          session_key);
-        if (kret == ESP_OK) {
-            split_transport_set_session_key(session_key);
-            ESP_LOGD(TAG, "per-session key derived and applied");
-        } else {
-            ESP_LOGW(TAG, "session key derivation failed — using stored key");
-        }
-        memset(session_key, 0, sizeof(session_key));
-    }
 
     s_role               = decided;
     s_state              = SPLIT_STATE_CONNECTED;
@@ -666,6 +640,15 @@ static void on_split_message(const uint8_t *src_mac,
 
 static void tick_pairing(TickType_t now)
 {
+    if (s_pairing_deadline != 0 && now >= s_pairing_deadline) {
+        ESP_LOGI(TAG, "pairing timed out");
+        split_pair_cancel();
+        s_state            = SPLIT_STATE_IDLE;
+        s_pairing_deadline = 0;
+        esp_event_post(SPLIT_EVENTS, SPLIT_EVENT_PAIR_FAILED, NULL, 0, 0);
+        return;
+    }
+
     if ((now - s_last_discovery_tx) < pdMS_TO_TICKS(SPLIT_DISCOVERY_MS)) return;
 
     split_pair_data_t pd;
@@ -764,9 +747,10 @@ static void tick_connected(TickType_t now)
         split_config_sync_push_all(s_peer_mac, next_seq);
     }
 
-    if (s_role == SPLIT_ROLE_MASTER && s_config_sync_incremental) {
+    if (s_config_sync_incremental) {
         s_config_sync_incremental = false;
-        ESP_LOGI(TAG, "running incremental config sync from split_task");
+        ESP_LOGI(TAG, "running incremental config sync from split_task (%s)",
+                 s_role == SPLIT_ROLE_MASTER ? "master→slave" : "slave→master");
         split_config_sync_push_all(s_peer_mac, next_seq);
     }
 
@@ -783,10 +767,9 @@ static void tick_disconnected(TickType_t now)
 
     if (split_pair_is_paired()) {
         ESP_LOGI(TAG, "reconnect attempt (backoff=%lu ms)", (unsigned long)s_reconnect_interval);
-        // Fresh nonce for this connection attempt.  Also reset the transport to the
-        // stored key so ROLE_NEGOTIATE is encrypted with material both sides share
-        // after a reboot (the per-session derived key is ephemeral and not persisted).
-        esp_fill_random(s_session_nonce, sizeof(s_session_nonce));
+        // Reset transport to stored key before sending ROLE_NEGOTIATE.  If the
+        // previous connection had advanced key state, this ensures both sides are
+        // always on a key they share before role negotiation begins.
         split_transport_set_session_key(s_stored_key);
         s_state            = SPLIT_STATE_CONNECTING;
         s_last_role_neg_tx = 0; // Trigger immediate ROLE_NEGOTIATE on next tick.
@@ -965,7 +948,6 @@ esp_err_t splitmod_init(void)
     if (split_pair_get_data(&pd)) {
         memcpy(s_peer_mac,   pd.peer_mac,   6);
         memcpy(s_stored_key, pd.shared_key, SPLIT_CRYPTO_KEY_SIZE);
-        esp_fill_random(s_session_nonce, sizeof(s_session_nonce));
         split_transport_add_peer(pd.peer_mac, pd.channel);
         split_transport_set_session_key(s_stored_key);
         s_state = SPLIT_STATE_CONNECTING;
@@ -1011,8 +993,7 @@ esp_err_t splitmod_deinit(void)
 
     s_state = SPLIT_STATE_DISABLED;
     s_role  = SPLIT_ROLE_NONE;
-    memset(s_stored_key,    0, sizeof(s_stored_key));
-    memset(s_session_nonce, 0, sizeof(s_session_nonce));
+    memset(s_stored_key, 0, sizeof(s_stored_key));
 
     ESP_LOGI(TAG, "splitmod deinitialized");
     return ESP_OK;
@@ -1020,12 +1001,17 @@ esp_err_t splitmod_deinit(void)
 
 esp_err_t splitmod_start_pairing(uint32_t timeout_ms)
 {
-    (void)timeout_ms; // timeout enforcement deferred to a future phase
     if (s_state == SPLIT_STATE_PAIRING) return ESP_OK;
 
     split_pair_start();
     s_last_discovery_tx = 0; // Force immediate first beacon on next tick.
     s_state             = SPLIT_STATE_PAIRING;
+    s_pairing_deadline  = (timeout_ms > 0)
+                          ? (xTaskGetTickCount() + pdMS_TO_TICKS(timeout_ms))
+                          : 0;
+    // Pairing messages (DISCOVERY, PAIR_REQUEST, PAIR_RESPONSE) are plaintext.
+    // Clear any active session key so the transport doesn't try to decrypt them.
+    split_transport_set_session_key(NULL);
 
     esp_event_post(SPLIT_EVENTS, SPLIT_EVENT_PAIR_STARTED, NULL, 0, 0);
     ESP_LOGI(TAG, "entering pairing mode");
@@ -1036,7 +1022,9 @@ esp_err_t splitmod_cancel_pairing(void)
 {
     if (s_state != SPLIT_STATE_PAIRING) return ESP_ERR_INVALID_STATE;
     split_pair_cancel();
-    s_state = SPLIT_STATE_IDLE;
+    s_state            = SPLIT_STATE_IDLE;
+    s_pairing_deadline = 0;
+    esp_event_post(SPLIT_EVENTS, SPLIT_EVENT_PAIR_FAILED, NULL, 0, 0);
     ESP_LOGI(TAG, "pairing cancelled");
     return ESP_OK;
 }
@@ -1050,9 +1038,8 @@ esp_err_t splitmod_unpair(void)
     }
 
     split_pair_clear();
-    memset(s_peer_mac,      0, 6);
-    memset(s_stored_key,    0, sizeof(s_stored_key));
-    memset(s_session_nonce, 0, sizeof(s_session_nonce));
+    memset(s_peer_mac,   0, 6);
+    memset(s_stored_key, 0, sizeof(s_stored_key));
     split_transport_set_session_key(NULL);
     s_state          = SPLIT_STATE_IDLE;
     s_role           = SPLIT_ROLE_NONE;

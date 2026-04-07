@@ -211,11 +211,15 @@ static void kb_manager_task(void *arg) {
                     kb_matrix_set_interrupts_enabled(false);
                     now_us = esp_timer_get_time();
                 } else {
-                    taskYIELD();
+                    /* taskYIELD() would spin-starve IDLE (lower priority) and
+                     * trigger the task watchdog.  Block for one tick instead. */
+                    vTaskDelay(1);
                     continue;
                 }
             } else {
-                taskYIELD();
+                /* Same issue: yield-spinning starves IDLE1.  Block for one tick
+                 * so the WDT can be fed before the next scan window opens. */
+                vTaskDelay(1);
                 continue;
             }
         }
