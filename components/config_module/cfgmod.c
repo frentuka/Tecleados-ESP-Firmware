@@ -28,6 +28,9 @@ extern void cfg_system_register(void);
 extern void cfg_physical_register(void);
 extern void cfg_ble_init(void);
 
+extern esp_err_t cfg_ble_bond_read_all(void *out_buf, size_t *inout_len);
+extern esp_err_t cfg_ble_bond_write_all(const void *data, size_t len);
+
 #define TAG "cfg_module"
 
 #define CFGMOD_NVS_NAMESPACE "cfg"
@@ -41,6 +44,7 @@ static const char *const s_kind_ns[CFGMOD_KIND_MAX] = {
     [CFGMOD_KIND_PHYSICAL]   = NULL,
     [CFGMOD_KIND_CKEY]       = "cfg_ck",
     [CFGMOD_KIND_SPLIT]      = "cfg_spl",
+    [CFGMOD_KIND_BLE_BOND]   = "nimble_bond", // Managed natively, not prefixed
 };
 
 typedef struct {
@@ -498,6 +502,10 @@ esp_err_t cfgmod_read_storage(cfgmod_kind_t kind, const char *key,
     return ESP_ERR_INVALID_ARG;
   }
 
+  if (kind == CFGMOD_KIND_BLE_BOND) {
+      return cfg_ble_bond_read_all(out_buf, inout_len);
+  }
+
   const char *ns, *nvs_key;
   char nvs_key_buf[16] = {0};
   esp_err_t err = resolve_ns_and_key(kind, key, &ns, &nvs_key, nvs_key_buf, sizeof(nvs_key_buf));
@@ -517,6 +525,10 @@ esp_err_t cfgmod_write_storage(cfgmod_kind_t kind, const char *key,
                                const void *data, size_t len) {
   if (data == NULL || len == 0) {
     return ESP_ERR_INVALID_ARG;
+  }
+
+  if (kind == CFGMOD_KIND_BLE_BOND) {
+      return cfg_ble_bond_write_all(data, len);
   }
 
   const char *ns, *nvs_key;

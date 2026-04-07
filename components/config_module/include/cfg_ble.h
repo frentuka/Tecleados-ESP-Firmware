@@ -33,3 +33,13 @@ const cfg_ble_state_t *cfg_ble_get_state(void);
  * @brief Updates the BLE configuration and saves it to NVS.
  */
 void cfg_ble_save_state(const cfg_ble_state_t *state);
+
+/**
+ * @brief Serializes the entire nimble_bond NVS namespace into a single dynamically allocated buffer.
+ */
+esp_err_t cfg_ble_bond_read_all(void *out_buf, size_t *inout_len);
+
+/**
+ * @brief Clears the nimble_bond NVS namespace and deserializes the payload into individual elements.
+ */
+esp_err_t cfg_ble_bond_write_all(const void *data, size_t len);

@@ -38,3 +38,9 @@ uint16_t ble_hid_get_connected_profiles_bitmap(void);
 
 /** @brief Returns the profile currently being paired, or -1 if not pairing. */
 int ble_hid_get_pairing_profile(void);
+
+/** @brief Suspend or resume BLE operations (disconnects and stops advertising) without altering configuration. Used by Split Keyboard slave. */
+void ble_hid_set_suspended(bool suspended);
+
+/** @brief Returns true if BLE operations are currently suspended. */
+bool ble_hid_is_suspended(void);

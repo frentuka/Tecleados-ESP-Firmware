@@ -19,6 +19,7 @@ typedef enum cfgmod_kind : uint8_t {
   CFGMOD_KIND_PHYSICAL,  // Raw blob kind — not registered, uses direct NVS read/write
   CFGMOD_KIND_CKEY,      // Custom Keys
   CFGMOD_KIND_SPLIT,     // Split keyboard pairing data
+  CFGMOD_KIND_BLE_BOND,  // Bulk serialization of nimble_bond namespace
   CFGMOD_KIND_MAX
 } cfgmod_kind_t;
 

@@ -386,10 +386,10 @@ static void on_pairing_complete(void)
 
 static void apply_ble_routing_for_role(split_role_t role)
 {
-    bool should_be_active = (role != SPLIT_ROLE_SLAVE);
-    if (ble_hid_is_routing_active() != should_be_active) {
-        ESP_LOGI(TAG, "BLE routing → %s (role=%u)", should_be_active ? "ON" : "OFF", (unsigned)role);
-        ble_hid_set_routing_active(should_be_active);
+    bool should_suspend = (role == SPLIT_ROLE_SLAVE);
+    if (ble_hid_is_suspended() != should_suspend) {
+        ESP_LOGI(TAG, "BLE routing → %s (role=%u)", should_suspend ? "SUSPENDED" : "RESUMED", (unsigned)role);
+        ble_hid_set_suspended(should_suspend);
     }
 }
 

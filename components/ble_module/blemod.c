@@ -47,6 +47,9 @@ static int s_directed_profile = -1;
 static esp_timer_handle_t s_adv_cooldown_timer;
 static void ble_hid_adv_timer_cb(void *arg);
 
+// Suspended state flag (used by Split Keyboard slave to stop BLE without updating NVS config)
+static bool s_is_suspended = false;
+
 // Buffer to hold peer address during pairing until encryption is complete
 static ble_addr_t s_pending_addr;
 
@@ -272,9 +275,9 @@ static void ble_hid_advertise(void) {
   // Stop the cooldown timer if it's running, as we're starting advertising now
   esp_timer_stop(s_adv_cooldown_timer);
 
-  // Respect the routing toggle
-  if (!ble_hid_is_routing_active()) {
-    ESP_LOGI(TAG, "BLE Routing disabled. Ensuring advertising is stopped.");
+  // Respect the routing toggle and suspended state
+  if (!ble_hid_is_routing_active() || s_is_suspended) {
+    ESP_LOGI(TAG, "BLE Routing disabled or suspended. Ensuring advertising is stopped.");
     ble_gap_adv_stop();
     return;
   }
@@ -522,7 +525,7 @@ esp_err_t ble_hid_send_keyboard_report(const uint8_t *report, size_t len) {
   }
 
   const cfg_ble_state_t *st = cfg_ble_get_state();
-  if (!st->ble_routing_enabled) {
+  if (!st->ble_routing_enabled || s_is_suspended) {
       return ESP_OK; // Silently drop, acting as "OFF"
   }
 
@@ -539,6 +542,11 @@ esp_err_t ble_hid_send_consumer_report(uint16_t media_keycode) {
   uint16_t handle = get_active_conn_handle();
   if (handle == BLE_HS_CONN_HANDLE_NONE) {
     return ESP_ERR_INVALID_STATE;
+  }
+
+  const cfg_ble_state_t *st = cfg_ble_get_state();
+  if (!st->ble_routing_enabled || s_is_suspended) {
+      return ESP_OK; // Silently drop, acting as "OFF"
   }
 
   int rc = ble_hid_tx_consumer_report(handle, media_keycode);
@@ -685,4 +693,30 @@ uint16_t ble_hid_get_connected_profiles_bitmap(void) {
 
 int ble_hid_get_pairing_profile(void) {
     return s_pairing_profile;
+}
+
+void ble_hid_set_suspended(bool suspended) {
+    if (s_is_suspended == suspended) return;
+    s_is_suspended = suspended;
+    
+    if (suspended) {
+        ESP_LOGI(TAG, "BLE operations suspended. Terminating connections and stopping advertising.");
+        for (int i = 0; i < CFG_BLE_MAX_PROFILES; i++) {
+            if (s_conn_handles[i] != BLE_HS_CONN_HANDLE_NONE) {
+                ble_gap_terminate(s_conn_handles[i], BLE_ERR_REM_USER_CONN_TERM);
+            }
+        }
+        ble_hid_advertise(); // Will stop advertising due to s_is_suspended check
+    } else {
+        ESP_LOGI(TAG, "BLE operations resumed. Resuming advertising if enabled.");
+        // We only actively force reconnection if it's currently enabled in config
+        if (ble_hid_is_routing_active()) {
+            s_directed_profile = cfg_ble_get_state()->selected_profile;
+            ble_hid_advertise();
+        }
+    }
+}
+
+bool ble_hid_is_suspended(void) {
+    return s_is_suspended;
 }
