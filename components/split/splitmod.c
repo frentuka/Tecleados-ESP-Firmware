@@ -93,8 +93,10 @@ static TaskHandle_t   s_task_handle = NULL;
 // event-bus task is blocked by vTaskDelay calls inside split_config_sync_push.
 // s_config_sync_pending   — full push after initial connect (with settle delay).
 // s_config_sync_incremental — triggered by on_config_updated; processed immediately.
+// s_reverse_ble_sync      — peer sent stale ble_cfg; push our newer ble_cfg + bond back.
 static volatile bool  s_config_sync_pending     = false;
 static volatile bool  s_config_sync_incremental = false;
+static volatile bool  s_reverse_ble_sync        = false;
 static TickType_t     s_connected_at            = 0;
 
 /* Forward declarations — defined after message handlers */
@@ -674,9 +676,12 @@ static void on_split_message(const uint8_t *src_mac,
 
     /* ---- Config sync ---- */
 
-    case SPLIT_MSG_CONFIG_SYNC:
-        split_config_sync_on_fragment(src_mac, payload, len, s_peer_mac, next_seq);
+    case SPLIT_MSG_CONFIG_SYNC: {
+        bool reverse = false;
+        split_config_sync_on_fragment(src_mac, payload, len, s_peer_mac, next_seq, &reverse);
+        if (reverse) s_reverse_ble_sync = true;
         break;
+    }
 
     case SPLIT_MSG_CONFIG_SYNC_ACK:
         split_config_sync_on_ack(payload, len);
@@ -859,6 +864,13 @@ static void tick_connected(TickType_t now)
         ESP_LOGI(TAG, "running incremental config sync from split_task (%s)",
                  s_role == SPLIT_ROLE_MASTER ? "master→slave" : "slave→master");
         split_config_sync_push_all(s_peer_mac, next_seq);
+    }
+
+    if (s_reverse_ble_sync) {
+        s_reverse_ble_sync = false;
+        ESP_LOGI(TAG, "reverse BLE sync: pushing own ble_cfg + bond to peer");
+        split_config_sync_push(s_peer_mac, next_seq, CFGMOD_KIND_CONNECTION, "ble_cfg");
+        split_config_sync_push(s_peer_mac, next_seq, CFGMOD_KIND_BLE_BOND, "all");
     }
 
     if (s_role == SPLIT_ROLE_SLAVE) {

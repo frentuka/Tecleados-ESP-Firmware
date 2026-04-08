@@ -174,6 +174,14 @@ const cfg_ble_state_t *cfg_ble_get_state(void) {
     return &g_cfg_ble_state;
 }
 
+uint32_t cfg_ble_get_nonce_sum(void) {
+    uint32_t sum = 0;
+    for (int i = 0; i < CFG_BLE_MAX_PROFILES; i++) {
+        sum += g_cfg_ble_state.profiles[i].addr_nonce;
+    }
+    return sum;
+}
+
 void cfg_ble_save_state(const cfg_ble_state_t *state) {
     if (!state) return;
     memcpy(&g_cfg_ble_state, state, sizeof(cfg_ble_state_t));

@@ -10,6 +10,7 @@
 #include "esp_log.h"
 #include "esp_err.h"
 #include "cfg_storage_keys.h"
+#include "cfg_ble.h"
 
 #define SPLIT_CFG_SEND_RETRIES   3    // Max attempts per fragment
 #define SPLIT_CFG_RETRY_DELAY_MS 10   // Delay between retries (and after success, to pace the burst)
@@ -188,7 +189,8 @@ void split_config_sync_reset(void)
 esp_err_t split_config_sync_on_fragment(const uint8_t *src_mac,
                                          const uint8_t *payload, size_t len,
                                          const uint8_t *reply_mac,
-                                         split_seq_alloc_fn_t get_seq)
+                                         split_seq_alloc_fn_t get_seq,
+                                         bool *out_reverse_ble_sync)
 {
     (void)src_mac;
     if (len < SPLIT_CONFIG_SYNC_HDR_SIZE) return ESP_ERR_INVALID_SIZE;
@@ -245,6 +247,32 @@ esp_err_t split_config_sync_on_fragment(const uint8_t *src_mac,
     uint8_t full_mask = (uint8_t)((1u << frag->fragment_total) - 1u);
     if ((s_rx.received & full_mask) != full_mask || s_rx.data_len == 0) {
         return ESP_OK; // Still waiting for more fragments.
+    }
+
+    // For ble_cfg: compare nonce sums to detect a stale push from the peer.
+    // If our own nonce sum is greater, our data is newer — reject the overwrite
+    // and signal the caller to push our ble_cfg + bond back to the sender.
+    if ((cfgmod_kind_t)s_rx.kind == CFGMOD_KIND_CONNECTION &&
+        strncmp(s_rx.key, "ble_cfg", SPLIT_CONFIG_SYNC_KEY_LEN) == 0 &&
+        s_rx.data_len == sizeof(cfg_ble_state_t)) {
+
+        const cfg_ble_state_t *recv_st = (const cfg_ble_state_t *)s_rx.buf;
+        uint32_t recv_sum = 0;
+        for (int i = 0; i < CFG_BLE_MAX_PROFILES; i++) {
+            recv_sum += recv_st->profiles[i].addr_nonce;
+        }
+        uint32_t own_sum = cfg_ble_get_nonce_sum();
+
+        if (own_sum > recv_sum) {
+            ESP_LOGI(TAG, "ble_cfg: own nonce_sum=%u > recv nonce_sum=%u — "
+                     "rejecting stale overwrite, requesting reverse sync",
+                     own_sum, recv_sum);
+            if (out_reverse_ble_sync) *out_reverse_ble_sync = true;
+            split_config_sync_reset();
+            return ESP_OK;
+        }
+        ESP_LOGI(TAG, "ble_cfg: recv nonce_sum=%u >= own=%u — accepting",
+                 recv_sum, own_sum);
     }
 
     // All fragments received — write to NVS.

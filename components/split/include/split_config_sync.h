@@ -60,11 +60,16 @@ void split_config_sync_on_ack(const uint8_t *payload, size_t len);
 /**
  * @brief Handle an incoming CONFIG_SYNC fragment from the master.
  *        Reassembles fragments and applies the blob to local NVS on completion.
+ *
+ * @param out_reverse_ble_sync  Set to true when a stale ble_cfg write is rejected
+ *                              and the caller should push its own (newer) ble_cfg +
+ *                              bond data back to the sender.  May be NULL.
  */
 esp_err_t split_config_sync_on_fragment(const uint8_t *src_mac,
                                          const uint8_t *payload, size_t len,
                                          const uint8_t *reply_mac,
-                                         split_seq_alloc_fn_t get_seq);
+                                         split_seq_alloc_fn_t get_seq,
+                                         bool *out_reverse_ble_sync);
 
 /**
  * @brief Reset any in-progress reassembly (call on disconnect).

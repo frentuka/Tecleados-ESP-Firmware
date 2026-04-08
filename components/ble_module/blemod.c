@@ -63,6 +63,10 @@ static SemaphoreHandle_t s_host_stopped_sem = NULL;
 // Guard: only register the CONFIG_EVENTS handler once across reinits.
 static bool s_config_evt_registered = false;
 
+// Directed profile to restore in bleprph_on_sync after a Master-side reinit.
+// Set before ble_hid_deinit(); read and cleared in bleprph_on_sync.
+static int s_post_reinit_directed_profile = -1;
+
 // Buffer to hold peer address during pairing until encryption is complete
 static ble_addr_t s_pending_addr;
 
@@ -300,8 +304,21 @@ static void bleprph_on_sync(void) {
     return;
   }
 
-  // Stack is ready — start advertising if there's a reason to
-  ESP_LOGI(TAG, "BLE stack synced.");
+  if (s_is_suspended) {
+      ESP_LOGI(TAG, "BLE stack synced (suspended — not advertising).");
+      return;
+  }
+
+  // Restore the directed profile saved before a Master-side reinit so that
+  // ble_hid_advertise() targets the newly-synced host (not NON_DISC fallback).
+  if (s_post_reinit_directed_profile >= 0) {
+      s_directed_profile             = s_post_reinit_directed_profile;
+      s_post_reinit_directed_profile = -1;
+      ESP_LOGI(TAG, "BLE stack synced (post-reinit): directed adv → profile %d.",
+               s_directed_profile);
+  } else {
+      ESP_LOGI(TAG, "BLE stack synced.");
+  }
   ble_hid_advertise();
 }
 
@@ -923,12 +940,6 @@ void ble_hid_set_suspended(bool suspended) {
 }
 
 void ble_hid_reinit_bonds(void) {
-    if (!s_is_suspended) {
-        // Only safe while acting as split slave (suspended).  When we are the active
-        // master, tearing down NimBLE would drop live connections.
-        ESP_LOGW(TAG, "ble_hid_reinit_bonds: not suspended, skipping.");
-        return;
-    }
     // A full deinit+init forces ble_store_config_init() to run again, which reads
     // all bond data from NVS and calls ble_hs_pvcy_rpa_config() to load the peer
     // IRKs into the BLE controller's hardware resolving list.  Without this step,
@@ -936,10 +947,38 @@ void ble_hid_reinit_bonds(void) {
     // store and NVS but leave the controller's resolving list stale, so it cannot
     // resolve the host's Resolvable Private Address when it reconnects — causing
     // encryption to fail immediately after the role swap.
-    //
-    // By doing this reinit NOW (while still a slave, after bonds arrive via config
-    // sync) the hot path in ble_hid_set_suspended(false) can advertise immediately
-    // without any extra delay.
+    if (!s_is_suspended) {
+        // Reinit is safe only if there are no live connections to drop.
+        bool any_connected = false;
+        for (int i = 0; i < CFG_BLE_MAX_PROFILES; i++) {
+            if (s_conn_handles[i] != BLE_HS_CONN_HANDLE_NONE) {
+                any_connected = true;
+                break;
+            }
+        }
+        if (any_connected) {
+            // Existing connection still works (LTK is in RAM store).  The
+            // resolving list stays stale but the next reconnect after a role-swap
+            // will trigger a fresh ble_hid_set_suspended(false) reinit.
+            ESP_LOGW(TAG, "ble_hid_reinit_bonds: active connections — skipping "
+                     "(resolving list stale until reconnect).");
+            return;
+        }
+        // No active connections: reinit while master to warm the hardware
+        // resolving list.  Preserve selected_profile across deinit so that
+        // bleprph_on_sync → ble_hid_advertise() does directed reconnect.
+        const cfg_ble_state_t *st = cfg_ble_get_state();
+        s_post_reinit_directed_profile = (int)st->selected_profile;
+        s_reconnect_retries            = 0;
+        ESP_LOGI(TAG, "ble_hid_reinit_bonds: reiniting NimBLE while master "
+                 "(no active connections); will directed-adv to profile %d.",
+                 s_post_reinit_directed_profile);
+        ble_hid_deinit();
+        ble_hid_init();
+        return;
+    }
+    // Suspended (slave) path: reinit so the controller resolving list is ready
+    // for when ble_hid_set_suspended(false) starts advertising.
     ESP_LOGI(TAG, "ble_hid_reinit_bonds: reiniting NimBLE to warm controller resolving list.");
     ble_hid_deinit();
     ble_hid_init();

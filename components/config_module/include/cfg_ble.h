@@ -35,6 +35,12 @@ const cfg_ble_state_t *cfg_ble_get_state(void);
 void cfg_ble_save_state(const cfg_ble_state_t *state);
 
 /**
+ * @brief Returns the sum of addr_nonce across all profiles.
+ *        Used by config sync to detect stale ble_cfg blobs.
+ */
+uint32_t cfg_ble_get_nonce_sum(void);
+
+/**
  * @brief Reload the in-memory BLE config from NVS.
  *
  * Use this when NVS may have been updated externally (e.g. by the split config
