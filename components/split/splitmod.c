@@ -392,6 +392,14 @@ static void apply_ble_routing_for_role(split_role_t role)
     bool should_suspend = (role == SPLIT_ROLE_SLAVE);
     if (ble_hid_is_suspended() != should_suspend) {
         ESP_LOGI(TAG, "BLE routing → %s (role=%u)", should_suspend ? "SUSPENDED" : "RESUMED", (unsigned)role);
+        
+        if (!should_suspend) {
+            // We are becoming MASTER (or standalone): ensure we are using the 
+            // most up-to-date synced profiles and bond keys.
+            cfg_ble_reload();
+            ble_hid_reinit_bonds();
+        }
+
         ble_hid_set_suspended(should_suspend);
     }
 }

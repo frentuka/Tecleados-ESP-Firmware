@@ -17,6 +17,7 @@ typedef struct {
     cfg_ble_profile_t profiles[CFG_BLE_MAX_PROFILES];
     uint8_t selected_profile; // 0 to 8
     bool ble_routing_enabled; // True if BLE_TG is ON
+    uint16_t sync_version;    // Version counter to resolve split-brain conflicts
 } cfg_ble_state_t;
 
 /**
@@ -35,10 +36,10 @@ const cfg_ble_state_t *cfg_ble_get_state(void);
 void cfg_ble_save_state(const cfg_ble_state_t *state);
 
 /**
- * @brief Returns the sum of addr_nonce across all profiles.
- *        Used by config sync to detect stale ble_cfg blobs.
+ * @brief Updates the selected profile in-memory only.
  */
-uint32_t cfg_ble_get_nonce_sum(void);
+void cfg_ble_set_selected_profile(uint8_t index);
+
 
 /**
  * @brief Reload the in-memory BLE config from NVS.

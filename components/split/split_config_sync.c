@@ -11,6 +11,7 @@
 #include "esp_err.h"
 #include "cfg_storage_keys.h"
 #include "cfg_ble.h"
+#include "splitmod.h"
 
 #define SPLIT_CFG_SEND_RETRIES   3    // Max attempts per fragment
 #define SPLIT_CFG_RETRY_DELAY_MS 10   // Delay between retries (and after success, to pace the burst)
@@ -257,21 +258,22 @@ esp_err_t split_config_sync_on_fragment(const uint8_t *src_mac,
         s_rx.data_len == sizeof(cfg_ble_state_t)) {
 
         const cfg_ble_state_t *recv_st = (const cfg_ble_state_t *)s_rx.buf;
-        uint32_t recv_sum = 0;
-        for (int i = 0; i < CFG_BLE_MAX_PROFILES; i++) {
-            recv_sum += recv_st->profiles[i].addr_nonce;
-        }
-        uint32_t own_sum = cfg_ble_get_nonce_sum();
+        uint32_t recv_sum = recv_st->sync_version;
+        uint32_t own_sum = cfg_ble_get_state()->sync_version;
 
         if (own_sum > recv_sum) {
-            ESP_LOGI(TAG, "ble_cfg: own nonce_sum=%u > recv nonce_sum=%u — "
-                     "rejecting stale overwrite, requesting reverse sync",
+            // "Most-Paired Wins" Principle: If our own sync version
+            // is greater than the received data, our local store is more up-to-date.
+            // We reject the incoming stale config and trigger a 'reverse sync' so 
+            // the sender is updated with our superior/newer data.
+            ESP_LOGI(TAG, "ble_cfg: own sync_version=%u > recv=%u — "
+                     "rejecting stale update, requesting reverse master-slave sync",
                      own_sum, recv_sum);
             if (out_reverse_ble_sync) *out_reverse_ble_sync = true;
             split_config_sync_reset();
             return ESP_OK;
         }
-        ESP_LOGI(TAG, "ble_cfg: recv nonce_sum=%u >= own=%u — accepting",
+        ESP_LOGI(TAG, "ble_cfg: recv sync_version=%u >= own=%u — accepting",
                  recv_sum, own_sum);
     }
 

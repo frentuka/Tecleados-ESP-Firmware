@@ -34,6 +34,8 @@ static const char *TAG = "ble_hid_mod";
 #define BLE_APPEARANCE_HID_KEYBOARD 0x03C1
 #define BLE_DEVICE_NAME             "Tecleados MK1"
 
+extern void ble_store_config_init(void);
+
 /* ========================================================================= */
 /* State                                                                     */
 /* ========================================================================= */
@@ -81,9 +83,11 @@ static void ble_hid_pairing_timeout_cb(void *arg);
 static void bleprph_on_sync(void);
 static void bleprph_on_reset(int reason);
 static void ble_hid_advertise(void);
-static int ble_hid_gap_event(struct ble_gap_event *event, void *arg);
 static void ble_hid_on_ble_config_updated(void *arg, esp_event_base_t base,
                                            int32_t event_id, void *data);
+static void ble_hid_on_split_status_updated(void *arg, esp_event_base_t base,
+                                             int32_t event_id, void *data);
+static void ble_hid_dump_bonds(void);
 
 /* ========================================================================= */
 /* Callbacks and Event Handlers                                              */
@@ -113,13 +117,7 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
             ESP_LOGW(TAG, "Could not map connection to profile!");
         }
 
-        // If we are currently pairing to a profile, capture its MAC
-        if (s_pairing_profile >= 0 && s_pairing_profile < CFG_BLE_MAX_PROFILES) {
-            ESP_LOGI(TAG, "Connection established for pairing profile %d. Waiting for security...", s_pairing_profile);
-            s_pending_addr = desc.peer_id_addr;
-        }
-
-        // Always clear the directed/reconnect flag once connected
+        // Identity resolution is deferred until encryption/pairing is complete.
         s_directed_profile = -1;
       }
 
@@ -202,6 +200,15 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
     // Gives us information when encryption and pairing process is complete
     if (event->enc_change.status == 0) {
       ESP_LOGI(TAG, "Connection successfully encrypted (pairing complete)");
+
+      // Re-query connection to get the resolved Identity Address (Post-IRK exchange)
+      struct ble_gap_conn_desc desc;
+      if (ble_gap_conn_find(event->enc_change.conn_handle, &desc) == 0) {
+          s_pending_addr = desc.peer_id_addr;
+          ESP_LOGI(TAG, "Identity resolved: %02X:%02X:%02X:%02X:%02X:%02X",
+                   s_pending_addr.val[0], s_pending_addr.val[1], s_pending_addr.val[2],
+                   s_pending_addr.val[3], s_pending_addr.val[4], s_pending_addr.val[5]);
+      }
 
       // If we were in pairing mode, fire event so cfg_ble saves credentials.
       if (s_pairing_profile >= 0 && s_pairing_profile < CFG_BLE_MAX_PROFILES) {
@@ -330,6 +337,14 @@ static void ble_hid_advertise(void) {
   // Stop the cooldown timer if it's running, as we're starting advertising now
   esp_timer_stop(s_adv_cooldown_timer);
 
+  // Gating: NimBLE host must be synced with the controller before we can
+  // set addresses or start advertising. If not synced yet, bleprph_on_sync
+  // will call us again once the handshake is complete.
+  if (!ble_hs_synced()) {
+    ESP_LOGD(TAG, "ble_hid_advertise: host not synced yet, deferring.");
+    return;
+  }
+
   // Respect the routing toggle and suspended state
   if (!ble_hid_is_routing_active() || s_is_suspended) {
     ESP_LOGI(TAG, "BLE Routing disabled or suspended. Ensuring advertising is stopped.");
@@ -381,16 +396,15 @@ static void ble_hid_advertise(void) {
       }
   }
   if (use_shared) {
-      memcpy(rand_addr, sys_for_addr.ble_shared_addr, 6);
+      const uint8_t *s = sys_for_addr.ble_shared_addr;
+      memcpy(rand_addr, s, 6);
       ESP_LOGI(TAG, "ADDR_BASE shared=%02X:%02X:%02X:%02X:%02X:%02X",
-               sys_for_addr.ble_shared_addr[0], sys_for_addr.ble_shared_addr[1],
-               sys_for_addr.ble_shared_addr[2], sys_for_addr.ble_shared_addr[3],
-               sys_for_addr.ble_shared_addr[4], sys_for_addr.ble_shared_addr[5]);
+               s[0], s[1], s[2], s[3], s[4], s[5]);
   } else {
       uint8_t base_mac[6] = {0};
       ble_hs_id_copy_addr(BLE_ADDR_PUBLIC, base_mac, NULL);
       memcpy(rand_addr, base_mac, 6);
-      ESP_LOGI(TAG, "ADDR_BASE own_public=%02X:%02X:%02X:%02X:%02X:%02X (no shared addr!)",
+      ESP_LOGW(TAG, "ADDR_BASE unique_public=%02X:%02X:%02X:%02X:%02X:%02X (WARNING: No shared addr!)",
                base_mac[0], base_mac[1], base_mac[2], base_mac[3], base_mac[4], base_mac[5]);
   }
   rand_addr[5] |= 0xC0; // Set highest 2 bits of MSB for Static Random Address type
@@ -403,14 +417,15 @@ static void ble_hid_advertise(void) {
            active_profile, nonce,
            rand_addr[0], rand_addr[1], rand_addr[2], rand_addr[3], rand_addr[4], rand_addr[5]);
 
-  // Log profile validity and stored peer address so we can compare both halves.
-  if (st->profiles[active_profile].is_valid) {
-      const uint8_t *pa = st->profiles[active_profile].val;
-      ESP_LOGI(TAG, "PROFILE[%d] valid=1 peer=%02X:%02X:%02X:%02X:%02X:%02X type=%u nonce=%u",
-               active_profile, pa[0], pa[1], pa[2], pa[3], pa[4], pa[5],
-               st->profiles[active_profile].addr_type, nonce);
-  } else {
-      ESP_LOGW(TAG, "PROFILE[%d] valid=0 nonce=%u", active_profile, nonce);
+  // Log profile dump for diagnostics
+  ESP_LOGI(TAG, "Dumping all profiles (active=%d):", active_profile);
+  for (int i = 0; i < CFG_BLE_MAX_PROFILES; i++) {
+      if (st->profiles[i].is_valid) {
+          const uint8_t *pa = st->profiles[i].val;
+          ESP_LOGI(TAG, "  [%d] VALID, peer=%02X:%02X:%02X:%02X:%02X:%02X, type=%u, nonce=%u",
+                   i, pa[0], pa[1], pa[2], pa[3], pa[4], pa[5],
+                   st->profiles[i].addr_type, st->profiles[i].addr_nonce);
+      }
   }
 
   rc = ble_hs_id_set_rnd(rand_addr);
@@ -447,11 +462,32 @@ static void ble_hid_advertise(void) {
           dir_duration = 15000;
       }
 
-      // Normalize addr_type: strip identity-address high bits (types 2/3 → 0/1)
-      // so NimBLE passes a valid HCI address type to the controller.
-      uint8_t target_type = st->profiles[active_profile].addr_type & 0x01;
-      ble_addr_t peer_addr = { .type = target_type };
-      memcpy(peer_addr.val, st->profiles[active_profile].val, 6);
+      // If the peer is using RPA (Resolvable Private Address), the stored 'val' MAC
+      // might be stale. Try to find the bonded peer's Identity Address in NimBLE's
+      // store. If found, advertising to the Identity Address allows the controller
+      // to resolve the RPA based on the IRK we just synced.
+      ble_addr_t peer_addr = {0};
+      struct ble_store_value_sec peer_sec;
+      struct ble_store_key_sec key_sec = { .peer_addr = *BLE_ADDR_ANY, .idx = 0 };
+      
+      bool identity_found = false;
+      while (ble_store_read_peer_sec(&key_sec, &peer_sec) == 0) {
+          // If the bonded address matches our profile's Identity Address (or vice-versa),
+          // use the address from the bond record as it's the most reliable target.
+          if (memcmp(peer_sec.peer_addr.val, st->profiles[active_profile].val, 6) == 0) {
+              peer_addr = peer_sec.peer_addr;
+              identity_found = true;
+              break;
+          }
+          key_sec.idx++;
+      }
+
+      if (!identity_found) {
+          uint8_t target_type = st->profiles[active_profile].addr_type & 0x01;
+          peer_addr.type = target_type;
+          memcpy(peer_addr.val, st->profiles[active_profile].val, 6);
+          ESP_LOGD(TAG, "Directed adv: identity address not found in bond store, using profile addr");
+      }
 
       ESP_LOGI(TAG, "Starting directed adv → %02X:%02X:%02X:%02X:%02X:%02X "
                "profile=%d retry=%d %s",
@@ -547,6 +583,10 @@ void ble_hid_init(void) {
   // Create the host-stopped semaphore once — survives across reinits.
   if (s_host_stopped_sem == NULL) {
       s_host_stopped_sem = xSemaphoreCreateBinary();
+      if (s_host_stopped_sem == NULL) {
+          ESP_LOGE(TAG, "Failed to create stopped semaphore");
+          return;
+      }
   }
 
   // Reset per-connection state; pairing/directed profiles are set by the
@@ -560,7 +600,10 @@ void ble_hid_init(void) {
 
   // 1. Init the NimBLE transport (HCI over VHCI for integrated controller)
   ret = nimble_port_init();
-  assert(ret == ESP_OK);
+  if (ret != ESP_OK) {
+      ESP_LOGE(TAG, "nimble_port_init failed: %d", ret);
+      return;
+  }
 
   // 2. Register stack callbacks
   ble_hs_cfg.sync_cb = bleprph_on_sync;   // called when stack is ready
@@ -577,8 +620,12 @@ void ble_hid_init(void) {
   ble_hs_cfg.sm_sc = 1;   // Secure Connections (BLE 4.2+)
 
   // 4. Initialize bond storage (NVS)
+  ble_store_config_init(); // CRITICAL: Enables loading/saving bonds to NVS
   ble_hs_cfg.store_read_cb = ble_store_config_read;
   ble_hs_cfg.store_write_cb = ble_store_config_write;
+
+  // Final identity check
+  ble_hid_dump_bonds();
 
   // 5. Register GATT services
   ble_svc_gap_init();
@@ -629,6 +676,8 @@ void ble_hid_init(void) {
   if (!s_config_evt_registered) {
       esp_event_handler_register(CONFIG_EVENTS, CONFIG_EVENT_KIND_UPDATED,
                                   ble_hid_on_ble_config_updated, NULL);
+      esp_event_handler_register(SPLIT_EVENTS, SPLIT_EVENT_BLE_STATUS_UPDATED,
+                                  ble_hid_on_split_status_updated, NULL);
       s_config_evt_registered = true;
   }
 
@@ -737,6 +786,7 @@ void ble_hid_profile_pair(uint8_t profile_id) {
     new_state.profiles[profile_id].is_valid = false;
     // Rotate the address nonce so we appear as a new device to the phone
     new_state.profiles[profile_id].addr_nonce++;
+    new_state.sync_version++; // Update version to push changes to split counterpart
     cfg_ble_save_state(&new_state);
 
     if (was_valid) {
@@ -988,4 +1038,57 @@ void ble_hid_reinit_bonds(void) {
 
 bool ble_hid_is_suspended(void) {
     return s_is_suspended;
+}
+
+// Fired on SLAVE whenever the master pushes a status update (heartbeat/BLE event).
+static void ble_hid_on_split_status_updated(void *arg, esp_event_base_t base,
+                                             int32_t event_id, void *data) {
+    (void)arg; (void)base; (void)event_id;
+#if CONFIG_SPLIT_SUPPORT
+    const split_ble_status_t *ev = (const split_ble_status_t *)data;
+    (void)ev;
+#endif
+
+    // We only mirror the master's state if we are currently operating as a slave.
+    // If we are a standalone device or the current master, we own our own state.
+#if CONFIG_SPLIT_SUPPORT
+    if (splitmod_is_enabled() && splitmod_get_role() == SPLIT_ROLE_SLAVE) {
+        // Sync selected profile so background advertising targets the same slot.
+        // We only save to NVS if it actually changed to avoid excessive wear.
+        const cfg_ble_state_t *st = cfg_ble_get_state();
+        if (st->selected_profile != ev->selected_profile) {
+            cfg_ble_state_t new_st = *st;
+            new_st.selected_profile = ev->selected_profile;
+            cfg_ble_save_state(&new_st);
+            ESP_LOGI(TAG, "Slave sync: saved Master's profile %d to NVS", (int)new_st.selected_profile);
+        } else {
+            // Update in-memory only if no change needed in NVS.
+            cfg_ble_set_selected_profile(ev->selected_profile);
+        }
+        
+        // Sync connection bitmap...
+        for (int i = 0; i < CFG_BLE_MAX_PROFILES; i++) {
+            bool is_conn_on_master = (ev->connected_bitmap & (1 << i)) != 0;
+            if (is_conn_on_master) {
+                if (s_conn_handles[i] == BLE_HS_CONN_HANDLE_NONE) {
+                    s_conn_handles[i] = 0xFFFF; 
+                }
+            } else {
+                if (s_conn_handles[i] == 0xFFFF) {
+                    s_conn_handles[i] = BLE_HS_CONN_HANDLE_NONE;
+                }
+            }
+        }
+        
+        // If advertising is running, restart it to apply the new profile/connection state.
+        if (ble_gap_adv_active()) {
+            ble_hid_advertise();
+        }
+    }
+#endif
+}
+
+static void ble_hid_dump_bonds(void) {
+    // Note: Diagnostics can be expanded here if needed to track LTK count.
+    ESP_LOGI(TAG, "Bond store persistence is active.");
 }
