@@ -6,7 +6,8 @@
 #include "cJSON.h"
 #include "cfgmod.h"
 #include "event_bus.h"
-#include "nvs.h"
+#include "host/ble_store.h"
+#include "blemod.h"
 
 static const char *TAG = "cfg_ble";
 
@@ -121,6 +122,13 @@ static void on_ble_updated(const char *key) {
     }
 }
 
+void cfg_ble_reload(void) {
+    // Force re-read from NVS.  Call this when the in-memory cache may be stale
+    // (e.g. after config sync has written updated data to NVS while BLE was
+    // suspended as a split slave).
+    on_ble_updated("ble_cfg");
+}
+
 static void cfg_ble_on_pairing_complete(void *arg, esp_event_base_t base,
                                         int32_t event_id, void *data) {
     (void)arg; (void)base; (void)event_id;
@@ -178,126 +186,125 @@ void cfg_ble_save_state(const cfg_ble_state_t *state) {
 }
 
 /*
- * Bond sync serialization format (binary TLV):
- *   [uint16_t count]
- *   then for each entry:
- *     [uint8_t  key_len]          -- length including null terminator
- *     [char     key[key_len]]     -- NVS key (null-terminated)
- *     [uint16_t data_len]         -- blob size in bytes
- *     [uint8_t  data[data_len]]   -- raw NVS blob
+ * Bond sync serialization format:
+ *   [uint8_t our_count]
+ *   [struct ble_store_value_sec  our_secs[our_count]]
+ *   [uint8_t peer_count]
+ *   [struct ble_store_value_sec  peer_secs[peer_count]]
+ *
+ * Uses NimBLE's public store API so both the in-memory cache and NVS are kept
+ * in sync.  Raw NVS access would only update NVS; the in-memory cache (which
+ * ble_store_config_read searches) would remain stale and reconnection would
+ * fail without re-pairing.
  */
 esp_err_t cfg_ble_bond_read_all(void *out_buf, size_t *inout_len) {
     if (!inout_len) return ESP_ERR_INVALID_ARG;
 
-    nvs_iterator_t it = NULL;
-    esp_err_t err = nvs_entry_find("nvs", "nimble_bond", NVS_TYPE_BLOB, &it);
-    if (err == ESP_ERR_NVS_NOT_FOUND || it == NULL) {
-        // No bonds — write an empty packet (count=0).
-        if (out_buf && *inout_len >= sizeof(uint16_t)) {
-            uint16_t zero = 0;
-            memcpy(out_buf, &zero, sizeof(uint16_t));
-        }
-        *inout_len = sizeof(uint16_t);
-        return ESP_OK;
-    }
-    if (err != ESP_OK) return err;
-
-    nvs_handle_t handle;
-    if (nvs_open("nimble_bond", NVS_READONLY, &handle) != ESP_OK) {
-        nvs_release_iterator(it);
-        return ESP_FAIL;
+    // Heap-allocate: sizeof(ble_store_value_sec) ~88 bytes × 9 × 2 = ~1.5 kB
+    // which would overflow the split task stack if placed there.
+    const size_t sec_buf_size = CFG_BLE_MAX_PROFILES * sizeof(struct ble_store_value_sec);
+    struct ble_store_value_sec *our_secs  = malloc(sec_buf_size);
+    struct ble_store_value_sec *peer_secs = malloc(sec_buf_size);
+    if (!our_secs || !peer_secs) {
+        free(our_secs);
+        free(peer_secs);
+        return ESP_ERR_NO_MEM;
     }
 
-    size_t   req_size = sizeof(uint16_t);
-    uint16_t count    = 0;
-    uint8_t *ptr      = out_buf ? (uint8_t *)out_buf + sizeof(uint16_t) : NULL;
+    int our_count = 0, peer_count = 0;
+    struct ble_store_key_sec key;
 
-    while (it != NULL) {
-        nvs_entry_info_t info;
-        nvs_entry_info(it, &info);
-
-        size_t blob_len = 0;
-        if (nvs_get_blob(handle, info.key, NULL, &blob_len) == ESP_OK) {
-            uint8_t klen       = (uint8_t)(strlen(info.key) + 1);
-            size_t  entry_size = sizeof(uint8_t) + klen + sizeof(uint16_t) + blob_len;
-
-            req_size += entry_size;
-            count++;
-
-            if (ptr) {
-                if (req_size > *inout_len) {
-                    nvs_close(handle);
-                    nvs_release_iterator(it);
-                    return ESP_ERR_NO_MEM;
-                }
-                *ptr++ = klen;
-                memcpy(ptr, info.key, klen);
-                ptr += klen;
-
-                uint16_t dlen = (uint16_t)blob_len;
-                memcpy(ptr, &dlen, sizeof(uint16_t));
-                ptr += sizeof(uint16_t);
-
-                nvs_get_blob(handle, info.key, ptr, &blob_len);
-                ptr += blob_len;
-            }
-        }
-
-        err = nvs_entry_next(&it);
-        if (err != ESP_OK) break;
+    memset(&key, 0, sizeof(key));
+    key.peer_addr = *BLE_ADDR_ANY;
+    for (int i = 0; i < CFG_BLE_MAX_PROFILES; i++) {
+        key.idx = (uint8_t)i;
+        if (ble_store_read_our_sec(&key, &our_secs[our_count]) != 0) break;
+        our_count++;
     }
 
-    if (out_buf && req_size <= *inout_len) {
-        memcpy(out_buf, &count, sizeof(uint16_t));
+    memset(&key, 0, sizeof(key));
+    key.peer_addr = *BLE_ADDR_ANY;
+    for (int i = 0; i < CFG_BLE_MAX_PROFILES; i++) {
+        key.idx = (uint8_t)i;
+        if (ble_store_read_peer_sec(&key, &peer_secs[peer_count]) != 0) break;
+        peer_count++;
     }
 
-    nvs_close(handle);
-    // it is already NULL or released by nvs_entry_next returning error
-    *inout_len = req_size;
-    ESP_LOGI(TAG, "Bond read_all: %u entries, %u bytes", (unsigned)count, (unsigned)req_size);
+    for (int i = 0; i < our_count; i++) {
+        const uint8_t *pa = our_secs[i].peer_addr.val;
+        ESP_LOGI(TAG, "BOND_READ our[%d] peer=%02X:%02X:%02X:%02X:%02X:%02X sc=%d ltk_ok=%d",
+                 i, pa[0], pa[1], pa[2], pa[3], pa[4], pa[5],
+                 our_secs[i].sc, our_secs[i].ltk_present);
+    }
+    for (int i = 0; i < peer_count; i++) {
+        const uint8_t *pa = peer_secs[i].peer_addr.val;
+        ESP_LOGI(TAG, "BOND_READ peer[%d] peer=%02X:%02X:%02X:%02X:%02X:%02X sc=%d ltk_ok=%d",
+                 i, pa[0], pa[1], pa[2], pa[3], pa[4], pa[5],
+                 peer_secs[i].sc, peer_secs[i].ltk_present);
+    }
+
+    size_t req = 1 + (size_t)our_count  * sizeof(struct ble_store_value_sec)
+               + 1 + (size_t)peer_count * sizeof(struct ble_store_value_sec);
+
+    if (out_buf && *inout_len >= req) {
+        uint8_t *p = (uint8_t *)out_buf;
+        *p++ = (uint8_t)our_count;
+        memcpy(p, our_secs, (size_t)our_count * sizeof(struct ble_store_value_sec));
+        p += (size_t)our_count * sizeof(struct ble_store_value_sec);
+        *p++ = (uint8_t)peer_count;
+        memcpy(p, peer_secs, (size_t)peer_count * sizeof(struct ble_store_value_sec));
+    }
+
+    free(our_secs);
+    free(peer_secs);
+
+    *inout_len = req;
+    ESP_LOGI(TAG, "Bond read_all: %d our_secs + %d peer_secs = %u bytes",
+             our_count, peer_count, (unsigned)req);
     return ESP_OK;
 }
 
 esp_err_t cfg_ble_bond_write_all(const void *data, size_t len) {
-    if (!data || len < sizeof(uint16_t)) return ESP_ERR_INVALID_ARG;
+    if (!data || len < 2) return ESP_ERR_INVALID_ARG;
 
-    nvs_handle_t handle;
-    if (nvs_open("nimble_bond", NVS_READWRITE, &handle) != ESP_OK) {
-        return ESP_FAIL;
+    const uint8_t *p = (const uint8_t *)data;
+    size_t rem = len;
+
+    uint8_t our_count = *p++; rem--;
+    size_t our_size = (size_t)our_count * sizeof(struct ble_store_value_sec);
+    if (rem < our_size + 1) return ESP_ERR_INVALID_SIZE;
+    const struct ble_store_value_sec *our_secs = (const struct ble_store_value_sec *)p;
+    p += our_size; rem -= our_size;
+
+    uint8_t peer_count = *p++; rem--;
+    size_t peer_size = (size_t)peer_count * sizeof(struct ble_store_value_sec);
+    if (rem < peer_size) return ESP_ERR_INVALID_SIZE;
+    const struct ble_store_value_sec *peer_secs = (const struct ble_store_value_sec *)p;
+
+    // Write through NimBLE's public API — updates both RAM cache and NVS.
+    for (int i = 0; i < our_count; i++) {
+        const uint8_t *pa = our_secs[i].peer_addr.val;
+        ESP_LOGI(TAG, "BOND_WRITE our[%d] peer=%02X:%02X:%02X:%02X:%02X:%02X sc=%d ltk_ok=%d",
+                 i, pa[0], pa[1], pa[2], pa[3], pa[4], pa[5],
+                 our_secs[i].sc, our_secs[i].ltk_present);
+        int rc = ble_store_write_our_sec(&our_secs[i]);
+        if (rc != 0) ESP_LOGW(TAG, "ble_store_write_our_sec[%d] rc=%d", i, rc);
+    }
+    for (int i = 0; i < peer_count; i++) {
+        const uint8_t *pa = peer_secs[i].peer_addr.val;
+        ESP_LOGI(TAG, "BOND_WRITE peer[%d] peer=%02X:%02X:%02X:%02X:%02X:%02X sc=%d ltk_ok=%d",
+                 i, pa[0], pa[1], pa[2], pa[3], pa[4], pa[5],
+                 peer_secs[i].sc, peer_secs[i].ltk_present);
+        int rc = ble_store_write_peer_sec(&peer_secs[i]);
+        if (rc != 0) ESP_LOGW(TAG, "ble_store_write_peer_sec[%d] rc=%d", i, rc);
     }
 
-    nvs_erase_all(handle);
+    ESP_LOGI(TAG, "Bond write_all: wrote %d our_secs + %d peer_secs", our_count, peer_count);
 
-    const uint8_t *ptr = (const uint8_t *)data;
-    uint16_t count;
-    memcpy(&count, ptr, sizeof(uint16_t));
-    ptr += sizeof(uint16_t);
-    size_t rem = len - sizeof(uint16_t);
+    // Pre-warm the BLE controller's resolving list so that the next role swap can
+    // start advertising immediately with a fully-populated resolving list.
+    // ble_hid_reinit_bonds() is a no-op if we are currently the active master.
+    ble_hid_reinit_bonds();
 
-    for (uint16_t i = 0; i < count; i++) {
-        if (rem < sizeof(uint8_t)) break;
-        uint8_t klen = *ptr++;
-        rem -= sizeof(uint8_t);
-
-        if (rem < klen) break;
-        const char *key = (const char *)ptr;
-        ptr += klen;
-        rem -= klen;
-
-        if (rem < sizeof(uint16_t)) break;
-        uint16_t dlen;
-        memcpy(&dlen, ptr, sizeof(uint16_t));
-        ptr += sizeof(uint16_t);
-        rem -= sizeof(uint16_t);
-
-        if (rem < dlen) break;
-        nvs_set_blob(handle, key, ptr, dlen);
-        ptr += dlen;
-        rem -= dlen;
-    }
-
-    nvs_commit(handle);
-    nvs_close(handle);
-    ESP_LOGI(TAG, "Bond write_all: restored %u entries to nimble_bond", (unsigned)count);
     return ESP_OK;
 }

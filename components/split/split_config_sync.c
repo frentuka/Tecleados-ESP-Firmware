@@ -25,7 +25,7 @@ const split_sync_entry_t SPLIT_SYNC_ENTRIES[] = {
     { CFGMOD_KIND_LAYOUT,   CFG_ST_LAYER_1 },
     { CFGMOD_KIND_LAYOUT,   CFG_ST_LAYER_2 },
     { CFGMOD_KIND_LAYOUT,   CFG_ST_LAYER_3 },
-    { CFGMOD_KIND_SYSTEM,   "system"        },
+    { CFGMOD_KIND_SYSTEM,   "sys"           },
     { CFGMOD_KIND_CONNECTION, "ble_cfg"     },
     { CFGMOD_KIND_PHYSICAL, CFG_ST_PHYSICAL_LAYOUT },
     { CFGMOD_KIND_BLE_BOND, "all"           },

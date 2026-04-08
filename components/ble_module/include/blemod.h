@@ -44,3 +44,9 @@ void ble_hid_set_suspended(bool suspended);
 
 /** @brief Returns true if BLE operations are currently suspended. */
 bool ble_hid_is_suspended(void);
+
+/** @brief Reinitialize NimBLE to load newly-synced bond keys into the BLE controller's
+ *         hardware resolving list.  Must only be called while suspended (Split slave mode);
+ *         no-op otherwise.  Call this after a bond sync completes so that
+ *         ble_hid_set_suspended(false) can start advertising immediately. */
+void ble_hid_reinit_bonds(void);

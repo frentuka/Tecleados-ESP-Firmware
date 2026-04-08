@@ -9,6 +9,8 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "host/ble_gap.h"
 #include "host/ble_hs.h"
 #include "host/util/util.h"
@@ -42,6 +44,11 @@ static uint16_t s_conn_handles[CFG_BLE_MAX_PROFILES];
 static int s_pairing_profile = -1;
 // Currently directed advertising target. -1 if not doing directed.
 static int s_directed_profile = -1;
+// How many times we have restarted directed (reconnect) advertising after a
+// timeout without getting a connection.  Reset on connect; capped at
+// BLE_RECONNECT_MAX_RETRIES after which we fall to background mode.
+static int s_reconnect_retries = 0;
+#define BLE_RECONNECT_MAX_RETRIES 8  // 8 × 15 s = 2 min of active GEN_DISC
 
 // Cooldown timer to prevent instant reconnection loops after manual disconnect
 static esp_timer_handle_t s_adv_cooldown_timer;
@@ -49,6 +56,12 @@ static void ble_hid_adv_timer_cb(void *arg);
 
 // Suspended state flag (used by Split Keyboard slave to stop BLE without updating NVS config)
 static bool s_is_suspended = false;
+
+// Full NimBLE reinit support: semaphore signalled by ble_host_task just before
+// it calls vTaskDelete so the deinit path knows the task has exited.
+static SemaphoreHandle_t s_host_stopped_sem = NULL;
+// Guard: only register the CONFIG_EVENTS handler once across reinits.
+static bool s_config_evt_registered = false;
 
 // Buffer to hold peer address during pairing until encryption is complete
 static ble_addr_t s_pending_addr;
@@ -65,6 +78,8 @@ static void bleprph_on_sync(void);
 static void bleprph_on_reset(int reason);
 static void ble_hid_advertise(void);
 static int ble_hid_gap_event(struct ble_gap_event *event, void *arg);
+static void ble_hid_on_ble_config_updated(void *arg, esp_event_base_t base,
+                                           int32_t event_id, void *data);
 
 /* ========================================================================= */
 /* Callbacks and Event Handlers                                              */
@@ -87,6 +102,7 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
 
         if (profile >= 0 && profile < CFG_BLE_MAX_PROFILES) {
             s_conn_handles[profile] = event->connect.conn_handle;
+            s_reconnect_retries = 0; // successful connection — reset retry counter
             ESP_LOGI(TAG, "Mapped connection %d to profile %d (via arg)", event->connect.conn_handle, profile);
             esp_event_post(BLE_EVENTS, BLE_EVENT_PROFILE_CONNECTED, &profile, sizeof(int), 0);
         } else {
@@ -146,13 +162,35 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
 
   case BLE_GAP_EVENT_ADV_COMPLETE:
     ESP_LOGI(TAG, "Advertising complete event (timeout/stopped). Reason=%d", event->adv_complete.reason);
-    // Note: We now rely more on the master s_pairing_timeout_timer for pairing state,
-    // but we still clear flags here for safety.
-    s_directed_profile = -1;
-    // Fallback to background advertising if routing is still active and we didn't just stop it manually
-    if (ble_hid_is_routing_active() && event->adv_complete.reason == BLE_HS_ETIMEOUT) {
-        ESP_LOGI(TAG, "Advertising timed out. Restarting in background mode.");
+    if (event->adv_complete.reason == BLE_HS_ETIMEOUT && ble_hid_is_routing_active()) {
+        // If we were in directed/reconnect mode and timed out without a connection,
+        // retry in GEN_DISC instead of immediately falling to background.  This
+        // keeps the device discoverable long enough for the host to auto-reconnect
+        // after a role swap (host can take several seconds to start scanning).
+        // After BLE_RECONNECT_MAX_RETRIES we give up and fall to passive background.
+        const cfg_ble_state_t *st = cfg_ble_get_state();
+        int sel = (s_directed_profile != -1) ? s_directed_profile : st->selected_profile;
+        bool was_reconnecting = (s_directed_profile != -1) && (s_pairing_profile == -1);
+        bool profile_unconnected = (sel >= 0 && sel < CFG_BLE_MAX_PROFILES &&
+                                    s_conn_handles[sel] == BLE_HS_CONN_HANDLE_NONE);
+
+        s_directed_profile = -1; // clear before potential restart
+
+        if (was_reconnecting && profile_unconnected
+            && s_reconnect_retries < BLE_RECONNECT_MAX_RETRIES) {
+            s_reconnect_retries++;
+            s_directed_profile = sel; // restart GEN_DISC reconnect window
+            ESP_LOGI(TAG, "Reconnect window timed out, retrying (%d/%d).",
+                     s_reconnect_retries, BLE_RECONNECT_MAX_RETRIES);
+        } else {
+            if (s_reconnect_retries >= BLE_RECONNECT_MAX_RETRIES) {
+                s_reconnect_retries = 0;
+                ESP_LOGI(TAG, "Reconnect retries exhausted, falling to background mode.");
+            }
+        }
         ble_hid_advertise();
+    } else {
+        s_directed_profile = -1;
     }
     break;
 
@@ -309,7 +347,6 @@ static void ble_hid_advertise(void) {
   }
 
   struct ble_gap_adv_params adv_params = {0};
-  struct ble_hs_adv_fields fields = {0};
   int rc;
 
   // Stop any existing advertising first
@@ -328,84 +365,141 @@ static void ble_hid_advertise(void) {
   }
   if (use_shared) {
       memcpy(rand_addr, sys_for_addr.ble_shared_addr, 6);
+      ESP_LOGI(TAG, "ADDR_BASE shared=%02X:%02X:%02X:%02X:%02X:%02X",
+               sys_for_addr.ble_shared_addr[0], sys_for_addr.ble_shared_addr[1],
+               sys_for_addr.ble_shared_addr[2], sys_for_addr.ble_shared_addr[3],
+               sys_for_addr.ble_shared_addr[4], sys_for_addr.ble_shared_addr[5]);
   } else {
       uint8_t base_mac[6] = {0};
       ble_hs_id_copy_addr(BLE_ADDR_PUBLIC, base_mac, NULL);
       memcpy(rand_addr, base_mac, 6);
+      ESP_LOGI(TAG, "ADDR_BASE own_public=%02X:%02X:%02X:%02X:%02X:%02X (no shared addr!)",
+               base_mac[0], base_mac[1], base_mac[2], base_mac[3], base_mac[4], base_mac[5]);
   }
   rand_addr[5] |= 0xC0; // Set highest 2 bits of MSB for Static Random Address type
 
   // Rotate LSB based on profile ID AND nonce to change identity on re-pair.
-  rand_addr[0] = (rand_addr[0] + active_profile + st->profiles[active_profile].addr_nonce) & 0xFF;
+  uint8_t nonce = st->profiles[active_profile].addr_nonce;
+  rand_addr[0] = (rand_addr[0] + active_profile + nonce) & 0xFF;
+
+  ESP_LOGI(TAG, "ADDR_FINAL profile=%d nonce=%u addr=%02X:%02X:%02X:%02X:%02X:%02X",
+           active_profile, nonce,
+           rand_addr[0], rand_addr[1], rand_addr[2], rand_addr[3], rand_addr[4], rand_addr[5]);
+
+  // Log profile validity and stored peer address so we can compare both halves.
+  if (st->profiles[active_profile].is_valid) {
+      const uint8_t *pa = st->profiles[active_profile].val;
+      ESP_LOGI(TAG, "PROFILE[%d] valid=1 peer=%02X:%02X:%02X:%02X:%02X:%02X type=%u nonce=%u",
+               active_profile, pa[0], pa[1], pa[2], pa[3], pa[4], pa[5],
+               st->profiles[active_profile].addr_type, nonce);
+  } else {
+      ESP_LOGW(TAG, "PROFILE[%d] valid=0 nonce=%u", active_profile, nonce);
+  }
 
   rc = ble_hs_id_set_rnd(rand_addr);
   if (rc != 0) {
       ESP_LOGE(TAG, "Failed to set random address: %d", rc);
   }
 
-  // --- Advertising data ---
+  bool is_reconnecting = (s_directed_profile != -1) && (s_pairing_profile == -1);
 
-  // Appearance: HID keyboard
-  fields.appearance = BLE_APPEARANCE_HID_KEYBOARD;
-  fields.appearance_is_present = 1;
+  // For the first few reconnect attempts after a role swap, use directed advertising
+  // (ADV_DIRECT_IND).  The phone's BLE controller passively listens on advertising
+  // channels and auto-initiates a connection as soon as it sees an ADV_DIRECT_IND
+  // addressed to it — no active scan required from the phone side.
+  //
+  // Retry 0   : high duty cycle (3.75 ms interval, 1.28 s spec-mandated max).
+  //             Phone connects within ~50 ms if it's listening → "silent handover".
+  // Retries 1-3: low duty cycle directed (20–30 ms interval, 15 s window).
+  //             Fallback when the high-duty window expired without a connection.
+  // Retries 4+ : fall through to undirected GEN_DISC (handled by the else branch).
+  //             Allows phone to see a normal advertisement and reconnect via scan.
+  if (is_reconnecting && is_valid && s_reconnect_retries < 4) {
+      adv_params.conn_mode = BLE_GAP_CONN_MODE_DIR;
 
-  // Device name
-  const char *name = ble_svc_gap_device_name();
-  fields.name = (uint8_t *)name;
-  fields.name_len = (uint8_t)strlen(name);
-  fields.name_is_complete = 1;
+      int32_t dir_duration;
+      if (s_reconnect_retries == 0) {
+          // High duty cycle: BLE spec fixes the max at 1.28 s; the controller fires
+          // ADV_COMPLETE after that regardless of the duration_ms we pass.
+          adv_params.high_duty_cycle = 1;
+          dir_duration = BLE_HS_FOREVER; // controller enforces the 1.28 s cap
+      } else {
+          adv_params.high_duty_cycle = 0;
+          adv_params.itvl_min = 32; // 20 ms
+          adv_params.itvl_max = 48; // 30 ms
+          dir_duration = 15000;
+      }
 
-  // Advertise the HID service UUID
-  static const ble_uuid16_t hid_uuid = BLE_UUID16_INIT(0x1812);
-  fields.uuids16 = &hid_uuid;
-  fields.num_uuids16 = 1;
-  fields.uuids16_is_complete = 1;
+      // Normalize addr_type: strip identity-address high bits (types 2/3 → 0/1)
+      // so NimBLE passes a valid HCI address type to the controller.
+      uint8_t target_type = st->profiles[active_profile].addr_type & 0x01;
+      ble_addr_t peer_addr = { .type = target_type };
+      memcpy(peer_addr.val, st->profiles[active_profile].val, 6);
 
-  // Discoverability: GEN_DISC only if PAIRING or RECONNECTING (Discoverable)
-  // BACKGROUND mode is NON-DISC (only connectable by those who know us)
-  if (s_pairing_profile != -1 || s_directed_profile != -1) {
-      fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
-      adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;
+      ESP_LOGI(TAG, "Starting directed adv → %02X:%02X:%02X:%02X:%02X:%02X "
+               "profile=%d retry=%d %s",
+               peer_addr.val[0], peer_addr.val[1], peer_addr.val[2],
+               peer_addr.val[3], peer_addr.val[4], peer_addr.val[5],
+               active_profile, s_reconnect_retries,
+               adv_params.high_duty_cycle ? "HIGH_DUTY(1.28s)" : "LOW_DUTY(15s)");
+
+      rc = ble_gap_adv_start(BLE_OWN_ADDR_RANDOM, &peer_addr, dir_duration, &adv_params,
+                             ble_hid_gap_event, (void*)(intptr_t)(active_profile + 1));
   } else {
-      fields.flags = BLE_HS_ADV_F_BREDR_UNSUP; // No DISC flag = Non-Discoverable
-      adv_params.disc_mode = BLE_GAP_DISC_MODE_NON;
+      // Undirected advertising: pairing mode, background mode, or directed target
+      // not yet known (config sync still in flight after a role swap).
+      struct ble_hs_adv_fields fields = {0};
+
+      fields.appearance = BLE_APPEARANCE_HID_KEYBOARD;
+      fields.appearance_is_present = 1;
+
+      const char *name = ble_svc_gap_device_name();
+      fields.name = (uint8_t *)name;
+      fields.name_len = (uint8_t)strlen(name);
+      fields.name_is_complete = 1;
+
+      static const ble_uuid16_t hid_uuid = BLE_UUID16_INIT(0x1812);
+      fields.uuids16 = &hid_uuid;
+      fields.num_uuids16 = 1;
+      fields.uuids16_is_complete = 1;
+
+      if (s_pairing_profile != -1 || s_directed_profile != -1) {
+          fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
+          adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;
+          adv_params.itvl_min = 32;   // 20ms
+          adv_params.itvl_max = 48;   // 30ms
+      } else {
+          fields.flags = BLE_HS_ADV_F_BREDR_UNSUP;
+          adv_params.disc_mode = BLE_GAP_DISC_MODE_NON;
+          adv_params.itvl_min = 1280; // 800ms
+          adv_params.itvl_max = 1600; // 1000ms
+      }
+      adv_params.conn_mode = BLE_GAP_CONN_MODE_UND;
+
+      int32_t duration_ms = BLE_HS_FOREVER;
+      if (s_pairing_profile != -1) {
+          duration_ms = 60000;
+      } else if (s_directed_profile != -1) {
+          duration_ms = 15000;
+      }
+
+      rc = ble_gap_adv_set_fields(&fields);
+      if (rc != 0) {
+          ESP_LOGE(TAG, "ble_gap_adv_set_fields failed: %d", rc);
+          return;
+      }
+
+      ESP_LOGI(TAG, "Starting undirected adv: mode=%s duration=%ld ms profile=%d state=%s",
+               adv_params.disc_mode == BLE_GAP_DISC_MODE_GEN ? "GEN_DISC" : "NON_DISC",
+               (long)duration_ms, active_profile,
+               s_pairing_profile != -1 ? "PAIRING" : (s_directed_profile != -1 ? "RECONNECTING(no peer)" : "BACKGROUND"));
+
+      rc = ble_gap_adv_start(BLE_OWN_ADDR_RANDOM, NULL, duration_ms, &adv_params,
+                             ble_hid_gap_event, (void*)(intptr_t)(active_profile + 1));
   }
 
-  rc = ble_gap_adv_set_fields(&fields);
-  if (rc != 0) {
-    ESP_LOGE(TAG, "ble_gap_adv_set_fields failed: %d", rc);
-    return;
-  }
-
-  // --- Advertising parameters ---
-  adv_params.conn_mode = BLE_GAP_CONN_MODE_UND; // Always connectable (Undirected)
-
-  // Intervals: Fast for pairing/reconnect, slow for background
-  if (s_pairing_profile != -1 || s_directed_profile != -1) {
-      adv_params.itvl_min = 32;   // 20ms
-      adv_params.itvl_max = 48;   // 30ms
-  } else {
-      adv_params.itvl_min = 1280; // 800ms
-      adv_params.itvl_max = 1600; // 1000ms
-  }
-
-  // Duration: Use master timer for pairing, stack timer for reconnection
-  int32_t duration_ms = BLE_HS_FOREVER;
-  if (s_pairing_profile != -1) {
-      duration_ms = 60000; // Match master timer
-  } else if (s_directed_profile != -1) {
-      duration_ms = 15000;
-  }
-
-  ESP_LOGI(TAG, "Starting gap adv: mode=%s, duration=%ld ms, profile=%d, state=%s",
-           adv_params.disc_mode == BLE_GAP_DISC_MODE_GEN ? "GEN_DISC" : "NON_DISC",
-           (long)duration_ms, active_profile,
-           (s_pairing_profile != -1) ? "PAIRING" : (s_directed_profile != -1 ? "RECONNECTING" : "BACKGROUND"));
-
-  rc = ble_gap_adv_start(BLE_OWN_ADDR_RANDOM, NULL, duration_ms, &adv_params, ble_hid_gap_event, (void*)(intptr_t)(active_profile + 1));
   if (rc != 0) {
     ESP_LOGE(TAG, "ble_gap_adv_start failed: %d", rc);
-    return;
   }
 }
 
@@ -413,7 +507,17 @@ static void ble_hid_advertise(void) {
 static void ble_host_task(void *param) {
   // blocks until nimble_port_stop()
   nimble_port_run();
-  nimble_port_freertos_deinit();
+  // Signal the deinit path that the host event loop has exited so it is safe
+  // to call nimble_port_deinit() and start a fresh nimble_port_init().
+  if (s_host_stopped_sem) xSemaphoreGive(s_host_stopped_sem);
+  // Delete ourselves directly instead of calling nimble_port_freertos_deinit().
+  // nimble_port_freertos_deinit() calls nimble_port_stop() internally in some
+  // ESP-IDF versions, which would post a spurious stop-event to the new NimBLE
+  // instance's event queue (started by nimble_port_init() on the other task),
+  // causing the new nimble_host task to exit its run-loop immediately and panic.
+  // vTaskDelete(NULL) only touches FreeRTOS kernel structures — it is safe to
+  // call while nimble_port_deinit()/init() runs concurrently on the split task.
+  vTaskDelete(NULL);
 }
 
 /* ========================================================================= */
@@ -423,9 +527,19 @@ static void ble_host_task(void *param) {
 void ble_hid_init(void) {
   esp_err_t ret;
 
+  // Create the host-stopped semaphore once — survives across reinits.
+  if (s_host_stopped_sem == NULL) {
+      s_host_stopped_sem = xSemaphoreCreateBinary();
+  }
+
+  // Reset per-connection state; pairing/directed profiles are set by the
+  // caller before ble_hid_init() so that bleprph_on_sync → ble_hid_advertise
+  // uses the right values without a race.
   for (int i = 0; i < CFG_BLE_MAX_PROFILES; i++) {
       s_conn_handles[i] = BLE_HS_CONN_HANDLE_NONE;
   }
+  s_pairing_profile = -1;
+  s_reconnect_retries = 0;
 
   // 1. Init the NimBLE transport (HCI over VHCI for integrated controller)
   ret = nimble_port_init();
@@ -474,20 +588,57 @@ void ble_hid_init(void) {
   // 7. Spin up the NimBLE FreeRTOS task
   nimble_port_freertos_init(ble_host_task);
 
-  // 8. Initialize advertising timers
-  const esp_timer_create_args_t cooldown_timer_args = {
-      .callback = ble_hid_adv_timer_cb,
-      .name = "adv_cooldown"
-  };
-  esp_timer_create(&cooldown_timer_args, &s_adv_cooldown_timer);
+  // 8. Create advertising timers once — they survive across reinits.
+  if (s_adv_cooldown_timer == NULL) {
+      const esp_timer_create_args_t cooldown_timer_args = {
+          .callback = ble_hid_adv_timer_cb,
+          .name = "adv_cooldown"
+      };
+      esp_timer_create(&cooldown_timer_args, &s_adv_cooldown_timer);
+  }
+  if (s_pairing_timeout_timer == NULL) {
+      const esp_timer_create_args_t pairing_timer_args = {
+          .callback = ble_hid_pairing_timeout_cb,
+          .name = "pairing_timeout"
+      };
+      esp_timer_create(&pairing_timer_args, &s_pairing_timeout_timer);
+  }
 
-  const esp_timer_create_args_t pairing_timer_args = {
-      .callback = ble_hid_pairing_timeout_cb,
-      .name = "pairing_timeout"
-  };
-  esp_timer_create(&pairing_timer_args, &s_pairing_timeout_timer);
+  // 9. Listen for BLE connection config updates so that if advertising started
+  // in undirected mode (profile not yet valid — config sync race on role swap),
+  // it upgrades to directed advertising as soon as the profile data arrives.
+  // CONFIG_EVENT_KIND_UPDATED payload kind=2 == CFGMOD_KIND_CONNECTION.
+  // Only register once — the handler is not tied to the NimBLE task lifecycle.
+  if (!s_config_evt_registered) {
+      esp_event_handler_register(CONFIG_EVENTS, CONFIG_EVENT_KIND_UPDATED,
+                                  ble_hid_on_ble_config_updated, NULL);
+      s_config_evt_registered = true;
+  }
 
   ESP_LOGI(TAG, "BLE HID initialization complete");
+}
+
+// Fired by cfgmod whenever BLE connection config (profiles, routing) changes.
+static void ble_hid_on_ble_config_updated(void *arg, esp_event_base_t base,
+                                           int32_t event_id, void *data)
+{
+    const config_update_event_t *ev = (const config_update_event_t *)data;
+    if (ev->kind != 2u) return; // 2 == CFGMOD_KIND_CONNECTION
+
+    // If we have a pending directed reconnect that started in undirected mode
+    // because the profile was not yet valid, restart now that profile data
+    // has arrived (config sync just completed).
+    if (s_directed_profile == -1 || s_is_suspended || !ble_hid_is_routing_active()) return;
+    if (s_conn_handles[s_directed_profile] != BLE_HS_CONN_HANDLE_NONE) return; // already connected
+
+    const cfg_ble_state_t *st = cfg_ble_get_state();
+    if (st->profiles[s_directed_profile].is_valid && !ble_gap_adv_active()) {
+        // Profile just became valid and advertising isn't running — or we can
+        // always restart: ble_hid_advertise stops and restarts cleanly.
+        ESP_LOGI(TAG, "Profile %d now valid after config sync — upgrading to directed adv",
+                 s_directed_profile);
+        ble_hid_advertise();
+    }
 }
 
 static void ble_hid_pairing_timeout_cb(void *arg) {
@@ -695,26 +846,105 @@ int ble_hid_get_pairing_profile(void) {
     return s_pairing_profile;
 }
 
+/*
+ * Completely tear down the NimBLE host stack.
+ * Blocks until the NimBLE task has exited so callers can immediately call
+ * ble_hid_init() afterwards for a clean reinit.
+ */
+static void ble_hid_deinit(void) {
+    ESP_LOGI(TAG, "BLE deinit: stopping NimBLE host stack.");
+
+    // Stop timers so their callbacks don't fire during teardown.
+    if (s_adv_cooldown_timer)   esp_timer_stop(s_adv_cooldown_timer);
+    if (s_pairing_timeout_timer) esp_timer_stop(s_pairing_timeout_timer);
+
+    // Stop advertising (no-op if nothing is running).
+    ble_gap_adv_stop();
+
+    // Terminate any active BLE connections gracefully.
+    for (int i = 0; i < CFG_BLE_MAX_PROFILES; i++) {
+        if (s_conn_handles[i] != BLE_HS_CONN_HANDLE_NONE) {
+            ble_gap_terminate(s_conn_handles[i], 0x15);
+            s_conn_handles[i] = BLE_HS_CONN_HANDLE_NONE;
+        }
+    }
+
+    // Signal the NimBLE run loop to exit, then wait for ble_host_task to
+    // give s_host_stopped_sem (just before it calls vTaskDelete).
+    nimble_port_stop();
+    if (s_host_stopped_sem) {
+        xSemaphoreTake(s_host_stopped_sem, pdMS_TO_TICKS(3000));
+    }
+
+    // Now safe to release NimBLE's resources.
+    nimble_port_deinit();
+
+    // Reset volatile state so the next ble_hid_init() starts clean.
+    s_pairing_profile   = -1;
+    s_directed_profile  = -1;
+    s_reconnect_retries = 0;
+    ESP_LOGI(TAG, "BLE deinit complete.");
+}
+
 void ble_hid_set_suspended(bool suspended) {
     if (s_is_suspended == suspended) return;
     s_is_suspended = suspended;
-    
+
     if (suspended) {
         ESP_LOGI(TAG, "BLE operations suspended. Terminating connections and stopping advertising.");
         for (int i = 0; i < CFG_BLE_MAX_PROFILES; i++) {
             if (s_conn_handles[i] != BLE_HS_CONN_HANDLE_NONE) {
-                ble_gap_terminate(s_conn_handles[i], BLE_ERR_REM_USER_CONN_TERM);
+                // 0x15 = "Remote Device Terminated Due to Power Off" (valid per BLE spec).
+                // This causes the host to schedule a reconnect when the device comes back,
+                // unlike 0x13 (Remote User Terminated) which the host treats as intentional
+                // and won't reconnect from.  During a split role swap the other half
+                // immediately starts advertising with the same address, so the host
+                // should reconnect there within seconds.
+                ble_gap_terminate(s_conn_handles[i], 0x15);
             }
         }
         ble_hid_advertise(); // Will stop advertising due to s_is_suspended check
     } else {
-        ESP_LOGI(TAG, "BLE operations resumed. Resuming advertising if enabled.");
-        // We only actively force reconnection if it's currently enabled in config
-        if (ble_hid_is_routing_active()) {
-            s_directed_profile = cfg_ble_get_state()->selected_profile;
-            ble_hid_advertise();
+        // The NimBLE stack is already running and the resolving list was pre-warmed
+        // by ble_hid_reinit_bonds() when the bond sync arrived while we were a slave.
+        // All we need to do is reload the config and start advertising immediately.
+        ESP_LOGI(TAG, "BLE operations resumed. Starting directed advertising (stack pre-warmed).");
+        cfg_ble_reload();
+
+        if (!ble_hid_is_routing_active()) {
+            ESP_LOGI(TAG, "BLE routing disabled — not starting advertising.");
+            return;
         }
+
+        s_directed_profile  = (int)cfg_ble_get_state()->selected_profile;
+        s_reconnect_retries = 0; // start fresh: high-duty-cycle attempt first
+        ble_hid_advertise();
     }
+}
+
+void ble_hid_reinit_bonds(void) {
+    if (!s_is_suspended) {
+        // Only safe while acting as split slave (suspended).  When we are the active
+        // master, tearing down NimBLE would drop live connections.
+        ESP_LOGW(TAG, "ble_hid_reinit_bonds: not suspended, skipping.");
+        return;
+    }
+    // A full deinit+init forces ble_store_config_init() to run again, which reads
+    // all bond data from NVS and calls ble_hs_pvcy_rpa_config() to load the peer
+    // IRKs into the BLE controller's hardware resolving list.  Without this step,
+    // bonds written at runtime via ble_store_write_{our,peer}_sec update the RAM
+    // store and NVS but leave the controller's resolving list stale, so it cannot
+    // resolve the host's Resolvable Private Address when it reconnects — causing
+    // encryption to fail immediately after the role swap.
+    //
+    // By doing this reinit NOW (while still a slave, after bonds arrive via config
+    // sync) the hot path in ble_hid_set_suspended(false) can advertise immediately
+    // without any extra delay.
+    ESP_LOGI(TAG, "ble_hid_reinit_bonds: reiniting NimBLE to warm controller resolving list.");
+    ble_hid_deinit();
+    ble_hid_init();
+    // NimBLE restarts; bleprph_on_sync → ble_hid_advertise() will fire but return
+    // immediately because s_is_suspended is still true — no advertising is started.
 }
 
 bool ble_hid_is_suspended(void) {

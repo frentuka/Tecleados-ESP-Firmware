@@ -132,6 +132,12 @@ static void status_on_split_event(void *arg, esp_event_base_t base,
         break;
     case SPLIT_EVENT_ROLE_CHANGED:
         s_cache.split_role = *(const uint8_t *)data;
+        // The connected-bitmap cached from the previous role is no longer valid:
+        //   - new master: was caching the old master's live BLE state via
+        //     SPLIT_EVENT_BLE_STATUS_UPDATED; its own BLE just resumed with 0 connections.
+        //   - new slave:  BLE_EVENT_PROFILE_DISCONNECTED will also clear this, but
+        //     resetting here prevents a brief stale-green flash before that fires.
+        s_cache.connected_bitmap = 0;
         break;
     case SPLIT_EVENT_PAIR_STARTED:
         s_cache.split_state = (uint8_t)SPLIT_STATE_PAIRING;

@@ -44,7 +44,7 @@ static const char *const s_kind_ns[CFGMOD_KIND_MAX] = {
     [CFGMOD_KIND_PHYSICAL]   = NULL,
     [CFGMOD_KIND_CKEY]       = "cfg_ck",
     [CFGMOD_KIND_SPLIT]      = "cfg_spl",
-    [CFGMOD_KIND_BLE_BOND]   = "nimble_bond", // Managed natively, not prefixed
+    [CFGMOD_KIND_BLE_BOND]   = NULL,           // Handled by cfg_ble_bond_{read,write}_all; ns unused
 };
 
 typedef struct {
@@ -546,6 +546,17 @@ esp_err_t cfgmod_write_storage(cfgmod_kind_t kind, const char *key,
     err = nvs_commit(handle);
   }
   nvs_close(handle);
+
+  // Refresh the in-memory cache for registered kinds.  Config sync writes
+  // via cfgmod_write_storage directly (not cfgmod_set_config), so without
+  // this the cached state (e.g. cfg_system's ble_shared_addr, cfg_ble's
+  // profile nonces) would stay stale after a sync and the new master would
+  // compute the wrong BLE address.
+  if (err == ESP_OK && kind < CFGMOD_KIND_MAX
+      && s_registry[kind].registered && s_registry[kind].update_fn) {
+      s_registry[kind].update_fn(key);
+  }
+
   return err;
 }
 
@@ -630,9 +641,7 @@ esp_err_t cfgmod_set_config(cfgmod_kind_t kind, const char *key,
   esp_err_t err = cfgmod_write_storage(kind, key, in_struct, s_registry[kind].struct_size);
 
   if (err == ESP_OK) {
-    if (s_registry[kind].update_fn) {
-      s_registry[kind].update_fn(key);
-    }
+    // update_fn is now called inside cfgmod_write_storage.
     cfgmod_post_update_event(kind, key);
   }
   return err;

@@ -25,6 +25,7 @@
 #include "battery.h"
 #include "blemod.h"
 #include "cfg_ble.h"
+#include "cfg_system.h"
 
 #include "split_transport.h"
 #include "split_protocol.h"
@@ -393,6 +394,50 @@ static void apply_ble_routing_for_role(split_role_t role)
     }
 }
 
+// Apply keyboard-manager routing for the current role.  Must be called on
+// every role transition (initial connect AND role swap) so the matrix callback
+// and paused state are always consistent with who is master/slave.
+static void apply_kb_routing_for_role(split_role_t role)
+{
+    if (role == SPLIT_ROLE_SLAVE) {
+        kb_manager_set_matrix_cb(on_matrix_change);
+        kb_manager_set_remote_matrix(NULL);
+        kb_manager_set_paused(true);
+        // Send current (zeroed) matrix to new master so it starts with clean state.
+        uint8_t zero[SPLIT_MATRIX_BYTES] = {0};
+        split_sync_send_full_state(s_peer_mac, zero, 0, next_seq());
+    } else {
+        kb_manager_set_matrix_cb(NULL);
+        kb_manager_set_paused(false);
+        uint8_t zero[SPLIT_MATRIX_BYTES] = {0};
+        kb_manager_set_remote_matrix(zero);
+
+        // Auto-populate ble_shared_addr the first time this device becomes the
+        // split MASTER.  Both halves must advertise the same BLE address so the
+        // host can reconnect after a role swap.  Using the master's own BT MAC as
+        // the shared base is the right choice: the host already bonded to an
+        // address derived from it.  We only write if the field is empty so that a
+        // subsequent role swap (where the new master received this value via config
+        // sync) does NOT overwrite it with the new master's own different MAC.
+        cfg_system_t sys;
+        if (cfg_system_get(&sys) == ESP_OK) {
+            bool addr_empty = true;
+            for (int i = 0; i < 6; i++) {
+                if (sys.ble_shared_addr[i]) { addr_empty = false; break; }
+            }
+            if (addr_empty) {
+                esp_read_mac(sys.ble_shared_addr, ESP_MAC_BT);
+                cfg_system_set(&sys);
+                ESP_LOGI(TAG, "Auto-set ble_shared_addr from own BT MAC: "
+                         "%02X:%02X:%02X:%02X:%02X:%02X",
+                         sys.ble_shared_addr[0], sys.ble_shared_addr[1],
+                         sys.ble_shared_addr[2], sys.ble_shared_addr[3],
+                         sys.ble_shared_addr[4], sys.ble_shared_addr[5]);
+            }
+        }
+    }
+}
+
 /* =========================================================================
  * Message-specific handlers (called from on_split_message)
  * ========================================================================= */
@@ -429,20 +474,11 @@ static void handle_role_negotiate_msg(const uint8_t *src_mac,
 
     ESP_LOGI(TAG, "CONNECTED as %s", s_role == SPLIT_ROLE_MASTER ? "MASTER" : "SLAVE");
 
-    if (s_role == SPLIT_ROLE_SLAVE) {
-        kb_manager_set_remote_matrix(NULL);
-        kb_manager_set_paused(true);
-        kb_manager_set_matrix_cb(on_matrix_change);
-        uint8_t zero[SPLIT_MATRIX_BYTES] = {0};
-        split_sync_send_full_state(s_peer_mac, zero, 0, next_seq());
-    } else {
-        kb_manager_set_matrix_cb(NULL);
-        kb_manager_set_paused(false);
+    apply_kb_routing_for_role(s_role);
+    if (s_role == SPLIT_ROLE_MASTER) {
 #if CONFIG_PM_ENABLE
         pm_apply_active();
 #endif
-        uint8_t zero[SPLIT_MATRIX_BYTES] = {0};
-        kb_manager_set_remote_matrix(zero);
         // Defer config sync to split_task: running it here (WiFi task) would block
         // the WiFi receive path via vTaskDelay inside split_config_sync_push_all.
         s_config_sync_pending = true;
@@ -584,8 +620,14 @@ static void on_split_message(const uint8_t *src_mac,
             s_role = new_role;
             esp_event_post(SPLIT_EVENTS, SPLIT_EVENT_ROLE_CHANGED, &s_role, sizeof(s_role), 0);
             ESP_LOGI(TAG, "role swap: now %s", s_role == SPLIT_ROLE_MASTER ? "MASTER" : "SLAVE");
+            apply_kb_routing_for_role(s_role);
             apply_ble_routing_for_role(s_role);
-            if (s_role == SPLIT_ROLE_MASTER) send_ble_status_to_slave();
+            if (s_role == SPLIT_ROLE_MASTER) {
+                send_ble_status_to_slave();
+                // Push full config (bonds, ble_cfg, system) to the new slave so
+                // it can take over again if there's a further role swap.
+                s_config_sync_pending = true;
+            }
         }
         break;
 
@@ -596,6 +638,7 @@ static void on_split_message(const uint8_t *src_mac,
             s_role = new_role;
             esp_event_post(SPLIT_EVENTS, SPLIT_EVENT_ROLE_CHANGED, &s_role, sizeof(s_role), 0);
             ESP_LOGI(TAG, "role swap ACK: now %s", s_role == SPLIT_ROLE_MASTER ? "MASTER" : "SLAVE");
+            apply_kb_routing_for_role(s_role);
             apply_ble_routing_for_role(s_role);
             if (s_role == SPLIT_ROLE_MASTER) send_ble_status_to_slave();
         }

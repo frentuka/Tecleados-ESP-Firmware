@@ -35,6 +35,15 @@ const cfg_ble_state_t *cfg_ble_get_state(void);
 void cfg_ble_save_state(const cfg_ble_state_t *state);
 
 /**
+ * @brief Reload the in-memory BLE config from NVS.
+ *
+ * Use this when NVS may have been updated externally (e.g. by the split config
+ * sync while this device was operating as a slave) without going through the
+ * normal cfgmod_set_config path that would have triggered on_ble_updated.
+ */
+void cfg_ble_reload(void);
+
+/**
  * @brief Serializes the entire nimble_bond NVS namespace into a single dynamically allocated buffer.
  */
 esp_err_t cfg_ble_bond_read_all(void *out_buf, size_t *inout_len);
