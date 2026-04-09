@@ -14,10 +14,6 @@ void kb_state_init(void) {
 void kb_state_update_leds(uint8_t led_status) {
   if (s_led_status != led_status) {
     s_led_status = led_status;
-    ESP_LOGI(TAG, "Keyboard LED state updated: %02X (Caps: %d, Num: %d)",
-             led_status, (led_status & KB_LED_BIT_CAPS_LOCK) ? 1 : 0,
-             (led_status & KB_LED_BIT_NUM_LOCK) ? 1 : 0);
-
     esp_event_post(KB_EVENTS, KB_EVENT_LED_STATE, &led_status, sizeof(uint8_t), 0);
   }
 }

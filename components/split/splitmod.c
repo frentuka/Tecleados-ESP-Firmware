@@ -917,22 +917,9 @@ static void split_task(void *arg)
     ESP_LOGI(TAG, "split task started");
 
     const TickType_t tick_period    = pdMS_TO_TICKS(10);
-    TickType_t       s_last_mem_log = 0;
-
     for (;;) {
         vTaskDelay(tick_period);
         TickType_t now = xTaskGetTickCount();
-
-        // Periodic memory snapshot — helps identify heap/stack pressure over time.
-        if ((now - s_last_mem_log) >= pdMS_TO_TICKS(10000)) {
-            ESP_LOGI(TAG, "[mem] heap=%lu int=%lu min=%lu | stack HWM=%lu B | state=%u role=%u",
-                     (unsigned long)esp_get_free_heap_size(),
-                     (unsigned long)heap_caps_get_free_size(MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL),
-                     (unsigned long)esp_get_minimum_free_heap_size(),
-                     (unsigned long)(uxTaskGetStackHighWaterMark(NULL) * sizeof(StackType_t)),
-                     (unsigned)s_state, (unsigned)s_role);
-            s_last_mem_log = now;
-        }
 
         switch (s_state) {
         case SPLIT_STATE_PAIRING:      tick_pairing(now);      break;

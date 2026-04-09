@@ -13,6 +13,7 @@
 #include "freertos/semphr.h"
 #include "host/ble_gap.h"
 #include "host/ble_hs.h"
+#include "host/ble_hs_pvcy.h"
 #include "host/util/util.h"
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
@@ -943,6 +944,13 @@ static void ble_hid_deinit(void) {
         xSemaphoreTake(s_host_stopped_sem, pdMS_TO_TICKS(3000));
     }
 
+    // Workaround for ESP-IDF core panic:
+    // NimBLE uses `esp_timer` callbacks that might fire exactly as the host task is tearing down.
+    // By pausing for 50ms here, we allow any such `esp_timer` callbacks (like NPL link expiration 
+    // or pairing timeouts) to cleanly route their events onto the RTOS event queue *before* 
+    // `nimble_port_deinit()` fatally destroys the underlying RTOS queues.
+    vTaskDelay(pdMS_TO_TICKS(50));
+
     // Now safe to release NimBLE's resources.
     nimble_port_deinit();
 
@@ -991,12 +999,7 @@ void ble_hid_set_suspended(bool suspended) {
 
 void ble_hid_reinit_bonds(void) {
     // A full deinit+init forces ble_store_config_init() to run again, which reads
-    // all bond data from NVS and calls ble_hs_pvcy_rpa_config() to load the peer
-    // IRKs into the BLE controller's hardware resolving list.  Without this step,
-    // bonds written at runtime via ble_store_write_{our,peer}_sec update the RAM
-    // store and NVS but leave the controller's resolving list stale, so it cannot
-    // resolve the host's Resolvable Private Address when it reconnects — causing
-    // encryption to fail immediately after the role swap.
+    // all bond data from NVS and naturally re-warms the BLE controller's hardware resolving list.
     if (!s_is_suspended) {
         // Reinit is safe only if there are no live connections to drop.
         bool any_connected = false;
@@ -1007,33 +1010,20 @@ void ble_hid_reinit_bonds(void) {
             }
         }
         if (any_connected) {
-            // Existing connection still works (LTK is in RAM store).  The
-            // resolving list stays stale but the next reconnect after a role-swap
-            // will trigger a fresh ble_hid_set_suspended(false) reinit.
-            ESP_LOGW(TAG, "ble_hid_reinit_bonds: active connections — skipping "
-                     "(resolving list stale until reconnect).");
+            ESP_LOGW(TAG, "ble_hid_reinit_bonds: active connections — skipping.");
             return;
         }
-        // No active connections: reinit while master to warm the hardware
-        // resolving list.  Preserve selected_profile across deinit so that
-        // bleprph_on_sync → ble_hid_advertise() does directed reconnect.
         const cfg_ble_state_t *st = cfg_ble_get_state();
         s_post_reinit_directed_profile = (int)st->selected_profile;
         s_reconnect_retries            = 0;
-        ESP_LOGI(TAG, "ble_hid_reinit_bonds: reiniting NimBLE while master "
-                 "(no active connections); will directed-adv to profile %d.",
-                 s_post_reinit_directed_profile);
+        ESP_LOGI(TAG, "ble_hid_reinit_bonds: reiniting NimBLE while master.");
         ble_hid_deinit();
         ble_hid_init();
         return;
     }
-    // Suspended (slave) path: reinit so the controller resolving list is ready
-    // for when ble_hid_set_suspended(false) starts advertising.
     ESP_LOGI(TAG, "ble_hid_reinit_bonds: reiniting NimBLE to warm controller resolving list.");
     ble_hid_deinit();
     ble_hid_init();
-    // NimBLE restarts; bleprph_on_sync → ble_hid_advertise() will fire but return
-    // immediately because s_is_suspended is still true — no advertising is started.
 }
 
 bool ble_hid_is_suspended(void) {
