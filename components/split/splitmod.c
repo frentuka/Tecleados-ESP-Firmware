@@ -220,7 +220,12 @@ static void send_role_negotiate(void)
     split_pair_data_t pd;
     uint8_t pref = split_pair_get_data(&pd) ? pd.preferred_role : 0;
 
-    split_role_payload_t rp = {.proposed_role = pref};
+    split_role_negotiate_payload_t rp = {
+        .proposed_role = pref,
+        .usb_connected = tud_mounted() ? 1u : 0u,
+        .ble_connected = ble_hid_is_connected() ? 1u : 0u,
+        .last_role     = (uint8_t)split_role_load_last(),
+    };
     memcpy(rp.device_id, s_own_mac, 6);
 
     split_transport_send(s_peer_mac, SPLIT_PROTO_SPLIT, SPLIT_MSG_ROLE_NEGOTIATE,
@@ -468,10 +473,15 @@ static void handle_role_negotiate_msg(const uint8_t *src_mac,
 
     split_role_t decided = SPLIT_ROLE_NONE;
     esp_err_t ret = split_role_on_negotiate(src_mac, payload, len,
-                                             s_own_mac, own_pref, &decided);
+                                             s_own_mac, own_pref,
+                                             tud_mounted() ? 1u : 0u,
+                                             ble_hid_is_connected() ? 1u : 0u,
+                                             split_role_load_last(),
+                                             &decided);
     if (ret != ESP_OK || decided == SPLIT_ROLE_NONE) return;
 
     s_role               = decided;
+    split_role_save_last(s_role);
     s_state              = SPLIT_STATE_CONNECTED;
     s_peer_last_seen     = xTaskGetTickCount();
     s_connected_at       = xTaskGetTickCount();
@@ -628,6 +638,7 @@ static void on_split_message(const uint8_t *src_mac,
             split_transport_send(s_peer_mac, SPLIT_PROTO_SPLIT, SPLIT_MSG_ROLE_SWAP_ACK,
                                  next_seq(), (const uint8_t *)&ack, sizeof(ack));
             s_role = new_role;
+            split_role_save_last(s_role);
             esp_event_post(SPLIT_EVENTS, SPLIT_EVENT_ROLE_CHANGED, &s_role, sizeof(s_role), 0);
             ESP_LOGI(TAG, "role swap: now %s", s_role == SPLIT_ROLE_MASTER ? "MASTER" : "SLAVE");
             apply_kb_routing_for_role(s_role);
@@ -646,6 +657,7 @@ static void on_split_message(const uint8_t *src_mac,
             split_role_t new_role;
             split_role_on_swap_ack(s_role, &new_role);
             s_role = new_role;
+            split_role_save_last(s_role);
             esp_event_post(SPLIT_EVENTS, SPLIT_EVENT_ROLE_CHANGED, &s_role, sizeof(s_role), 0);
             ESP_LOGI(TAG, "role swap ACK: now %s", s_role == SPLIT_ROLE_MASTER ? "MASTER" : "SLAVE");
             apply_kb_routing_for_role(s_role);

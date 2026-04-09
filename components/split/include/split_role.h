@@ -6,48 +6,85 @@
 #include "splitmod.h"   // split_role_t
 
 /* =========================================================================
- * Role decision logic — stateless pure functions
- *
- * preferred_role encoding matches split_role_t:
- *   0 = auto (no preference)
- *   1 = prefer MASTER
- *   2 = prefer SLAVE
+ * NVS persistence
  * ========================================================================= */
 
 /**
- * @brief Decide this device's role given both sides' preferences and MACs.
+ * @brief Persist the current role to NVS.  Call on every role assignment
+ *        (MASTER or SLAVE).  SPLIT_ROLE_NONE is silently ignored.
+ */
+void split_role_save_last(split_role_t role);
+
+/**
+ * @brief Load the last persisted role from NVS.
+ * @return SPLIT_ROLE_MASTER, SPLIT_ROLE_SLAVE, or SPLIT_ROLE_NONE if no
+ *         value has been saved yet.
+ */
+split_role_t split_role_load_last(void);
+
+/* =========================================================================
+ * Role decision logic
  *
- * Rules (in priority order):
- *   1. One side explicitly prefers MASTER, the other doesn't  → MASTER wins.
- *   2. One side explicitly prefers SLAVE,  the other doesn't  → SLAVE wins.
- *   3. Both have same (or conflicting explicit) preference     → higher MAC = MASTER.
+ * preferred_role encoding matches split_role_t:
+ *   0 = auto (no preference / SPLIT_ROLE_NONE)
+ *   1 = prefer MASTER
+ *   2 = prefer SLAVE
  *
- * @param own_mac   This device's MAC
- * @param peer_mac  Peer's MAC
- * @param own_pref  This device's preferred_role (0/1/2)
- * @param peer_pref Peer's preferred_role from ROLE_NEGOTIATE message
+ * Decision priority (highest → lowest):
+ *   1. Explicit user preference (own_pref / peer_pref from pair config)
+ *   2. USB host connection active
+ *   3. BLE host connection active
+ *   4. Last persisted role from NVS
+ *   5. Higher MAC address → MASTER
+ * ========================================================================= */
+
+/**
+ * @brief Decide this device's role given full connection context.
+ *
+ * @param own_mac           This device's MAC
+ * @param peer_mac          Peer's MAC
+ * @param own_pref          Explicit preference (0=auto, 1=master, 2=slave)
+ * @param peer_pref         Peer's explicit preference from ROLE_NEGOTIATE
+ * @param own_usb_connected 1 if this device has an active USB host connection
+ * @param own_ble_connected 1 if this device has an active BLE host connection
+ * @param own_last_role     Last role persisted in own NVS
+ * @param peer_usb_connected 1 if peer has an active USB host connection
+ * @param peer_ble_connected 1 if peer has an active BLE host connection
+ * @param peer_last_role    Last role reported by peer via ROLE_NEGOTIATE
  * @return SPLIT_ROLE_MASTER or SPLIT_ROLE_SLAVE
  */
 split_role_t split_role_decide(const uint8_t own_mac[6],
                                 const uint8_t peer_mac[6],
                                 uint8_t own_pref,
-                                uint8_t peer_pref);
+                                uint8_t peer_pref,
+                                uint8_t own_usb_connected,
+                                uint8_t own_ble_connected,
+                                split_role_t own_last_role,
+                                uint8_t peer_usb_connected,
+                                uint8_t peer_ble_connected,
+                                split_role_t peer_last_role);
 
 /**
  * @brief Parse an incoming ROLE_NEGOTIATE payload and decide our role.
  *
- * @param src_mac   Source MAC of the ROLE_NEGOTIATE message
- * @param payload   Raw payload bytes
- * @param len       Payload length
- * @param own_mac   Our MAC
- * @param own_pref  Our preferred_role from pairing config
- * @param out_role  Set to the decided role on success
+ * @param src_mac            Source MAC of the ROLE_NEGOTIATE message
+ * @param payload            Raw payload bytes (split_role_negotiate_payload_t)
+ * @param len                Payload length
+ * @param own_mac            Our MAC
+ * @param own_pref           Our preferred_role from pairing config
+ * @param own_usb_connected  1 if we have an active USB host connection
+ * @param own_ble_connected  1 if we have an active BLE host connection
+ * @param own_last_role      Our last role loaded from NVS
+ * @param out_role           Set to the decided role on success
  * @return ESP_OK, or ESP_ERR_INVALID_SIZE if payload is too short.
  */
 esp_err_t split_role_on_negotiate(const uint8_t *src_mac,
                                    const uint8_t *payload, size_t len,
                                    const uint8_t own_mac[6],
                                    uint8_t own_pref,
+                                   uint8_t own_usb_connected,
+                                   uint8_t own_ble_connected,
+                                   split_role_t own_last_role,
                                    split_role_t *out_role);
 
 /**

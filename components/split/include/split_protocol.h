@@ -101,11 +101,22 @@ typedef struct __attribute__((packed)) split_pair_payload {
     uint8_t  public_key[32];    // X25519 public key
 } split_pair_payload_t;
 
-/** SPLIT_MSG_ROLE_NEGOTIATE — role proposal. */
+/** SPLIT_MSG_ROLE_SWAP_REQ / SPLIT_MSG_ROLE_SWAP_ACK — simple role flip. */
 typedef struct __attribute__((packed)) split_role_payload {
     uint8_t  proposed_role;     // Role sender wants to take (split_role_t)
     uint8_t  device_id[6];      // For tiebreaker comparison
 } split_role_payload_t;
+
+/** SPLIT_MSG_ROLE_NEGOTIATE — extended proposal with live connection context.
+ *  Carries USB/BLE state and the last persisted role so the decision algorithm
+ *  can pick the right master without user intervention after a link drop. */
+typedef struct __attribute__((packed)) split_role_negotiate_payload {
+    uint8_t  proposed_role;    // Explicit user preference (split_role_t); 0 = auto
+    uint8_t  device_id[6];     // Sender's MAC address (tiebreaker)
+    uint8_t  usb_connected;    // 1 if sender has an active USB host connection
+    uint8_t  ble_connected;    // 1 if sender has an active BLE host connection
+    uint8_t  last_role;        // Last persisted role (split_role_t); SPLIT_ROLE_NONE if unknown
+} split_role_negotiate_payload_t;
 
 /** SPLIT_MSG_KEY_STATE_FULL — complete matrix snapshot. */
 typedef struct __attribute__((packed)) split_key_state_full_payload {
