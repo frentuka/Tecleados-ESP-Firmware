@@ -74,6 +74,11 @@ static bool s_config_evt_registered = false;
 // Set before ble_hid_deinit(); read and cleared in bleprph_on_sync.
 static int s_post_reinit_directed_profile = -1;
 
+// When true, the next ble_hid_set_suspended(false) skips directed ADV and
+// goes straight to undirected GEN_DISC.  Set by ble_hid_skip_directed_adv(),
+// consumed and cleared by ble_hid_set_suspended().
+static bool s_skip_directed_on_resume = false;
+
 // Buffer to hold peer address during pairing until encryption is complete
 static ble_addr_t s_pending_addr;
 
@@ -1036,7 +1041,10 @@ void ble_hid_set_suspended(bool suspended) {
         }
 
         s_directed_profile  = (int)cfg_ble_get_state()->selected_profile;
-        s_reconnect_retries = 0; // start fresh: high-duty-cycle attempt first
+        // Skip directed ADV when requested (e.g. role swap — Android ignores
+        // directed ADV, wasting 1.28 s).  Otherwise start fresh with directed.
+        s_reconnect_retries = s_skip_directed_on_resume ? 1 : 0;
+        s_skip_directed_on_resume = false;
         ble_hid_advertise();
     }
 }
@@ -1068,6 +1076,10 @@ void ble_hid_reinit_bonds(void) {
     ESP_LOGI(TAG, "ble_hid_reinit_bonds: reiniting NimBLE to warm controller resolving list.");
     ble_hid_deinit();
     ble_hid_init();
+}
+
+void ble_hid_skip_directed_adv(void) {
+    s_skip_directed_on_resume = true;
 }
 
 bool ble_hid_is_suspended(void) {

@@ -50,3 +50,9 @@ bool ble_hid_is_suspended(void);
  *         no-op otherwise.  Call this after a bond sync completes so that
  *         ble_hid_set_suspended(false) can start advertising immediately. */
 void ble_hid_reinit_bonds(void);
+
+/** @brief Request that the next ble_hid_set_suspended(false) skips HIGH_DUTY
+ *         directed advertising and goes straight to undirected GEN_DISC.
+ *         Used during split role swaps where the host is already scanning
+ *         (Android ignores directed ADV, costing 1.28 s for nothing). */
+void ble_hid_skip_directed_adv(void);

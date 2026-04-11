@@ -406,10 +406,13 @@ static void apply_ble_routing_for_role(split_role_t role)
         ESP_LOGI(TAG, "BLE routing → %s (role=%u)", should_suspend ? "SUSPENDED" : "RESUMED", (unsigned)role);
         
         if (!should_suspend) {
-            // We are becoming MASTER (or standalone): ensure we are using the 
-            // most up-to-date synced profiles and bond keys.
-            cfg_ble_reload();
-            ble_hid_reinit_bonds();
+            // Bonds are already pre-warmed by config sync (cfg_ble_write_bonds
+            // calls ble_hid_reinit_bonds on the slave).  cfg_ble_reload() is
+            // called inside ble_hid_set_suspended(false).
+            // Skip directed ADV — the host is already scanning after losing the
+            // old master's connection.  Directed ADV wastes 1.28 s on Android
+            // which ignores it entirely.
+            ble_hid_skip_directed_adv();
         }
 
         ble_hid_set_suspended(should_suspend);
