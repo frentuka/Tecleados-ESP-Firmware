@@ -66,6 +66,12 @@ static bool send_status_push(void) {
 
 static void status_on_ble_event(void *arg, esp_event_base_t base,
                                 int32_t event_id, void *data) {
+    // When this device is a split SLAVE, the master's authoritative BLE state
+    // arrives via SPLIT_EVENT_BLE_STATUS_UPDATED.  Local BLE events on the slave
+    // (e.g. profile disconnects during suspension) are stale and must not
+    // overwrite the master-pushed cache.
+    if (splitmod_get_role() == SPLIT_ROLE_SLAVE) return;
+
     switch ((ble_event_id_t)event_id) {
     case BLE_EVENT_PROFILE_CONNECTED: {
         int idx = *(int *)data;
@@ -107,6 +113,10 @@ static void status_on_ble_event(void *arg, esp_event_base_t base,
 
 static void status_on_config_event(void *arg, esp_event_base_t base,
                                    int32_t event_id, void *data) {
+    // Slave receives authoritative BLE state from master via
+    // SPLIT_EVENT_BLE_STATUS_UPDATED — local config reads would be stale.
+    if (splitmod_get_role() == SPLIT_ROLE_SLAVE) return;
+
     const config_update_event_t *ev = (const config_update_event_t *)data;
     if (ev->kind == (uint8_t)CFGMOD_KIND_CONNECTION) {
         // Refresh routing and selected_profile from config.

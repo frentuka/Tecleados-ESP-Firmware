@@ -319,6 +319,14 @@ static void on_config_updated(void *arg, esp_event_base_t base,
     if (s_state != SPLIT_STATE_CONNECTED) return;
 
     const config_update_event_t *ev = (const config_update_event_t *)event_data;
+
+    // When the active BLE profile changes via config (e.g. selecting an
+    // already-connected profile), no BLE_EVENT fires — only CONFIG_EVENT.
+    // Push the updated BLE state so the slave's status widget stays in sync.
+    if (ev->kind == (uint8_t)CFGMOD_KIND_CONNECTION) {
+        send_ble_status_to_slave();
+    }
+
     if (is_syncable_config((cfgmod_kind_t)ev->kind, ev->key)) {
         // Signal split_task to do the push.  Calling split_config_sync_push directly
         // from here (event-bus task context) would block the event-bus receive loop
