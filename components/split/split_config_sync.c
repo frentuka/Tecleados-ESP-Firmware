@@ -12,6 +12,21 @@
 #include "cfg_storage_keys.h"
 #include "cfg_ble.h"
 #include "splitmod.h"
+#include "host/ble_store.h"
+
+// Mirror of the bond sync binary format defined in cfg_ble.c — used to
+// count PEER_SEC records in an incoming blob WITHOUT applying it first.
+struct bond_sync_header {
+    uint8_t  version;
+    uint8_t  num_sections;
+    uint16_t sync_version;
+} __attribute__((packed));
+
+struct bond_sync_section {
+    uint8_t  type;
+    uint16_t record_count;
+    uint16_t record_size;
+} __attribute__((packed));
 
 #define SPLIT_CFG_SEND_RETRIES   3    // Max attempts per fragment
 #define SPLIT_CFG_RETRY_DELAY_MS 10   // Delay between retries (and after success, to pace the burst)
@@ -275,6 +290,49 @@ esp_err_t split_config_sync_on_fragment(const uint8_t *src_mac,
         }
         ESP_LOGI(TAG, "ble_cfg: recv sync_version=%u >= own=%u — accepting",
                  recv_sum, own_sum);
+    }
+
+    // For bond sync: protect against a newly-promoted master (that has no peer bonds
+    // because it was previously a slave) wiping the other half's complete bond store.
+    // Count PEER_SEC records in the incoming blob and compare to our local count.
+    // If we have MORE peer bonds locally, request a reverse sync instead of accepting.
+    if ((cfgmod_kind_t)s_rx.kind == CFGMOD_KIND_BLE_BOND &&
+        strncmp(s_rx.key, "all", SPLIT_CONFIG_SYNC_KEY_LEN) == 0 &&
+        s_rx.data_len >= sizeof(struct bond_sync_header)) {
+
+        // Count peer records in incoming blob by scanning sections
+        const struct bond_sync_header *bh = (const struct bond_sync_header *)s_rx.buf;
+        int incoming_peer_count = 0;
+        const uint8_t *bp = s_rx.buf + sizeof(*bh);
+        size_t brem = s_rx.data_len - sizeof(*bh);
+        for (int si = 0; si < bh->num_sections && brem >= sizeof(struct bond_sync_section); si++) {
+            const struct bond_sync_section *sec = (const struct bond_sync_section *)bp;
+            if (sec->type == BLE_STORE_OBJ_TYPE_PEER_SEC) {
+                incoming_peer_count = (int)sec->record_count;
+            }
+            size_t sec_sz = sizeof(*sec) + (size_t)sec->record_count * sec->record_size;
+            if (brem < sec_sz) break;
+            bp   += sec_sz;
+            brem -= sec_sz;
+        }
+
+        // Count our local peer bonds
+        int local_peer_count = 0;
+        ble_store_util_count(BLE_STORE_OBJ_TYPE_PEER_SEC, &local_peer_count);
+
+        ESP_LOGI(TAG, "Bond sync guard: incoming_peers=%d local_peers=%d",
+                 incoming_peer_count, local_peer_count);
+
+        if (local_peer_count > incoming_peer_count) {
+            // We are richer in bonds — reject the incoming empty sync and
+            // request a reverse sync so the master gets our complete bond set.
+            ESP_LOGW(TAG, "Bond sync: local has more peers (%d > %d) — "
+                     "rejecting and requesting reverse sync",
+                     local_peer_count, incoming_peer_count);
+            if (out_reverse_ble_sync) *out_reverse_ble_sync = true;
+            split_config_sync_reset();
+            return ESP_OK;
+        }
     }
 
     // All fragments received — write to NVS.

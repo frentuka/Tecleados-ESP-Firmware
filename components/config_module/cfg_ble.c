@@ -131,6 +131,7 @@ static cJSON *ble_serialize(const void *src) {
 
     cJSON_AddItemToObject(json, "profiles", j_profiles);
     cJSON_AddNumberToObject(json, "sync_version", st->sync_version);
+
     return json;
 }
 
@@ -165,6 +166,18 @@ static void cfg_ble_on_pairing_complete(void *arg, esp_event_base_t base,
 
     ESP_LOGI(TAG, "Saving pairing result for profile %d via event", r->profile_idx);
     cfg_ble_state_t new_state = g_cfg_ble_state;
+    
+    // Auto-invalidate any existing profile that has the EXACT same Host Identity
+    // to prevent the UI from displaying multiple active bonds for the same PC.
+    for (int i = 0; i < CFG_BLE_MAX_PROFILES; i++) {
+        if (i != r->profile_idx && new_state.profiles[i].is_valid && 
+            new_state.profiles[i].addr_type == r->addr_type &&
+            memcmp(new_state.profiles[i].val, r->addr, 6) == 0) {
+            ESP_LOGW(TAG, "Host identity deduplication: Invalidating profile %d because it shares the same host as profile %d.", i, r->profile_idx);
+            new_state.profiles[i].is_valid = false;
+        }
+    }
+
     new_state.profiles[r->profile_idx].is_valid  = true;
     new_state.profiles[r->profile_idx].addr_type = r->addr_type;
     new_state.sync_version++; // SUCCESS WINS: Increment to dominate stale syncs

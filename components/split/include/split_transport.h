@@ -6,6 +6,7 @@
 
 #include "esp_err.h"
 #include "esp_now.h"
+#include "freertos/FreeRTOS.h"
 #include "split_crypto.h"
 #include "split_protocol.h"
 
@@ -152,3 +153,10 @@ esp_err_t split_transport_set_channel(uint8_t channel);
  * @brief Get the current WiFi channel.
  */
 uint8_t split_transport_get_channel(void);
+
+/**
+ * @brief Get the RTOS tick of the last successful frame sent to a non-broadcast peer.
+ *
+ * This provides a low-overhead way to track transport activity for heartbeat calculations.
+ */
+TickType_t split_transport_get_last_tx_time(void);

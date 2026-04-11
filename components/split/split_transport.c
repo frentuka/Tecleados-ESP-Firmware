@@ -32,6 +32,9 @@ static bool                    s_initialized   = false;
 static uint8_t                 s_session_key[SPLIT_CRYPTO_KEY_SIZE] = {0};
 static bool                    s_session_key_set                    = false;
 
+static TickType_t              s_last_tx_time                       = 0;
+
+
 /* =========================================================================
  * ESP-NOW Callbacks (called from WiFi task context)
  * ========================================================================= */
@@ -280,7 +283,15 @@ esp_err_t split_transport_send(const uint8_t *dst_mac,
         }
     }
 
-    return esp_now_send(dst_mac, frame_buf, frame_len);
+    esp_err_t ret = esp_now_send(dst_mac, frame_buf, frame_len);
+    if (ret == ESP_OK) {
+        // Broadcasts (discovery) do not count as active peer interaction
+        static const uint8_t bcast[] = SPLIT_BROADCAST_MAC;
+        if (memcmp(dst_mac, bcast, 6) != 0) {
+            s_last_tx_time = xTaskGetTickCount();
+        }
+    }
+    return ret;
 }
 
 esp_err_t split_transport_add_peer(const uint8_t *mac, uint8_t channel)
@@ -323,4 +334,9 @@ uint8_t split_transport_get_channel(void)
     wifi_second_chan_t secondary;
     esp_wifi_get_channel(&primary, &secondary);
     return primary;
+}
+
+TickType_t split_transport_get_last_tx_time(void)
+{
+    return s_last_tx_time;
 }

@@ -52,6 +52,10 @@ static int s_directed_profile = -1;
 // BLE_RECONNECT_MAX_RETRIES after which we fall to background mode.
 static int s_reconnect_retries = 0;
 #define BLE_RECONNECT_MAX_RETRIES 8  // 8 × 15 s = 2 min of active GEN_DISC
+// Tracks whether the most recently STARTED ADV was directed (not undirected).
+// Used in ADV_COMPLETE to distinguish a directed 1.28-s hardware timeout
+// (reason=0) from a connection-made or explicit-stop completion (also reason=0).
+static bool s_directed_adv_active = false;
 
 // Cooldown timer to prevent instant reconnection loops after manual disconnect
 static esp_timer_handle_t s_adv_cooldown_timer;
@@ -165,7 +169,24 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
 
   case BLE_GAP_EVENT_ADV_COMPLETE:
     ESP_LOGI(TAG, "Advertising complete event (timeout/stopped). Reason=%d", event->adv_complete.reason);
-    if (event->adv_complete.reason == BLE_HS_ETIMEOUT && ble_hid_is_routing_active()) {
+    {
+        // HIGH-DUTY directed advertising (1.28 s BLE controller window) completes
+        // with reason=0 (BLE_ERR_SUCCESS/stopped), NOT reason=13 (BLE_HS_ETIMEOUT).
+        // LOW-DUTY directed and undirected GEN_DISC timeouts produce reason=13.
+        // We must handle both so that Android gets retried after the 1.28s window.
+        //
+        // Guard: only treat reason=0 as a retry trigger if WE started directed ADV
+        // (s_directed_adv_active). When reason=0 comes from:
+        //   a) a real connection → BLE_GAP_EVENT_CONNECT already fired, clears
+        //      s_directed_profile, so was_reconnecting=false → no retry.
+        //   b) explicit ble_gap_adv_stop() from ble_hid_advertise() switching modes
+        //      → s_directed_adv_active=false was set in the undirected branch before
+        //      the event fires → condition fails → no retry.
+        bool was_directed_timeout = (event->adv_complete.reason == 0 && s_directed_adv_active);
+        s_directed_adv_active = false; // consume the flag
+
+        if ((event->adv_complete.reason == BLE_HS_ETIMEOUT || was_directed_timeout)
+            && ble_hid_is_routing_active()) {
         // If we were in directed/reconnect mode and timed out without a connection,
         // retry in GEN_DISC instead of immediately falling to background.  This
         // keeps the device discoverable long enough for the host to auto-reconnect
@@ -192,9 +213,10 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
             }
         }
         ble_hid_advertise();
-    } else {
-        s_directed_profile = -1;
-    }
+        } else {
+            s_directed_profile = -1;
+        }
+    } // end ADV_COMPLETE block
     break;
 
   case BLE_GAP_EVENT_ENC_CHANGE:
@@ -225,6 +247,31 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
           ESP_LOGI(TAG, "Pairing success. Clearing s_pairing_profile.");
           s_pairing_profile = -1;
           esp_timer_stop(s_pairing_timeout_timer);
+      } else {
+          // Self-healing: reconnect on an existing bond (s_pairing_profile == -1).
+          // If the connected peer's identity address matches a profile whose
+          // is_valid is FALSE, that profile was invalidated (e.g. by a HOLD erase
+          // that propagated to both halves before the bond sync guard could protect
+          // it). A successful ENC_CHANGE proves the bond is alive — restore is_valid
+          // by posting a synthetic PAIRING_COMPLETE so cfg_ble saves + syncs it.
+          const cfg_ble_state_t *st = cfg_ble_get_state();
+          for (int i = 0; i < CFG_BLE_MAX_PROFILES; i++) {
+              if (!st->profiles[i].is_valid &&
+                  memcmp(st->profiles[i].val, s_pending_addr.val, 6) == 0) {
+                  ESP_LOGW(TAG, "Bond self-heal: profile %d matches reconnecting peer "
+                           "%02X:%02X:%02X:%02X:%02X:%02X but is_valid=false — restoring.",
+                           i, s_pending_addr.val[0], s_pending_addr.val[1],
+                           s_pending_addr.val[2], s_pending_addr.val[3],
+                           s_pending_addr.val[4], s_pending_addr.val[5]);
+                  ble_pairing_result_t heal = {
+                      .profile_idx = i,
+                      .addr_type   = s_pending_addr.type,
+                  };
+                  memcpy(heal.addr, s_pending_addr.val, 6);
+                  esp_event_post(BLE_EVENTS, BLE_EVENT_PAIRING_COMPLETE, &heal, sizeof(heal), 0);
+                  break; // only fix the first matching profile
+              }
+          }
       }
     } else {
       ESP_LOGE(TAG, "Encryption failed, status=%d", event->enc_change.status);
@@ -322,6 +369,10 @@ static void bleprph_on_sync(void) {
   if (s_post_reinit_directed_profile >= 0) {
       s_directed_profile             = s_post_reinit_directed_profile;
       s_post_reinit_directed_profile = -1;
+      // Reset retry counter so directed advertising starts fresh after every
+      // master activation — regardless of what retry state was left over from
+      // a previous incomplete reconnect cycle on the old master.
+      s_reconnect_retries = 0;
       ESP_LOGI(TAG, "BLE stack synced (post-reinit): directed adv → profile %d.",
                s_directed_profile);
   } else {
@@ -436,45 +487,35 @@ static void ble_hid_advertise(void) {
 
   bool is_reconnecting = (s_directed_profile != -1) && (s_pairing_profile == -1);
 
-  // For the first few reconnect attempts after a role swap, use directed advertising
-  // (ADV_DIRECT_IND).  The phone's BLE controller passively listens on advertising
-  // channels and auto-initiates a connection as soon as it sees an ADV_DIRECT_IND
-  // addressed to it — no active scan required from the phone side.
+  // Reconnection advertising strategy:
   //
-  // Retry 0   : high duty cycle (3.75 ms interval, 1.28 s spec-mandated max).
-  //             Phone connects within ~50 ms if it's listening → "silent handover".
-  // Retries 1-3: low duty cycle directed (20–30 ms interval, 15 s window).
-  //             Fallback when the high-duty window expired without a connection.
-  // Retries 4+ : fall through to undirected GEN_DISC (handled by the else branch).
-  //             Allows phone to see a normal advertisement and reconnect via scan.
-  if (is_reconnecting && is_valid && s_reconnect_retries < 4) {
+  // Retry 0  : HIGH duty cycle directed (ADV_DIRECT_IND, 3.75 ms burst, 1.28 s max).
+  //            Windows/PC BLE stacks respond within ~50 ms → instant silent handover.
+  //            Android does NOT respond to directed ADV: it connects as an INITIATOR
+  //            by actively scanning for the keyboard's undirected ADV (not by
+  //            passively watching for directed packets aimed at it).
+  //
+  // Retries 1+: Undirected GEN_DISC (20 ms interval, 15 s window).
+  //            Android initiates a connection within ~500 ms of seeing the first
+  //            undirected packet. Windows also connects here if it missed the
+  //            1.28 s directed window.
+  //
+  // Total worst-case Android reconnect: 1.28 s + ~0.5 s = ~2 s.
+  if (is_reconnecting && is_valid && s_reconnect_retries < 1) {
       adv_params.conn_mode = BLE_GAP_CONN_MODE_DIR;
 
-      int32_t dir_duration;
-      if (s_reconnect_retries == 0) {
-          // High duty cycle: BLE spec fixes the max at 1.28 s; the controller fires
-          // ADV_COMPLETE after that regardless of the duration_ms we pass.
-          adv_params.high_duty_cycle = 1;
-          dir_duration = BLE_HS_FOREVER; // controller enforces the 1.28 s cap
-      } else {
-          adv_params.high_duty_cycle = 0;
-          adv_params.itvl_min = 32; // 20 ms
-          adv_params.itvl_max = 48; // 30 ms
-          dir_duration = 15000;
-      }
+      // High duty cycle: BLE spec fixes the max at 1.28 s; the controller fires
+      // ADV_COMPLETE (reason=0) after that regardless of the duration_ms we pass.
+      adv_params.high_duty_cycle = 1;
+      int32_t dir_duration = BLE_HS_FOREVER;
 
-      // If the peer is using RPA (Resolvable Private Address), the stored 'val' MAC
-      // might be stale. Try to find the bonded peer's Identity Address in NimBLE's
-      // store. If found, advertising to the Identity Address allows the controller
-      // to resolve the RPA based on the IRK we just synced.
+      // Use the Identity Address from the bond store as the target.
       ble_addr_t peer_addr = {0};
       struct ble_store_value_sec peer_sec;
       struct ble_store_key_sec key_sec = { .peer_addr = *BLE_ADDR_ANY, .idx = 0 };
       
       bool identity_found = false;
       while (ble_store_read_peer_sec(&key_sec, &peer_sec) == 0) {
-          // If the bonded address matches our profile's Identity Address (or vice-versa),
-          // use the address from the bond record as it's the most reliable target.
           if (memcmp(peer_sec.peer_addr.val, st->profiles[active_profile].val, 6) == 0) {
               peer_addr = peer_sec.peer_addr;
               identity_found = true;
@@ -487,19 +528,22 @@ static void ble_hid_advertise(void) {
           uint8_t target_type = st->profiles[active_profile].addr_type & 0x01;
           peer_addr.type = target_type;
           memcpy(peer_addr.val, st->profiles[active_profile].val, 6);
-          ESP_LOGD(TAG, "Directed adv: identity address not found in bond store, using profile addr");
+          ESP_LOGD(TAG, "Directed adv: identity not in bond store, using profile addr");
       }
 
       ESP_LOGI(TAG, "Starting directed adv → %02X:%02X:%02X:%02X:%02X:%02X "
-               "profile=%d retry=%d %s",
+               "profile=%d HIGH_DUTY(1.28s)",
                peer_addr.val[0], peer_addr.val[1], peer_addr.val[2],
                peer_addr.val[3], peer_addr.val[4], peer_addr.val[5],
-               active_profile, s_reconnect_retries,
-               adv_params.high_duty_cycle ? "HIGH_DUTY(1.28s)" : "LOW_DUTY(15s)");
+               active_profile);
 
+      // -- START directed advertising --
+      s_directed_adv_active = true;
       rc = ble_gap_adv_start(BLE_OWN_ADDR_RANDOM, &peer_addr, dir_duration, &adv_params,
                              ble_hid_gap_event, (void*)(intptr_t)(active_profile + 1));
   } else {
+      // -- START undirected advertising --
+      s_directed_adv_active = false;
       // Undirected advertising: pairing mode, background mode, or directed target
       // not yet known (config sync still in flight after a role swap).
       struct ble_hs_adv_fields fields = {0};

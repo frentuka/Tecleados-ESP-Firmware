@@ -81,7 +81,6 @@ static TickType_t     s_peer_last_seen    = 0;
 static TickType_t     s_last_discovery_tx = 0;
 static TickType_t     s_last_role_neg_tx  = 0;
 static TickType_t     s_last_reconnect_at = 0;
-static TickType_t     s_last_heartbeat_tx = 0;
 static uint32_t       s_reconnect_interval = SPLIT_RECONNECT_MS_MIN;
 
 static bool           s_link_stale = false;
@@ -516,7 +515,6 @@ static void handle_heartbeat_msg(const uint8_t *src_mac,
                                   const uint8_t *payload, size_t len)
 {
     (void)src_mac;
-    s_peer_last_seen = xTaskGetTickCount();
     if (len < sizeof(split_heartbeat_payload_t)) return;
 
     const split_heartbeat_payload_t *hb = (const split_heartbeat_payload_t *)payload;
@@ -578,6 +576,9 @@ static void on_split_message(const uint8_t *src_mac,
     if (!is_pairing_msg) {
         s_peer_seq_last  = seq;
         s_peer_seq_valid = true;
+        if (memcmp(src_mac, s_peer_mac, 6) == 0) {
+            s_peer_last_seen = xTaskGetTickCount();
+        }
     }
 
     // Clear stale flag on any traffic from our connected peer.
@@ -807,7 +808,7 @@ static void tick_connecting(TickType_t now)
 
 static void tick_heartbeat(TickType_t now)
 {
-    if ((now - s_last_heartbeat_tx) < pdMS_TO_TICKS(SPLIT_HEARTBEAT_MS)) return;
+    if ((now - split_transport_get_last_tx_time()) < pdMS_TO_TICKS(SPLIT_HEARTBEAT_MS)) return;
 
     uint8_t bat_pct = battery_get_level_pct();
     if (bat_pct != 0xFF) {
@@ -825,7 +826,6 @@ static void tick_heartbeat(TickType_t now)
     };
     split_transport_send(s_peer_mac, SPLIT_PROTO_SPLIT, SPLIT_MSG_HEARTBEAT,
                          next_seq(), (const uint8_t *)&hb, sizeof(hb));
-    s_last_heartbeat_tx = now;
 }
 
 static void tick_bench(TickType_t now)
