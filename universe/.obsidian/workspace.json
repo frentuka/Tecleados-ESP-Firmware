@@ -4,21 +4,21 @@
     "type": "split",
     "children": [
       {
-        "id": "56b1fb16ea213771",
+        "id": "4fd1c2e7b0a9a196",
         "type": "tabs",
         "children": [
           {
-            "id": "d502916bc41c8439",
+            "id": "ca2b659ed8b84b82",
             "type": "leaf",
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Home.md",
+                "file": "modules/CONFIG_MODULE.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "Home"
+              "title": "CONFIG_MODULE"
             }
           }
         ]
@@ -94,7 +94,7 @@
             "state": {
               "type": "backlink",
               "state": {
-                "file": "Home.md",
+                "file": "modules/CONFIG_MODULE.md",
                 "collapseAll": false,
                 "extraContext": false,
                 "sortOrder": "alphabetical",
@@ -104,7 +104,7 @@
                 "unlinkedCollapsed": true
               },
               "icon": "links-coming-in",
-              "title": "Backlinks for Home"
+              "title": "Backlinks for CONFIG_MODULE"
             }
           },
           {
@@ -113,12 +113,12 @@
             "state": {
               "type": "outgoing-link",
               "state": {
-                "file": "Home.md",
+                "file": "modules/CONFIG_MODULE.md",
                 "linksCollapsed": false,
                 "unlinkedCollapsed": true
               },
               "icon": "links-going-out",
-              "title": "Outgoing links from Home"
+              "title": "Outgoing links from CONFIG_MODULE"
             }
           },
           {
@@ -156,13 +156,13 @@
             "state": {
               "type": "outline",
               "state": {
-                "file": "Home.md",
+                "file": "modules/CONFIG_MODULE.md",
                 "followCursor": false,
                 "showSearch": false,
                 "searchQuery": ""
               },
               "icon": "lucide-list",
-              "title": "Outline of Home"
+              "title": "Outline of CONFIG_MODULE"
             }
           }
         ]
@@ -183,10 +183,13 @@
       "bases:Create new base": false
     }
   },
-  "active": "d502916bc41c8439",
+  "active": "ca2b659ed8b84b82",
   "lastOpenFiles": [
-    "modules/BLE_MODULE.md",
+    "modules/STATUS_MODULE.md",
+    "modules/CONFIG_MODULE.md",
     "Home.md",
+    "modules/KEYBOARD_MODULE.md",
+    "modules/BLE_MODULE.md",
     "modules",
     "modules/USB_MODULE.md",
     "modules/SPLIT_MODULE.md"

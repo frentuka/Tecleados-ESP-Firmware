@@ -201,8 +201,8 @@ typedef enum usb_msg_module : uint8_t {
     MODULE_CONFIG = 0,    // cfg_usb_callback()   in cfgmod.c
     MODULE_SYSTEM,        // kb_system_usb_callback() in kb_manager.c
     MODULE_ACTION,        // (unused/reserved)
-    MODULE_STATUS,        // status_module_callback() in statusmod.c
-    MODULE_SPLIT,         // split_usb_callback()  in splitmod.c
+    MODULE_STATUS,        // status_module_callback() in [[STATUS_MODULE]]
+    MODULE_SPLIT,         // split_usb_callback()  in [[SPLIT_MODULE]]
     MODULE_BLE,           // ble_usb_callback()    in splitmod.c
     USB_MODULE_COUNT
 } usb_msg_module_t;

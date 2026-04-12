@@ -266,3 +266,14 @@ kb_manager_start()
 ```
 
 `cfg_init()` must come before `ble_hid_init()` so that `cfg_ble_get_state()` returns valid profile data the moment the BLE stack first calls `ble_hid_advertise()` on sync.
+
+---
+
+##  File Map
+
+| File | Responsibility |
+|---|---|
+| `blemod.c` | Core logic for NimBLE integration, advertising state machine, and profile handling. |
+| `ble_hid_service.c` | GATT service implementation for standard HID Report Maps and control points. |
+| `ble_controller.c` | Translation layer bridging physical key events to BLE system commands. |
+| `include/blemod.h` | Public APIs for sending reports, selecting profiles, and managing the radio. |
