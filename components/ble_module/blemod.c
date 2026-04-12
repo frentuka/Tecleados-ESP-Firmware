@@ -79,6 +79,20 @@ static int s_post_reinit_directed_profile = -1;
 // consumed and cleared by ble_hid_set_suspended().
 static bool s_skip_directed_on_resume = false;
 
+// Phase tracking for seamless multidevice reconnection
+typedef enum {
+    RECONN_PHASE_IDLE = 0,
+    RECONN_PHASE_SELECTED,  // Try selected up to 5 times
+    RECONN_PHASE_FOREVER,   // Cycle infinitely until ANY connection
+    RECONN_PHASE_FINITE     // Cycle finite (5x per profile) until queue empty
+} reconn_phase_t;
+
+static reconn_phase_t s_reconn_phase = RECONN_PHASE_IDLE;
+static uint16_t s_reconnect_pending_bitmap = 0;
+static uint8_t s_reconnect_cycles[CFG_BLE_MAX_PROFILES] = {0};
+static int s_reconnect_last_profile = -1;
+static int s_selected_retries_left = 0;
+
 // Buffer to hold peer address during pairing until encryption is complete
 static ble_addr_t s_pending_addr;
 
@@ -93,6 +107,7 @@ static void ble_hid_pairing_timeout_cb(void *arg);
 static void bleprph_on_sync(void);
 static void bleprph_on_reset(int reason);
 static void ble_hid_advertise(void);
+static void ble_hid_start_next_reconnect(void);
 static void ble_hid_on_ble_config_updated(void *arg, esp_event_base_t base,
                                            int32_t event_id, void *data);
 static void ble_hid_on_split_status_updated(void *arg, esp_event_base_t base,
@@ -102,6 +117,36 @@ static void ble_hid_dump_bonds(void);
 /* ========================================================================= */
 /* Callbacks and Event Handlers                                              */
 /* ========================================================================= */
+
+static void ble_hid_start_next_reconnect(void) {
+    if (s_reconn_phase == RECONN_PHASE_IDLE || s_reconnect_pending_bitmap == 0) {
+        s_directed_profile = -1;
+        s_reconn_phase = RECONN_PHASE_IDLE;
+        ble_hid_advertise(); // Fall back to background advertising
+        return;
+    }
+
+    // Pick next profile using round-robin
+    int picked = -1;
+    for (int i = 1; i <= CFG_BLE_MAX_PROFILES; i++) {
+        int candidate = (s_reconnect_last_profile + i) % CFG_BLE_MAX_PROFILES;
+        if (s_reconnect_pending_bitmap & (1 << candidate)) {
+            picked = candidate;
+            break;
+        }
+    }
+
+    if (picked != -1) {
+        s_directed_profile = picked;
+        s_reconnect_last_profile = picked;
+        ESP_LOGI(TAG, "Starting sequential reconnect for profile %d (Phase %d)", picked, s_reconn_phase);
+        ble_hid_advertise();
+    } else {
+        s_directed_profile = -1;
+        s_reconn_phase = RECONN_PHASE_IDLE;
+        ble_hid_advertise();
+    }
+}
 
 static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
   switch (event->type) {
@@ -135,11 +180,22 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
       ESP_LOGI(TAG, "Security initiation requested: %d", rc);
     } else {
       ESP_LOGI(TAG, "Connection failed (status %d)", event->connect.status);
+      int sel = s_directed_profile;
       s_directed_profile = -1;
-      // We rely on the DISCONNECT event (which usually follows a failed connect attempt
-      // if it got as far as a handle assignment) or the user/timeout to restart.
-      // Crucially, we do NOT call ble_hid_advertise() here to avoid tight loops
-      // with persistent phone connection attempts.
+
+      if (s_reconn_phase != RECONN_PHASE_IDLE) {
+          if (s_reconn_phase == RECONN_PHASE_SELECTED) {
+              s_selected_retries_left--;
+              if (s_selected_retries_left <= 0) {
+                  ESP_LOGI(TAG, "Selected Profile failed. Moving to FOREVER Phase.");
+                  if (sel >= 0 && sel < CFG_BLE_MAX_PROFILES && cfg_ble_get_state()->profiles[sel].is_valid) {
+                      s_reconnect_pending_bitmap |= (1 << sel);
+                  }
+                  s_reconn_phase = RECONN_PHASE_FOREVER;
+              }
+          }
+          ble_hid_start_next_reconnect();
+      }
     }
     break;
 
@@ -165,10 +221,16 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
             ble_hid_advertise();
         } else {
             ESP_LOGI(TAG, "Manual disconnect detected (normalized reason %d). Starting 10s cooldown.", reason);
+            s_reconn_phase = RECONN_PHASE_IDLE;
+            s_reconnect_pending_bitmap = 0;
             esp_timer_start_once(s_adv_cooldown_timer, 10000000); // 10 seconds
         }
     } else {
-        ble_hid_advertise();
+        if (s_reconn_phase != RECONN_PHASE_IDLE) {
+            ble_hid_start_next_reconnect();
+        } else {
+            ble_hid_advertise();
+        }
     }
     break;
 
@@ -192,35 +254,54 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
 
         if ((event->adv_complete.reason == BLE_HS_ETIMEOUT || was_directed_timeout)
             && ble_hid_is_routing_active()) {
-        // If we were in directed/reconnect mode and timed out without a connection,
-        // retry in GEN_DISC instead of immediately falling to background.  This
-        // keeps the device discoverable long enough for the host to auto-reconnect
-        // after a role swap (host can take several seconds to start scanning).
-        // After BLE_RECONNECT_MAX_RETRIES we give up and fall to passive background.
-        const cfg_ble_state_t *st = cfg_ble_get_state();
-        int sel = (s_directed_profile != -1) ? s_directed_profile : st->selected_profile;
-        bool was_reconnecting = (s_directed_profile != -1) && (s_pairing_profile == -1);
-        bool profile_unconnected = (sel >= 0 && sel < CFG_BLE_MAX_PROFILES &&
-                                    s_conn_handles[sel] == BLE_HS_CONN_HANDLE_NONE);
 
-        s_directed_profile = -1; // clear before potential restart
+            int sel = s_directed_profile;
+            bool is_pairing = (s_pairing_profile != -1);
 
-        if (was_reconnecting && profile_unconnected
-            && s_reconnect_retries < BLE_RECONNECT_MAX_RETRIES) {
-            s_reconnect_retries++;
-            s_directed_profile = sel; // restart GEN_DISC reconnect window
-            ESP_LOGI(TAG, "Reconnect window timed out, retrying (%d/%d).",
-                     s_reconnect_retries, BLE_RECONNECT_MAX_RETRIES);
-        } else {
-            if (s_reconnect_retries >= BLE_RECONNECT_MAX_RETRIES) {
-                s_reconnect_retries = 0;
-                ESP_LOGI(TAG, "Reconnect retries exhausted, falling to background mode.");
+            if (sel != -1 && !is_pairing) {
+                if (s_reconn_phase == RECONN_PHASE_SELECTED) {
+                    s_reconnect_cycles[sel]++;
+                    s_selected_retries_left--;
+                    if (s_selected_retries_left > 0) {
+                        ESP_LOGI(TAG, "Selected Profile %d timed out. Retrying (%d left).", sel, s_selected_retries_left);
+                    } else {
+                        ESP_LOGI(TAG, "Selected Profile %d exhausted. Moving to FOREVER Phase.", sel);
+                        if (cfg_ble_get_state()->profiles[sel].is_valid) {
+                            s_reconnect_pending_bitmap |= (1 << sel);
+                        }
+                        s_reconn_phase = RECONN_PHASE_FOREVER;
+                        s_directed_profile = -1;
+                        ble_hid_start_next_reconnect();
+                        return 0; // break out
+                    }
+                } 
+                else if (s_reconn_phase == RECONN_PHASE_FOREVER) {
+                    s_directed_profile = -1;
+                    ble_hid_start_next_reconnect();
+                    return 0;
+                }
+                else if (s_reconn_phase == RECONN_PHASE_FINITE) {
+                    s_reconnect_cycles[sel]++;
+                    if (s_reconnect_cycles[sel] >= 5) {
+                        ESP_LOGI(TAG, "Finite reconnect exhausted for profile %d.", sel);
+                        s_reconnect_pending_bitmap &= ~(1 << sel);
+                        if (s_conn_handles[sel] == 0xFFFF) {
+                            s_conn_handles[sel] = BLE_HS_CONN_HANDLE_NONE;
+                        }
+                    }
+                    s_directed_profile = -1;
+                    ble_hid_start_next_reconnect();
+                    return 0;
+                }
+            } else {
+                 s_directed_profile = -1;
+                 s_reconn_phase = RECONN_PHASE_IDLE;
             }
+        } else {
+             s_directed_profile = -1;
+             s_reconn_phase = RECONN_PHASE_IDLE;
         }
         ble_hid_advertise();
-        } else {
-            s_directed_profile = -1;
-        }
     } // end ADV_COMPLETE block
     break;
 
@@ -277,6 +358,29 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
                   break; // only fix the first matching profile
               }
           }
+      }
+
+      // If we are in a reconnect phase, we got a connection!
+      if (s_reconn_phase == RECONN_PHASE_SELECTED || s_reconn_phase == RECONN_PHASE_FOREVER) {
+          s_reconn_phase = RECONN_PHASE_FINITE;
+          memset(s_reconnect_cycles, 0, sizeof(s_reconnect_cycles));
+          ESP_LOGI(TAG, "First connection established. Transitioning to FINITE Phase.");
+      }
+
+      int connected_profile = -1;
+      for (int i=0; i<CFG_BLE_MAX_PROFILES; i++) {
+          if (s_conn_handles[i] == event->enc_change.conn_handle) {
+              connected_profile = i;
+              break;
+          }
+      }
+      if (connected_profile != -1 && s_reconn_phase == RECONN_PHASE_FINITE) {
+          s_reconnect_pending_bitmap &= ~(1 << connected_profile);
+      }
+
+      if (s_reconn_phase == RECONN_PHASE_FINITE && s_reconnect_pending_bitmap != 0) {
+          ESP_LOGI(TAG, "Encryption complete, starting next reconnect from queue.");
+          ble_hid_start_next_reconnect();
       }
     } else {
       ESP_LOGE(TAG, "Encryption failed, status=%d", event->enc_change.status);
@@ -506,7 +610,7 @@ static void ble_hid_advertise(void) {
   //            1.28 s directed window.
   //
   // Total worst-case Android reconnect: 1.28 s + ~0.5 s = ~2 s.
-  if (is_reconnecting && is_valid && s_reconnect_retries < 1) {
+  if (is_reconnecting && is_valid && s_reconnect_cycles[active_profile] == 0 && s_reconn_phase != RECONN_PHASE_FOREVER) {
       adv_params.conn_mode = BLE_GAP_CONN_MODE_DIR;
 
       // High duty cycle: BLE spec fixes the max at 1.28 s; the controller fires
@@ -583,7 +687,7 @@ static void ble_hid_advertise(void) {
       if (s_pairing_profile != -1) {
           duration_ms = 60000;
       } else if (s_directed_profile != -1) {
-          duration_ms = 15000;
+          duration_ms = 1300;
       }
 
       rc = ble_gap_adv_set_fields(&fields);
@@ -826,6 +930,11 @@ esp_err_t ble_hid_send_consumer_report(uint16_t media_keycode) {
 }
 
 void ble_hid_profile_pair(uint8_t profile_id) {
+    s_reconnect_pending_bitmap = 0;
+    s_reconn_phase = RECONN_PHASE_SELECTED;
+    s_selected_retries_left = 5;
+    memset(s_reconnect_cycles, 0, sizeof(s_reconnect_cycles));
+    s_reconnect_last_profile = -1;
     ESP_LOGI(TAG, "[BLE API] Handling HOLD (Pair) for profile %d", profile_id);
 
     // Erase old credentials if valid and mark profile as invalid
@@ -871,6 +980,11 @@ void ble_hid_profile_pair(uint8_t profile_id) {
 }
 
 void ble_hid_profile_connect_and_select(uint8_t profile_id) {
+    s_reconnect_pending_bitmap = 0;
+    s_reconn_phase = RECONN_PHASE_SELECTED;
+    s_selected_retries_left = 5;
+    memset(s_reconnect_cycles, 0, sizeof(s_reconnect_cycles));
+    s_reconnect_last_profile = -1;
     ESP_LOGI(TAG, "[BLE API] Handling SINGLE TAP (Select/Connect) for profile %d", profile_id);
     const cfg_ble_state_t *st = cfg_ble_get_state();
 
@@ -897,6 +1011,11 @@ void ble_hid_profile_connect_and_select(uint8_t profile_id) {
 }
 
 void ble_hid_profile_toggle_connection(uint8_t profile_id) {
+    s_reconnect_pending_bitmap = 0;
+    s_reconn_phase = RECONN_PHASE_SELECTED;
+    s_selected_retries_left = 5;
+    memset(s_reconnect_cycles, 0, sizeof(s_reconnect_cycles));
+    s_reconnect_last_profile = -1;
     ESP_LOGI(TAG, "[BLE API] Handling DOUBLE TAP (Toggle Connect) for profile %d", profile_id);
     if (s_conn_handles[profile_id] != BLE_HS_CONN_HANDLE_NONE) {
         ESP_LOGI(TAG, "[BLE API] Profile %d connected. Terminating connection (Toggle OFF).", profile_id);
@@ -1040,10 +1159,29 @@ void ble_hid_set_suspended(bool suspended) {
             return;
         }
 
-        s_directed_profile  = (int)cfg_ble_get_state()->selected_profile;
-        // Skip directed ADV when requested (e.g. role swap — Android ignores
-        // directed ADV, wasting 1.28 s).  Otherwise start fresh with directed.
-        s_reconnect_retries = s_skip_directed_on_resume ? 1 : 0;
+        s_reconnect_pending_bitmap = 0;
+        int sel = (int)cfg_ble_get_state()->selected_profile;
+        
+        for (int i = 0; i < CFG_BLE_MAX_PROFILES; i++) {
+            if (i != sel && s_conn_handles[i] == 0xFFFF && cfg_ble_get_state()->profiles[i].is_valid) {
+                s_reconnect_pending_bitmap |= (1 << i);
+            }
+        }
+
+        memset(s_reconnect_cycles, 0, sizeof(s_reconnect_cycles));
+        s_reconnect_last_profile = -1;
+
+        if (sel >= 0 && sel < CFG_BLE_MAX_PROFILES) {
+            s_directed_profile = sel;
+            s_reconn_phase = RECONN_PHASE_SELECTED;
+            s_selected_retries_left = 5;
+            s_reconnect_cycles[sel] = s_skip_directed_on_resume ? 1 : 0;
+        } else {
+            s_reconn_phase = RECONN_PHASE_FOREVER;
+            ble_hid_start_next_reconnect();
+            return;
+        }
+
         s_skip_directed_on_resume = false;
         ble_hid_advertise();
     }
@@ -1120,9 +1258,7 @@ static void ble_hid_on_split_status_updated(void *arg, esp_event_base_t base,
                     s_conn_handles[i] = 0xFFFF; 
                 }
             } else {
-                if (s_conn_handles[i] == 0xFFFF) {
-                    s_conn_handles[i] = BLE_HS_CONN_HANDLE_NONE;
-                }
+                s_conn_handles[i] = BLE_HS_CONN_HANDLE_NONE; // strict cutoff to prevent ghosting
             }
         }
         
