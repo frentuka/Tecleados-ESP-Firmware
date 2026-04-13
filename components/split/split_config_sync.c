@@ -180,12 +180,17 @@ void split_config_sync_on_ack(const uint8_t *payload, size_t len)
  * SLAVE — reassembly
  * ========================================================================= */
 
+// Maximum fragments we can track in the bitmap. 32 fragments × 225 B = 7.2 KB
+// which comfortably covers every current sync entry (layouts, bonds, etc).
+// If a larger blob ever needs to be synced, widen this to uint64_t or a byte array.
+#define SPLIT_CFG_MAX_FRAGMENTS 32
+
 typedef struct {
     bool      active;
     uint8_t   kind;
     char      key[SPLIT_CONFIG_SYNC_KEY_LEN + 1];
     uint8_t   total;
-    uint8_t   received;      // bitmask of received fragment indices (supports up to 8 fragments)
+    uint32_t  received;      // bitmask of received fragment indices (up to 32)
     uint8_t  *buf;
     size_t    buf_len;       // allocated size
     size_t    data_len;      // total expected data length (known after last fragment arrives)
@@ -217,6 +222,12 @@ esp_err_t split_config_sync_on_fragment(const uint8_t *src_mac,
     char key[SPLIT_CONFIG_SYNC_KEY_LEN + 1];
     memcpy(key, frag->key, SPLIT_CONFIG_SYNC_KEY_LEN);
     key[SPLIT_CONFIG_SYNC_KEY_LEN] = '\0';
+
+    if (frag->fragment_total == 0 || frag->fragment_total > SPLIT_CFG_MAX_FRAGMENTS) {
+        ESP_LOGW(TAG, "fragment total %u exceeds reassembly capacity %u",
+                 frag->fragment_total, SPLIT_CFG_MAX_FRAGMENTS);
+        return ESP_ERR_INVALID_SIZE;
+    }
 
     // New transfer or different (kind, key) → reset and start fresh.
     if (!s_rx.active || s_rx.kind != frag->kind ||
@@ -250,7 +261,7 @@ esp_err_t split_config_sync_on_fragment(const uint8_t *src_mac,
         return ESP_ERR_INVALID_SIZE;
     }
     memcpy(s_rx.buf + offset, payload + SPLIT_CONFIG_SYNC_HDR_SIZE, data_len);
-    s_rx.received |= (uint8_t)(1u << frag->fragment_idx);
+    s_rx.received |= (uint32_t)1u << frag->fragment_idx;
 
     // Track total data length from the last fragment.
     if (frag->fragment_idx == frag->fragment_total - 1) {
@@ -260,7 +271,9 @@ esp_err_t split_config_sync_on_fragment(const uint8_t *src_mac,
     ESP_LOGD(TAG, "rx fragment %u/%u kind=%u key=%s",
              frag->fragment_idx + 1, frag->fragment_total, frag->kind, key);
 
-    uint8_t full_mask = (uint8_t)((1u << frag->fragment_total) - 1u);
+    // Build the completion mask. Using 64-bit intermediate prevents UB when
+    // fragment_total == 32 (1u << 32 is UB on a 32-bit type).
+    uint32_t full_mask = (uint32_t)(((uint64_t)1u << frag->fragment_total) - 1u);
     if ((s_rx.received & full_mask) != full_mask || s_rx.data_len == 0) {
         return ESP_OK; // Still waiting for more fragments.
     }
