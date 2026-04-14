@@ -19,26 +19,26 @@ Roles are decided by priority, not hardcoded to Left/Right:
 - **BLE Priority**: historical alignment with an active BLE host.
 - **Preferred / Last / MAC tiebreaker**: deterministic fallbacks so the link is stable when neither half is plugged in.
 
-Implemented in [split_role.c](components/split/split_role.c); driven by [split_dispatch.c](components/split/split_dispatch.c) on `ROLE_NEGOTIATE` reception.
+Implemented in [split_role.c]; driven by [split_dispatch.c] on `ROLE_NEGOTIATE` reception.
 
 ### 2. Encrypted ESP-NOW Transport
 All traffic is secured using **AES-128-CCM** with anti-replay:
-- **Pairing**: unencrypted X25519 ECDH exchange derives a shared session key ([split_pair.c](components/split/split_pair.c), [split_crypto.c](components/split/split_crypto.c)).
-- **MIC**: every packet carries a MIC authenticated by [split_transport.c](components/split/split_transport.c) before dispatch.
-- **Replay window**: 16-bit modular sequence window in [split_session.c](components/split/split_session.c) — forward half accepted, rest dropped.
+- **Pairing**: unencrypted X25519 ECDH exchange derives a shared session key ([split_pair.c], [split_crypto.c].
+- **MIC**: every packet carries a MIC authenticated by [split_transport.c] before dispatch.
+- **Replay window**: 16-bit modular sequence window in [split_session.c] — forward half accepted, rest dropped.
 
 ### 3. Fragmentation Protocol
-ESP-NOW's ~240-byte payload limit means large transfers (the full config blob, macro DB, BLE bonds) are fragmented and reassembled by [split_config_sync.c](components/split/split_config_sync.c). Reassembly tracks received fragments in a 32-bit bitmap → **max 32 fragments / ~7.2 KB per logical message**.
+ESP-NOW's ~240-byte payload limit means large transfers (the full config blob, macro DB, BLE bonds) are fragmented and reassembled by [split_config_sync.c]. Reassembly tracks received fragments in a 32-bit bitmap → **max 32 fragments / ~7.2 KB per logical message**.
 
 ### 4. State-Machine Task
-One FreeRTOS task ([split_task.c](components/split/split_task.c)) drives the whole connection lifecycle at ~100 Hz:
+One FreeRTOS task ([split_task.c]) drives the whole connection lifecycle at ~100 Hz:
 
-| State | Tick behavior |
-|---|---|
-| `PAIRING` | Broadcast DISCOVERY every 500 ms; respect pairing deadline. |
-| `CONNECTING` | Retransmit `ROLE_NEGOTIATE` every 500 ms until the peer ACKs. |
-| `CONNECTED` | 150 ms heartbeat (slave→master), bench probes (master), drain deferred config-sync work. |
-| `DISCONNECTED` | Reconnect with exponential backoff (500 ms → 5 s). |
+| State          | Tick behavior                                                                            |
+| -------------- | ---------------------------------------------------------------------------------------- |
+| `PAIRING`      | Broadcast DISCOVERY every 500 ms; respect pairing deadline.                              |
+| `CONNECTING`   | Retransmit `ROLE_NEGOTIATE` every 500 ms until the peer ACKs.                            |
+| `CONNECTED`    | 150 ms heartbeat (slave→master), bench probes (master), drain deferred config-sync work. |
+| `DISCONNECTED` | Reconnect with exponential backoff (500 ms → 5 s).                                       |
 
 The task owns all NVS-heavy / blocking work (config sync push). Event-bus and WiFi-task contexts only **request** work via three `volatile bool` flags — they never block.
 
@@ -74,28 +74,28 @@ Every file has a single responsibility. No source owns shared mutable state — 
 ## Cross-Module Connections
 
 ### [[KEYBOARD_MODULE]] — Matrix Merging
-- **Slave**: [split_bridge.c](components/split/split_bridge.c) registers `on_matrix_change` as the `kb_manager` callback; every change is serialised into `SPLIT_MSG_KEY_STATE_FULL` (always full, never delta — ESP-NOW is fire-and-forget, a dropped delta would corrupt the peer's view forever).
-- **Master**: [split_dispatch.c](components/split/split_dispatch.c) feeds received bitmaps into `kb_manager_set_remote_matrix()`. The local scanner XOR-merges them with its own matrix.
+- **Slave**: [split_bridge.c] registers `on_matrix_change` as the `kb_manager` callback; every change is serialised into `SPLIT_MSG_KEY_STATE_FULL` (always full, never delta — ESP-NOW is fire-and-forget, a dropped delta would corrupt the peer's view forever).
+- **Master**: [split_dispatch.c] feeds received bitmaps into `kb_manager_set_remote_matrix()`. The local scanner XOR-merges them with its own matrix.
 
 ### [[BLE_MODULE]] — Radio Management & Proxy
-- **Role-based suspend**: [split_bridge.c](components/split/split_bridge.c) suspends the slave's BLE radio (`ble_hid_set_suspended(true)`) to avoid 2.4 GHz contention and host-side confusion.
+- **Role-based suspend**: [split_bridge.c] suspends the slave's BLE radio (`ble_hid_set_suspended(true)`) to avoid 2.4 GHz contention and host-side confusion.
 - **MAC sharing**: on first master promotion `split_bridge` auto-populates `cfg_system.ble_shared_addr` from its own BT MAC. After a role swap, the new master advertises with the same address → seamless reconnect on the host.
 - **Configurator proxy**: BLE commands arriving on the slave's `MODULE_BLE` USB channel are tunneled over `SPLIT_MSG_BLE_CMD` and executed on the master (source of truth). Master pushes `SPLIT_MSG_BLE_STATUS` back to the slave for widget sync.
 
 ### [[USB_MODULE]] — Host Interface
 - `tud_mounted()` is the primary input for role negotiation.
-- [split_usb.c](components/split/split_usb.c) handles configurator traffic on `MODULE_SPLIT`: START_PAIRING, CANCEL_PAIRING, UNPAIR, GET_STATUS, GET_REMOTE_MATRIX, ROLE_SWAP, RUN_BENCH, GET_BENCH.
+- [split_usb.c] handles configurator traffic on `MODULE_SPLIT`: START_PAIRING, CANCEL_PAIRING, UNPAIR, GET_STATUS, GET_REMOTE_MATRIX, ROLE_SWAP, RUN_BENCH, GET_BENCH.
 
 ### [[CONFIG_MODULE]] — Persistent Sync
-- [splitmod.c](components/split/splitmod.c) listens for `CONFIG_EVENT_KIND_UPDATED`. Whenever a syncable key is updated, it **flags** `split_task` to push the change — the event-bus task never blocks on NVS.
-- [split_config_sync.c](components/split/split_config_sync.c) owns fragmentation, reassembly, and ACK/retry.
+- [splitmod.c] listens for `CONFIG_EVENT_KIND_UPDATED`. Whenever a syncable key is updated, it **flags** `split_task` to push the change — the event-bus task never blocks on NVS.
+- [split_config_sync.c] owns fragmentation, reassembly, and ACK/retry.
 - Receiving a stale remote `ble_cfg` triggers **reverse sync** — the local side pushes its own `ble_cfg` + bonds back so both halves converge.
 
 ---
 
 ## Message Protocol
 
-The protocol ([split_protocol.h](components/split/include/split_protocol.h)) uses a standardized header for all over-the-air packets.
+The protocol ([split_protocol.h]) uses a standardized header for all over-the-air packets.
 
 | Type | Name | Description |
 |---|---|---|

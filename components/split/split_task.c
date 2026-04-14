@@ -23,6 +23,8 @@
 #include "split_protocol.h"
 #include "split_pair.h"
 #include "split_role.h"
+#include "blemod.h"
+#include "tusb.h"
 #include "split_sync.h"
 #include "split_config_sync.h"
 #include "split_bridge.h"
@@ -101,7 +103,8 @@ void split_task_send_role_negotiate(void)
     split_role_negotiate_payload_t rp = {
         .proposed_role = pref,
         .usb_connected    = (uint8_t)(tud_mounted() ? 1 : 0),
-        .ble_connected    = (uint8_t)(ble_hid_is_connected() ? 1 : 0),
+        .ble_connected_bitmap = ble_hid_get_connected_profiles_bitmap(),
+        .selected_profile     = (int8_t)cfg_ble_get_state()->selected_profile,
         .has_unsynced_ble = cfg_ble_get_state()->has_unsynced_updates,
         .last_role        = (uint8_t)split_role_load_last(),
     };

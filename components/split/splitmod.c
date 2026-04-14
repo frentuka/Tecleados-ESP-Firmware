@@ -18,10 +18,12 @@
 #include "split_pair.h"
 #include "split_role.h"
 #include "split_sync.h"
+#include "blemod.h"
 #include "split_config_sync.h"
 #include "split_bridge.h"
 #include "split_dispatch.h"
 #include "split_task.h"
+#include "cfg_ble.h"
 #include "split_usb.h"
 
 #define TAG "SPLIT"
@@ -231,6 +233,8 @@ esp_err_t splitmod_request_role_swap(void)
     split_role_t current = split_session_get_role();
     split_role_payload_t req = {
         .proposed_role = (current == SPLIT_ROLE_MASTER) ? SPLIT_ROLE_SLAVE : SPLIT_ROLE_MASTER,
+        .ble_connected_bitmap = ble_hid_get_connected_profiles_bitmap(),
+        .selected_profile = (int8_t)cfg_ble_get_state()->selected_profile,
     };
     memcpy(req.device_id, split_session_own_mac(), 6);
 

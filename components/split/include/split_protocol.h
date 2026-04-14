@@ -105,6 +105,8 @@ typedef struct __attribute__((packed)) split_pair_payload {
 typedef struct __attribute__((packed)) split_role_payload {
     uint8_t  proposed_role;     // Role sender wants to take (split_role_t)
     uint8_t  device_id[6];      // For tiebreaker comparison
+    uint16_t ble_connected_bitmap; // Bitmap of currently connected host profiles
+    int8_t   selected_profile;  // NEW: Currently selected BLE profile index (0-8, or -1)
 } split_role_payload_t;
 
 /** SPLIT_MSG_ROLE_NEGOTIATE — extended proposal with live connection context.
@@ -114,7 +116,8 @@ typedef struct __attribute__((packed)) split_role_negotiate_payload {
     uint8_t  proposed_role;      // Explicit user preference (split_role_t); 0 = auto
     uint8_t  device_id[6];       // Sender's MAC address (tiebreaker)
     uint8_t  usb_connected;      // 1 if sender has an active USB host connection
-    uint8_t  ble_connected;      // 1 if sender has an active BLE host connection
+    uint16_t ble_connected_bitmap; // Bitmap of active BLE connections (0 = none)
+    int8_t   selected_profile;   // NEW: Currently selected BLE profile (0-8, or -1)
     uint8_t  has_unsynced_ble;   // 1 if sender has a new BLE bond not yet synced to peer
     uint8_t  last_role;          // Last persisted role (split_role_t); SPLIT_ROLE_NONE if unknown
 } split_role_negotiate_payload_t;

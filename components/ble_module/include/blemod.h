@@ -56,3 +56,9 @@ void ble_hid_reinit_bonds(void);
  *         Used during split role swaps where the host is already scanning
  *         (Android ignores directed ADV, costing 1.28 s for nothing). */
 void ble_hid_skip_directed_adv(void);
+
+/** @brief Prime the reconnection queue with a known set of active host profiles.
+ *         The selected_profile (if >= 0) will be used to prioritize the first pick.
+ *         Used during role swaps to ensure the new Master restores all previous
+ *         connections immediately. */
+void ble_hid_seed_handover_state(uint16_t bitmap, int8_t selected_profile);

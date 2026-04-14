@@ -4,21 +4,21 @@
     "type": "split",
     "children": [
       {
-        "id": "4fd1c2e7b0a9a196",
+        "id": "76326f90ca3f4958",
         "type": "tabs",
         "children": [
           {
-            "id": "ca2b659ed8b84b82",
+            "id": "0fe200da9348e676",
             "type": "leaf",
             "state": {
               "type": "markdown",
               "state": {
-                "file": "modules/STATUS_MODULE.md",
+                "file": "modules/SPLIT_MODULE.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "STATUS_MODULE"
+              "title": "SPLIT_MODULE"
             }
           }
         ]
@@ -78,7 +78,7 @@
       }
     ],
     "direction": "horizontal",
-    "width": 300
+    "width": 224.5
   },
   "right": {
     "id": "c28f1c30008b3ad2",
@@ -183,15 +183,19 @@
       "bases:Create new base": false
     }
   },
-  "active": "ca2b659ed8b84b82",
+  "active": "0fe200da9348e676",
   "lastOpenFiles": [
-    "modules/CONFIG_MODULE.md",
-    "modules/STATUS_MODULE.md",
-    "Home.md",
-    "modules/KEYBOARD_MODULE.md",
-    "modules/BLE_MODULE.md",
-    "modules",
+    "modules/SPLIT_MODULE.md",
     "modules/USB_MODULE.md",
-    "modules/SPLIT_MODULE.md"
+    "modules/KEYBOARD_MODULE.md",
+    "modules/CONFIG_MODULE.md",
+    "modules/BLE_MODULE.md",
+    "components/split/split_role.c.md",
+    "modules/STATUS_MODULE.md",
+    "components/split/split_bridge.c.md",
+    "components/split",
+    "components",
+    "Home.md",
+    "modules"
   ]
 }

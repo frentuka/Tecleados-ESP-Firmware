@@ -46,10 +46,12 @@ split_role_t split_role_load_last(void);
  * @param own_pref          Explicit preference (0=auto, 1=master, 2=slave)
  * @param peer_pref         Peer's explicit preference from ROLE_NEGOTIATE
  * @param own_usb_connected 1 if this device has an active USB host connection
- * @param own_ble_connected 1 if this device has an active BLE host connection
+ * @param own_ble_connected_bitmap Bitmap of own connected host profiles
+ * @param own_has_unsynced_ble   1 if this device has unsynced bonds
  * @param own_last_role     Last role persisted in own NVS
  * @param peer_usb_connected 1 if peer has an active USB host connection
- * @param peer_ble_connected 1 if peer has an active BLE host connection
+ * @param peer_ble_connected_bitmap Bitmap of peer connected host profiles
+ * @param peer_has_unsynced_ble  1 if peer has unsynced bonds
  * @param peer_last_role    Last role reported by peer via ROLE_NEGOTIATE
  * @return SPLIT_ROLE_MASTER or SPLIT_ROLE_SLAVE
  */
@@ -58,11 +60,11 @@ split_role_t split_role_decide(const uint8_t own_mac[6],
                                 uint8_t own_pref,
                                 uint8_t peer_pref,
                                 uint8_t own_usb_connected,
-                                uint8_t own_ble_connected,
+                                uint16_t own_ble_connected_bitmap,
                                 uint8_t own_has_unsynced_ble,
                                 split_role_t own_last_role,
                                 uint8_t peer_usb_connected,
-                                uint8_t peer_ble_connected,
+                                uint16_t peer_ble_connected_bitmap,
                                 uint8_t peer_has_unsynced_ble,
                                 split_role_t peer_last_role);
 
@@ -75,7 +77,8 @@ split_role_t split_role_decide(const uint8_t own_mac[6],
  * @param own_mac            Our MAC
  * @param own_pref           Our preferred_role from pairing config
  * @param own_usb_connected  1 if we have an active USB host connection
- * @param own_ble_connected  1 if we have an active BLE host connection
+ * @param own_ble_connected_bitmap Bitmap of our connected host profiles
+ * @param own_has_unsynced_ble   1 if we have unsynced bonds
  * @param own_last_role      Our last role loaded from NVS
  * @param out_role           Set to the decided role on success
  * @return ESP_OK, or ESP_ERR_INVALID_SIZE if payload is too short.
@@ -85,7 +88,7 @@ esp_err_t split_role_on_negotiate(const uint8_t *src_mac,
                                    const uint8_t own_mac[6],
                                    uint8_t own_pref,
                                    uint8_t own_usb_connected,
-                                   uint8_t own_ble_connected,
+                                   uint16_t own_ble_connected_bitmap,
                                    uint8_t own_has_unsynced_ble,
                                    split_role_t own_last_role,
                                    split_role_t *out_role);

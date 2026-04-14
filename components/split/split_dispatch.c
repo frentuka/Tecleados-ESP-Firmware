@@ -86,7 +86,7 @@ static void handle_role_negotiate_msg(const uint8_t *src_mac,
     esp_err_t ret = split_role_on_negotiate(src_mac, payload, len,
                                              split_session_own_mac(), own_pref,
                                              tud_mounted() ? 1u : 0u,
-                                             ble_hid_is_connected() ? 1u : 0u,
+                                             ble_hid_get_connected_profiles_bitmap(),
                                              cfg_ble_get_state()->has_unsynced_updates,
                                              split_role_load_last(),
                                              &decided);
@@ -108,6 +108,10 @@ static void handle_role_negotiate_msg(const uint8_t *src_mac,
 
     split_bridge_apply_routing_for_role(decided);
     if (decided == SPLIT_ROLE_MASTER) {
+        // Negotiation handover: If the peer was connected to devices, seed them
+        const split_role_negotiate_payload_t *p = (const split_role_negotiate_payload_t *)payload;
+        ble_hid_seed_handover_state(p->ble_connected_bitmap, p->selected_profile);
+
         split_task_request_config_sync_initial();
         split_bridge_send_ble_status_to_slave();
     }
@@ -115,17 +119,23 @@ static void handle_role_negotiate_msg(const uint8_t *src_mac,
 
 static void handle_role_swap_req(const uint8_t *payload, size_t len)
 {
-    (void)payload; (void)len;
-    if (split_session_get_state() != SPLIT_STATE_CONNECTED) return;
-
+    const split_role_payload_t *req = (const split_role_payload_t *)payload;
     split_role_t new_role;
     split_role_on_swap_req(split_session_get_role(), &new_role);
 
-    split_role_payload_t ack = {.proposed_role = (uint8_t)new_role};
+    split_role_payload_t ack = {
+        .proposed_role = (uint8_t)new_role,
+        .ble_connected_bitmap = ble_hid_get_connected_profiles_bitmap(),
+        .selected_profile = (int8_t)cfg_ble_get_state()->selected_profile,
+    };
     memcpy(ack.device_id, split_session_own_mac(), 6);
     split_transport_send(split_session_peer_mac(), SPLIT_PROTO_SPLIT,
                          SPLIT_MSG_ROLE_SWAP_ACK, split_session_next_seq(),
                          (const uint8_t *)&ack, sizeof(ack));
+
+    if (new_role == SPLIT_ROLE_MASTER) {
+        ble_hid_seed_handover_state(req->ble_connected_bitmap, req->selected_profile);
+    }
 
     split_session_set_role(new_role);
     split_role_save_last(new_role);
@@ -140,12 +150,19 @@ static void handle_role_swap_req(const uint8_t *payload, size_t len)
     }
 }
 
-static void handle_role_swap_ack(void)
+static void handle_role_swap_ack(const uint8_t *payload, size_t len)
 {
     if (split_session_get_state() != SPLIT_STATE_CONNECTED) return;
+    if (len < sizeof(split_role_payload_t)) return;
 
+    const split_role_payload_t *ack = (const split_role_payload_t *)payload;
     split_role_t new_role;
     split_role_on_swap_ack(split_session_get_role(), &new_role);
+
+    if (new_role == SPLIT_ROLE_MASTER) {
+        ble_hid_seed_handover_state(ack->ble_connected_bitmap, ack->selected_profile);
+    }
+
     split_session_set_role(new_role);
     split_role_save_last(new_role);
     esp_event_post(SPLIT_EVENTS, SPLIT_EVENT_ROLE_CHANGED, &new_role, sizeof(new_role), 0);
@@ -301,7 +318,7 @@ void split_dispatch_on_message(const uint8_t *src_mac,
         break;
 
     case SPLIT_MSG_ROLE_SWAP_ACK:
-        handle_role_swap_ack();
+        handle_role_swap_ack(payload, len);
         break;
 
     /* ---- Key state (MASTER receives from SLAVE) ---- */

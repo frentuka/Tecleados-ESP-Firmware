@@ -51,11 +51,11 @@ split_role_t split_role_decide(const uint8_t own_mac[6],
                                 uint8_t own_pref,
                                 uint8_t peer_pref,
                                 uint8_t own_usb_connected,
-                                uint8_t own_ble_connected,
+                                uint16_t own_ble_connected_bitmap,
                                 uint8_t own_has_unsynced_ble,
                                 split_role_t own_last_role,
                                 uint8_t peer_usb_connected,
-                                uint8_t peer_ble_connected,
+                                uint16_t peer_ble_connected_bitmap,
                                 uint8_t peer_has_unsynced_ble,
                                 split_role_t peer_last_role)
 {
@@ -79,8 +79,8 @@ split_role_t split_role_decide(const uint8_t own_mac[6],
 
     // Priority 3: BLE host connection.
     // The device with an active BLE connection owns the wireless output path.
-    if ( own_ble_connected && !peer_ble_connected) return SPLIT_ROLE_MASTER;
-    if (!own_ble_connected &&  peer_ble_connected) return SPLIT_ROLE_SLAVE;
+    if ( own_ble_connected_bitmap && !peer_ble_connected_bitmap) return SPLIT_ROLE_MASTER;
+    if (!own_ble_connected_bitmap &&  peer_ble_connected_bitmap) return SPLIT_ROLE_SLAVE;
 
     // Priority 4: last persisted role.
     // After a role swap or clean boot the recorded role drives continuity,
@@ -96,11 +96,11 @@ split_role_t split_role_decide(const uint8_t own_mac[6],
 
     ESP_LOGD(TAG, "role decided by MAC tiebreaker: %s "
              "(own_pref=%u peer_pref=%u own_usb=%u peer_usb=%u "
-             "own_ble=%u peer_ble=%u own_last=%u peer_last=%u)",
+             "own_ble_bm=0x%02X peer_ble_bm=0x%02X own_last=%u peer_last=%u)",
              role == SPLIT_ROLE_MASTER ? "MASTER" : "SLAVE",
              own_pref, peer_pref,
              own_usb_connected, peer_usb_connected,
-             own_ble_connected, peer_ble_connected,
+             own_ble_connected_bitmap, peer_ble_connected_bitmap,
              (uint8_t)own_last_role, (uint8_t)peer_last_role);
     return role;
 }
@@ -110,7 +110,7 @@ esp_err_t split_role_on_negotiate(const uint8_t *src_mac,
                                    const uint8_t own_mac[6],
                                    uint8_t own_pref,
                                    uint8_t own_usb_connected,
-                                   uint8_t own_ble_connected,
+                                   uint16_t own_ble_connected_bitmap,
                                    uint8_t own_has_unsynced_ble,
                                    split_role_t own_last_role,
                                    split_role_t *out_role)
@@ -122,16 +122,16 @@ esp_err_t split_role_on_negotiate(const uint8_t *src_mac,
         (const split_role_negotiate_payload_t *)payload;
 
     ESP_LOGD(TAG, "ROLE_NEGOTIATE from " MACSTR
-             " proposed=%u usb=%u ble=%u last_role=%u",
+             " proposed=%u usb=%u ble_bm=0x%02X last_role=%u",
              MAC2STR(src_mac),
              p->proposed_role, p->usb_connected,
-             p->ble_connected, p->last_role);
+             p->ble_connected_bitmap, p->last_role);
 
     *out_role = split_role_decide(
         own_mac, src_mac,
         own_pref,           p->proposed_role,
-        own_usb_connected,  own_ble_connected,  own_has_unsynced_ble, own_last_role,
-        p->usb_connected,   p->ble_connected,   p->has_unsynced_ble, (split_role_t)p->last_role);
+        own_usb_connected,  own_ble_connected_bitmap,  own_has_unsynced_ble, own_last_role,
+        p->usb_connected,   p->ble_connected_bitmap,   p->has_unsynced_ble, (split_role_t)p->last_role);
 
     return ESP_OK;
 }

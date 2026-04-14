@@ -93,6 +93,7 @@ typedef enum {
 
 static reconn_phase_t s_reconn_phase = RECONN_PHASE_IDLE;
 static uint16_t s_reconnect_pending_bitmap = 0;
+static uint16_t s_slave_mirror_conn_bitmap = 0; // Latch: last known connected profiles on Master
 static uint8_t s_reconnect_cycles[CFG_BLE_MAX_PROFILES] = {0};
 static int s_reconnect_last_profile = -1;
 static int s_selected_retries_left = 0;
@@ -1199,29 +1200,45 @@ void ble_hid_set_suspended(bool suspended) {
         s_reconnect_pending_bitmap = 0;
         int sel = (int)cfg_ble_get_state()->selected_profile;
         
-        for (int i = 0; i < CFG_BLE_MAX_PROFILES; i++) {
-            if (i != sel && s_conn_handles[i] == BLE_CONN_HANDLE_REMOTE && cfg_ble_get_state()->profiles[i].is_valid) {
-                s_reconnect_pending_bitmap |= (1 << i);
+        // Priority 1: Use the latched bitmap from when we were a slave.
+        // This survives the old Master's shutdown sequence (which might have wiped s_conn_handles).
+        if (s_slave_mirror_conn_bitmap != 0) {
+            s_reconnect_pending_bitmap = s_slave_mirror_conn_bitmap;
+            ESP_LOGI(TAG, "Resuming as MASTER. Using LATCHED bitmap from Slave period: 0x%02X", 
+                     (unsigned int)s_reconnect_pending_bitmap);
+        } else {
+            // Fallback: Check handles directly (unlikely to have many if shutdown wipe occurred).
+            for (int i = 0; i < CFG_BLE_MAX_PROFILES; i++) {
+                if (s_conn_handles[i] == BLE_CONN_HANDLE_REMOTE && cfg_ble_get_state()->profiles[i].is_valid) {
+                    s_reconnect_pending_bitmap |= (1 << i);
+                }
             }
         }
 
-        memset(s_reconnect_cycles, 0, sizeof(s_reconnect_cycles));
-        s_reconnect_last_profile = -1;
+        s_slave_mirror_conn_bitmap = 0; // Clear latch after promotion.
 
-        if (sel >= 0 && sel < CFG_BLE_MAX_PROFILES) {
+        memset(s_reconnect_cycles, 0, sizeof(s_reconnect_cycles));
+        // Start the round-robin one step before 'sel' so that start_next_reconnect() 
+        // picks 'sel' first (the currently active profile).
+        s_reconnect_last_profile = (sel + CFG_BLE_MAX_PROFILES - 1) % CFG_BLE_MAX_PROFILES;
+
+        if (s_reconnect_pending_bitmap != 0) {
+            ESP_LOGI(TAG, "Resuming as MASTER with multiple connected profiles. Phases → FINITE (bitmap=0x%02X)", 
+                     (unsigned int)s_reconnect_pending_bitmap);
+            s_reconn_phase = RECONN_PHASE_FINITE;
+            ble_hid_start_next_reconnect();
+        } else if (sel >= 0 && sel < CFG_BLE_MAX_PROFILES) {
+            ESP_LOGI(TAG, "Resuming as MASTER. Standard Selected reconnection for profile %d.", sel);
             s_directed_profile = sel;
             s_reconn_phase = RECONN_PHASE_SELECTED;
-            s_selected_retries_left = 6; // Set to Even number for 50/50 interleaving
+            s_selected_retries_left = 6;
             s_reconnect_cycles[sel] = s_skip_directed_on_resume ? 1 : 0;
-            s_reconnect_last_profile = -1; // Reset rotation
+            s_skip_directed_on_resume = false;
+            ble_hid_advertise();
         } else {
             s_reconn_phase = RECONN_PHASE_FOREVER;
             ble_hid_start_next_reconnect();
-            return;
         }
-
-        s_skip_directed_on_resume = false;
-        ble_hid_advertise();
     }
 }
 
@@ -1289,6 +1306,11 @@ static void ble_hid_on_split_status_updated(void *arg, esp_event_base_t base,
         }
         
         // Sync connection bitmap...
+        // SLAVE LATCH: We always add new connections to our mirror, but we are 
+        // extremely cautious about clearing them, to avoid the "Master Shutdown Wipe" 
+        // during role swaps.
+        s_slave_mirror_conn_bitmap |= ev->connected_bitmap;
+
         for (int i = 0; i < CFG_BLE_MAX_PROFILES; i++) {
             bool is_conn_on_master = (ev->connected_bitmap & (1 << i)) != 0;
             if (is_conn_on_master) {
@@ -1296,7 +1318,10 @@ static void ble_hid_on_split_status_updated(void *arg, esp_event_base_t base,
                     s_conn_handles[i] = BLE_CONN_HANDLE_REMOTE; 
                 }
             } else {
-                s_conn_handles[i] = BLE_HS_CONN_HANDLE_NONE; // strict cutoff to prevent ghosting
+                // Regular sync clearing (e.g. user manually disconnected on Master).
+                // We keep the latch (s_slave_mirror_conn_bitmap) intact just in case
+                // this is actually a role-swap shutdown.
+                s_conn_handles[i] = BLE_HS_CONN_HANDLE_NONE; 
             }
         }
         
@@ -1311,4 +1336,16 @@ static void ble_hid_on_split_status_updated(void *arg, esp_event_base_t base,
 static void ble_hid_dump_bonds(void) {
     // Note: Diagnostics can be expanded here if needed to track LTK count.
     ESP_LOGI(TAG, "Bond store persistence is active.");
+}
+
+void ble_hid_seed_handover_state(uint16_t bitmap, int8_t selected_profile) {
+    if (selected_profile >= 0 && selected_profile < CFG_BLE_MAX_PROFILES) {
+        ESP_LOGI(TAG, "Handover: syncing selected profile to %d", (int)selected_profile);
+        cfg_ble_set_selected_profile((uint8_t)selected_profile);
+    }
+
+    if (bitmap != 0) {
+        ESP_LOGI(TAG, "Handover: seeding restoration latch with bitmap 0x%02X", (unsigned int)bitmap);
+        s_slave_mirror_conn_bitmap |= bitmap;
+    }
 }
