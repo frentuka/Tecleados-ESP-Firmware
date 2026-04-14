@@ -150,7 +150,7 @@ int rgb_init(gpio_num_t data_gpio)
     led_strip_config_t strip_cfg = {
         .strip_gpio_num = data_gpio,
         .max_leds = 1,                  // un solo LED integrado
-        .led_pixel_format = LED_PIXEL_FORMAT_GRB, // WS2812 es GRB
+        .color_component_format = LED_STRIP_COLOR_COMPONENT_FMT_GRB, // WS2812 es GRB
         .led_model = LED_MODEL_WS2812,
         .flags.invert_out = false
     };
@@ -159,7 +159,9 @@ int rgb_init(gpio_num_t data_gpio)
         .clk_src = RMT_CLK_SRC_DEFAULT,
         .resolution_hz = 10000000,      // 10 MHz estable para WS2812
         .mem_block_symbols = 64,
-        .flags.with_dma = false,
+        .flags = {
+            .with_dma = false,
+        }
     };
 
     ESP_RETURN_ON_ERROR(led_strip_new_rmt_device(&strip_cfg, &rmt_cfg, &s_strip),

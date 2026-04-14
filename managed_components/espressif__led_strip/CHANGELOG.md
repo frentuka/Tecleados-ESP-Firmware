@@ -1,3 +1,16 @@
+## 3.0.3
+
+- Support WS2816 with 16-bit color
+
+## 3.0.1
+
+- Support WS2811 bit timing
+
+## 3.0.0
+
+- Discontinued support for ESP-IDF v4.x
+- Added configuration for user-defined color component format
+
 ## 2.5.5
 
 - Simplified the led_strip component dependency, the time of full build with ESP-IDF v5.3 can now be shorter.

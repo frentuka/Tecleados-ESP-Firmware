@@ -14,15 +14,15 @@
         {
             "label": "1. Build TEF",
             "type": "shell",
-            "command": "& 'C:\\Espressif\\tools\\Microsoft.v5.5.3.PowerShell_profile.ps1' ; idf.py build",
+            "command": "& 'C:\\Espressif\\tools\\Microsoft.v6.0.PowerShell_profile.ps1' ; idf.py build",
             "options": {
                 "cwd": "${workspaceFolder}"
             }
         },
         {
-            "label": "2. Flash & Monitor COM3",
+            "label": "2. Flash & Monitor COM6",
             "type": "shell",
-            "command": "& 'C:\\Espressif\\tools\\Microsoft.v5.5.3.PowerShell_profile.ps1' ; idf.py -p COM3 flash monitor",
+            "command": "& 'C:\\Espressif\\tools\\Microsoft.v6.0.PowerShell_profile.ps1' ; idf.py -p COM6 flash monitor",
             "dependsOn": "1. Build TEF",
             "presentation": {
                 "echo": true,
@@ -34,9 +34,9 @@
             "problemMatcher": []
         },
         {
-            "label": "3. Flash & Monitor COM4",
+            "label": "3. Flash & Monitor COM3",
             "type": "shell",
-            "command": "& 'C:\\Espressif\\tools\\Microsoft.v5.5.3.PowerShell_profile.ps1' ; idf.py -p COM4 flash monitor",
+            "command": "& 'C:\\Espressif\\tools\\Microsoft.v6.0.PowerShell_profile.ps1' ; idf.py -p COM3 flash monitor",
             "dependsOn": "1. Build TEF",
             "presentation": {
                 "echo": true,
@@ -48,10 +48,10 @@
             "problemMatcher": []
         },
         {
-            "label": "Deploy TEF (COM3 & COM4)",
+            "label": "Deploy TEF (COM6 & COM3)",
             "dependsOn": [
-                "2. Flash & Monitor COM3",
-                "3. Flash & Monitor COM4"
+                "2. Flash & Monitor COM6",
+                "3. Flash & Monitor COM3"
             ],
             "dependsOrder": "parallel",
             "problemMatcher": [],
