@@ -79,12 +79,9 @@ static void handle_role_negotiate_msg(const uint8_t *src_mac,
 
     if (state != SPLIT_STATE_CONNECTING) return;
 
-    split_pair_data_t pd;
-    uint8_t own_pref = split_pair_get_data(&pd) ? pd.preferred_role : 0;
-
     split_role_t decided = SPLIT_ROLE_NONE;
     esp_err_t ret = split_role_on_negotiate(src_mac, payload, len,
-                                             split_session_own_mac(), own_pref,
+                                             split_session_own_mac(),
                                              tud_mounted() ? 1u : 0u,
                                              ble_hid_get_connected_profiles_bitmap(),
                                              cfg_ble_get_state()->has_unsynced_updates,

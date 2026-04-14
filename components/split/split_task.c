@@ -97,11 +97,8 @@ static inline void pm_apply_active(void) {}
 
 void split_task_send_role_negotiate(void)
 {
-    split_pair_data_t pd;
-    uint8_t pref = split_pair_get_data(&pd) ? pd.preferred_role : 0;
-
     split_role_negotiate_payload_t rp = {
-        .proposed_role = pref,
+        .proposed_role = 0,  // Field kept for wire compatibility; no longer used in role decision.
         .usb_connected    = (uint8_t)(tud_mounted() ? 1 : 0),
         .ble_connected_bitmap = ble_hid_get_connected_profiles_bitmap(),
         .selected_profile     = (int8_t)cfg_ble_get_state()->selected_profile,
@@ -176,12 +173,9 @@ static void tick_pairing(TickType_t now)
 
     if ((now - s_last_discovery_tx) < pdMS_TO_TICKS(SPLIT_DISCOVERY_MS)) return;
 
-    split_pair_data_t pd;
-    uint8_t pref = split_pair_get_data(&pd) ? pd.preferred_role : 0;
-
     uint8_t disc_buf[sizeof(split_discovery_payload_t)];
     size_t  disc_len = split_pair_build_discovery(disc_buf, sizeof(disc_buf),
-                                                   split_session_own_mac(), pref);
+                                                   split_session_own_mac(), 0);
     if (disc_len > 0) {
         static const uint8_t bcast[] = SPLIT_BROADCAST_MAC;
         split_transport_send(bcast, SPLIT_PROTO_SPLIT, SPLIT_MSG_DISCOVERY,

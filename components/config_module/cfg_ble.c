@@ -34,7 +34,7 @@ static void ble_default(void *dest) {
     if (!dest) return;
     cfg_ble_state_t *st = (cfg_ble_state_t *)dest;
     memset(st, 0, sizeof(cfg_ble_state_t));
-    st->ble_routing_enabled = true; // default ON
+    st->ble_routing_enabled = false; // default USB (BLE must be explicitly enabled)
     st->selected_profile = 0;       // default profile 0
     st->sync_version = 0;
 }
