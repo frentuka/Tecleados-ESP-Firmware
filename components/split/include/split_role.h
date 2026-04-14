@@ -59,9 +59,11 @@ split_role_t split_role_decide(const uint8_t own_mac[6],
                                 uint8_t peer_pref,
                                 uint8_t own_usb_connected,
                                 uint8_t own_ble_connected,
+                                uint8_t own_has_unsynced_ble,
                                 split_role_t own_last_role,
                                 uint8_t peer_usb_connected,
                                 uint8_t peer_ble_connected,
+                                uint8_t peer_has_unsynced_ble,
                                 split_role_t peer_last_role);
 
 /**
@@ -84,6 +86,7 @@ esp_err_t split_role_on_negotiate(const uint8_t *src_mac,
                                    uint8_t own_pref,
                                    uint8_t own_usb_connected,
                                    uint8_t own_ble_connected,
+                                   uint8_t own_has_unsynced_ble,
                                    split_role_t own_last_role,
                                    split_role_t *out_role);
 

@@ -111,11 +111,12 @@ typedef struct __attribute__((packed)) split_role_payload {
  *  Carries USB/BLE state and the last persisted role so the decision algorithm
  *  can pick the right master without user intervention after a link drop. */
 typedef struct __attribute__((packed)) split_role_negotiate_payload {
-    uint8_t  proposed_role;    // Explicit user preference (split_role_t); 0 = auto
-    uint8_t  device_id[6];     // Sender's MAC address (tiebreaker)
-    uint8_t  usb_connected;    // 1 if sender has an active USB host connection
-    uint8_t  ble_connected;    // 1 if sender has an active BLE host connection
-    uint8_t  last_role;        // Last persisted role (split_role_t); SPLIT_ROLE_NONE if unknown
+    uint8_t  proposed_role;      // Explicit user preference (split_role_t); 0 = auto
+    uint8_t  device_id[6];       // Sender's MAC address (tiebreaker)
+    uint8_t  usb_connected;      // 1 if sender has an active USB host connection
+    uint8_t  ble_connected;      // 1 if sender has an active BLE host connection
+    uint8_t  has_unsynced_ble;   // 1 if sender has a new BLE bond not yet synced to peer
+    uint8_t  last_role;          // Last persisted role (split_role_t); SPLIT_ROLE_NONE if unknown
 } split_role_negotiate_payload_t;
 
 /** SPLIT_MSG_KEY_STATE_FULL — complete matrix snapshot. */

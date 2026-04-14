@@ -52,9 +52,11 @@ split_role_t split_role_decide(const uint8_t own_mac[6],
                                 uint8_t peer_pref,
                                 uint8_t own_usb_connected,
                                 uint8_t own_ble_connected,
+                                uint8_t own_has_unsynced_ble,
                                 split_role_t own_last_role,
                                 uint8_t peer_usb_connected,
                                 uint8_t peer_ble_connected,
+                                uint8_t peer_has_unsynced_ble,
                                 split_role_t peer_last_role)
 {
     // Priority 1: explicit user preference from pair config.
@@ -67,10 +69,13 @@ split_role_t split_role_decide(const uint8_t own_mac[6],
     if (own_wants_master && !peer_wants_master) return SPLIT_ROLE_MASTER;
     if (own_wants_slave  && !peer_wants_slave)  return SPLIT_ROLE_SLAVE;
 
-    // Priority 2: USB host connection.
-    // The device with an active USB connection owns the wired output path.
-    if ( own_usb_connected && !peer_usb_connected) return SPLIT_ROLE_MASTER;
-    if (!own_usb_connected &&  peer_usb_connected) return SPLIT_ROLE_SLAVE;
+    // Priority 2: Unsynced BLE data.
+    // If one side has a fresh bond that hasn't been shared yet, it MUST be master
+    // to ensure the sync happens and the bond is not lost.
+    if ( own_has_unsynced_ble && !peer_has_unsynced_ble) return SPLIT_ROLE_MASTER;
+    if (!own_has_unsynced_ble && peer_has_unsynced_ble)  return SPLIT_ROLE_SLAVE;
+
+    // Priority 3: USB host connection.
 
     // Priority 3: BLE host connection.
     // The device with an active BLE connection owns the wireless output path.
@@ -106,6 +111,7 @@ esp_err_t split_role_on_negotiate(const uint8_t *src_mac,
                                    uint8_t own_pref,
                                    uint8_t own_usb_connected,
                                    uint8_t own_ble_connected,
+                                   uint8_t own_has_unsynced_ble,
                                    split_role_t own_last_role,
                                    split_role_t *out_role)
 {
@@ -124,8 +130,8 @@ esp_err_t split_role_on_negotiate(const uint8_t *src_mac,
     *out_role = split_role_decide(
         own_mac, src_mac,
         own_pref,           p->proposed_role,
-        own_usb_connected,  own_ble_connected,  own_last_role,
-        p->usb_connected,   p->ble_connected,   (split_role_t)p->last_role);
+        own_usb_connected,  own_ble_connected,  own_has_unsynced_ble, own_last_role,
+        p->usb_connected,   p->ble_connected,   p->has_unsynced_ble, (split_role_t)p->last_role);
 
     return ESP_OK;
 }

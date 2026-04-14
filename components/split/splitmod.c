@@ -62,7 +62,7 @@ static void on_config_updated(void *arg, esp_event_base_t base,
         //
         // The sync receive path uses cfgmod_write_storage (not cfgmod_set_config),
         // so it doesn't fire CONFIG_EVENT_KIND_UPDATED — no ping-pong risk.
-        split_task_request_config_sync_incremental();
+        split_task_request_config_sync_incremental(ev->kind);
     }
 }
 

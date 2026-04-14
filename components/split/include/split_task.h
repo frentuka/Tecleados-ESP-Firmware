@@ -64,8 +64,11 @@ void split_task_reset_reconnect_backoff(void);
 /** @brief Ask the main task to push the full config blob once settle elapses. */
 void split_task_request_config_sync_initial(void);
 
-/** @brief Ask the main task to push all syncable entries immediately. */
-void split_task_request_config_sync_incremental(void);
+/**
+ * @brief Signal that a specific configuration kind has changed and needs to be
+ *        synced to the peer.  Uses a bitmask (1 << kind).
+ */
+void split_task_request_config_sync_incremental(uint8_t kind);
 
 /** @brief Ask the main task to push our own ble_cfg + bonds back to the peer. */
 void split_task_request_reverse_ble_sync(void);

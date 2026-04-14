@@ -43,6 +43,10 @@ extern void ble_store_config_init(void);
 
 static uint16_t s_conn_handles[CFG_BLE_MAX_PROFILES];
 
+// Marker for a profile that is connected on the other half of the split keyboard.
+// Distinct from BLE_HS_CONN_HANDLE_NONE (0xFFFF) to avoid reconnection loops.
+#define BLE_CONN_HANDLE_REMOTE 0xFFFE
+
 // Currently "advertising for pair" target profile. -1 if not pairing.
 static int s_pairing_profile = -1;
 // Currently directed advertising target. -1 if not doing directed.
@@ -262,8 +266,20 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
                 if (s_reconn_phase == RECONN_PHASE_SELECTED) {
                     s_reconnect_cycles[sel]++;
                     s_selected_retries_left--;
+
                     if (s_selected_retries_left > 0) {
-                        ESP_LOGI(TAG, "Selected Profile %d timed out. Retrying (%d left).", sel, s_selected_retries_left);
+                        // INTERLEAVED PRIORITY: If we have other profiles waiting in the bitmap,
+                        // we alternate between the Selected profile and the next 'Other' profile.
+                        // This keeps the Selected profile at 50% priority while preventing
+                        // the others from being starved (dropped).
+                        if (s_selected_retries_left % 2 == 0 && s_reconnect_pending_bitmap != 0) {
+                            ESP_LOGI(TAG, "Interleaving: giving a turn to secondary profiles (Selected %d retries left).", s_selected_retries_left);
+                            s_directed_profile = -1; // Force start_next_reconnect to pick from bitmap
+                            ble_hid_start_next_reconnect();
+                        } else {
+                            ESP_LOGI(TAG, "Selected Profile %d timed out. Retrying (%d left).", sel, s_selected_retries_left);
+                            ble_hid_advertise();
+                        }
                     } else {
                         ESP_LOGI(TAG, "Selected Profile %d exhausted. Moving to FOREVER Phase.", sel);
                         if (cfg_ble_get_state()->profiles[sel].is_valid) {
@@ -285,7 +301,7 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
                     if (s_reconnect_cycles[sel] >= 5) {
                         ESP_LOGI(TAG, "Finite reconnect exhausted for profile %d.", sel);
                         s_reconnect_pending_bitmap &= ~(1 << sel);
-                        if (s_conn_handles[sel] == 0xFFFF) {
+                        if (s_conn_handles[sel] == BLE_CONN_HANDLE_REMOTE) {
                             s_conn_handles[sel] = BLE_HS_CONN_HANDLE_NONE;
                         }
                     }
@@ -322,6 +338,10 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
       // If we were in pairing mode, fire event so cfg_ble saves credentials.
       if (s_pairing_profile >= 0 && s_pairing_profile < CFG_BLE_MAX_PROFILES) {
           ESP_LOGI(TAG, "Pairing complete for profile %d. Firing event.", s_pairing_profile);
+
+          cfg_ble_state_t st_unsync = *cfg_ble_get_state();
+          st_unsync.has_unsynced_updates = 1;
+          cfg_ble_save_state(&st_unsync);
 
           ble_pairing_result_t result = {
               .profile_idx = s_pairing_profile,
@@ -468,6 +488,12 @@ static void bleprph_on_sync(void) {
     return;
   }
 
+  // Apply any bonds that arrived while we were syncing or suspended.
+  // This is critical for Android devices which require the Resolving List
+  // to be populated before they can resolve the keyboard's identity.
+  extern void cfg_ble_apply_deferred_bonds(void);
+  cfg_ble_apply_deferred_bonds();
+
   if (s_is_suspended) {
       ESP_LOGI(TAG, "BLE stack synced (suspended — not advertising).");
       return;
@@ -495,6 +521,10 @@ static void bleprph_on_sync(void) {
 /* ========================================================================= */
 
 static void ble_hid_advertise(void) {
+  // Breathing room: wait 50ms to let the ESP-NOW split link exchange heartbeats
+  // between advertising bursts. Essential for radio stability on ESP32-S3.
+  vTaskDelay(pdMS_TO_TICKS(50));
+
   // Stop the cooldown timer if it's running, as we're starting advertising now
   esp_timer_stop(s_adv_cooldown_timer);
 
@@ -529,7 +559,11 @@ static void ble_hid_advertise(void) {
   // 1. Explicitly pairing (s_pairing_profile != -1)
   // 2. Explicitly reconnecting (s_directed_profile != -1)
   // 3. Or the selected profile is NOT connected and is valid (Background Passive Mode)
-  bool is_connected = (s_conn_handles[active_profile] != BLE_HS_CONN_HANDLE_NONE);
+  //
+  // CRITICAL: A profile marked as BLE_CONN_HANDLE_REMOTE (0xFFFE) is NOT yet
+  // locally connected. We MUST continue to advertise until a local handle (< 0xFF00)
+  // is assigned by the NimBLE stack.
+  bool is_connected = (s_conn_handles[active_profile] < 0xFF00);
   bool is_valid = st->profiles[active_profile].is_valid;
   bool is_explicit = (s_pairing_profile != -1 || s_directed_profile != -1);
 
@@ -613,10 +647,12 @@ static void ble_hid_advertise(void) {
   if (is_reconnecting && is_valid && s_reconnect_cycles[active_profile] == 0 && s_reconn_phase != RECONN_PHASE_FOREVER) {
       adv_params.conn_mode = BLE_GAP_CONN_MODE_DIR;
 
-      // High duty cycle: BLE spec fixes the max at 1.28 s; the controller fires
-      // ADV_COMPLETE (reason=0) after that regardless of the duration_ms we pass.
-      adv_params.high_duty_cycle = 1;
-      int32_t dir_duration = BLE_HS_FOREVER;
+      // Low duty cycle: Much more cooperative with Wi-Fi/ESP-NOW than high duty.
+      // We set a 1.28s duration to match the previous high-duty burst length.
+      adv_params.high_duty_cycle = 0;
+      adv_params.itvl_min = 0; // Use default
+      adv_params.itvl_max = 0;
+      int32_t dir_duration = 1280;
 
       // Use the Identity Address from the bond store as the target.
       ble_addr_t peer_addr = {0};
@@ -945,6 +981,7 @@ void ble_hid_profile_pair(uint8_t profile_id) {
     new_state.profiles[profile_id].is_valid = false;
     // Rotate the address nonce so we appear as a new device to the phone
     new_state.profiles[profile_id].addr_nonce++;
+    new_state.has_unsynced_updates = 1; // Mark as dirty since we erased and rotated
     new_state.sync_version++; // Update version to push changes to split counterpart
     cfg_ble_save_state(&new_state);
 
@@ -1163,7 +1200,7 @@ void ble_hid_set_suspended(bool suspended) {
         int sel = (int)cfg_ble_get_state()->selected_profile;
         
         for (int i = 0; i < CFG_BLE_MAX_PROFILES; i++) {
-            if (i != sel && s_conn_handles[i] == 0xFFFF && cfg_ble_get_state()->profiles[i].is_valid) {
+            if (i != sel && s_conn_handles[i] == BLE_CONN_HANDLE_REMOTE && cfg_ble_get_state()->profiles[i].is_valid) {
                 s_reconnect_pending_bitmap |= (1 << i);
             }
         }
@@ -1174,8 +1211,9 @@ void ble_hid_set_suspended(bool suspended) {
         if (sel >= 0 && sel < CFG_BLE_MAX_PROFILES) {
             s_directed_profile = sel;
             s_reconn_phase = RECONN_PHASE_SELECTED;
-            s_selected_retries_left = 5;
+            s_selected_retries_left = 6; // Set to Even number for 50/50 interleaving
             s_reconnect_cycles[sel] = s_skip_directed_on_resume ? 1 : 0;
+            s_reconnect_last_profile = -1; // Reset rotation
         } else {
             s_reconn_phase = RECONN_PHASE_FOREVER;
             ble_hid_start_next_reconnect();
@@ -1255,7 +1293,7 @@ static void ble_hid_on_split_status_updated(void *arg, esp_event_base_t base,
             bool is_conn_on_master = (ev->connected_bitmap & (1 << i)) != 0;
             if (is_conn_on_master) {
                 if (s_conn_handles[i] == BLE_HS_CONN_HANDLE_NONE) {
-                    s_conn_handles[i] = 0xFFFF; 
+                    s_conn_handles[i] = BLE_CONN_HANDLE_REMOTE; 
                 }
             } else {
                 s_conn_handles[i] = BLE_HS_CONN_HANDLE_NONE; // strict cutoff to prevent ghosting

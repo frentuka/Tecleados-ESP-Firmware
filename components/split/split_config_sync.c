@@ -171,6 +171,9 @@ void split_config_sync_on_ack(const uint8_t *payload, size_t len)
 
     if (ack->status == 0) {
         ESP_LOGD(TAG, "slave ACK'd kind=%u key=%s", ack->kind, key);
+        if (ack->kind == (uint8_t)CFGMOD_KIND_CONNECTION && strncmp(key, "ble_cfg", 7) == 0) {
+            cfg_ble_clear_unsynced();
+        }
     } else {
         ESP_LOGW(TAG, "slave NAK'd kind=%u key=%s status=%u", ack->kind, key, ack->status);
     }
@@ -289,20 +292,21 @@ esp_err_t split_config_sync_on_fragment(const uint8_t *src_mac,
         uint32_t recv_sum = recv_st->sync_version;
         uint32_t own_sum = cfg_ble_get_state()->sync_version;
 
-        if (own_sum > recv_sum) {
-            // "Most-Paired Wins" Principle: If our own sync version
-            // is greater than the received data, our local store is more up-to-date.
-            // We reject the incoming stale config and trigger a 'reverse sync' so 
-            // the sender is updated with our superior/newer data.
-            ESP_LOGI(TAG, "ble_cfg: own sync_version=%u > recv=%u — "
-                     "rejecting stale update, requesting reverse master-slave sync",
-                     own_sum, recv_sum);
-            if (out_reverse_ble_sync) *out_reverse_ble_sync = true;
+        if (splitmod_get_role() == SPLIT_ROLE_SLAVE) {
+            ESP_LOGI(TAG, "ble_cfg: SLAVE trust mode — accepting Master config (ver %u)", recv_sum);
+        } else {
+            // I am Master. I own the BLE config. I ignore any BLE config from a Slave.
+            // If the Slave's version is DIFFERENT, we trigger a reverse sync to update it.
+            if (own_sum != recv_sum) {
+                ESP_LOGW(TAG, "ble_cfg: Master-Slave sync mismatch (%u != %u). Triggering reverse corrective sync.", 
+                         own_sum, recv_sum);
+                if (out_reverse_ble_sync) *out_reverse_ble_sync = true;
+            } else {
+                ESP_LOGI(TAG, "ble_cfg: Slave is already in sync with Master (%u).", own_sum);
+            }
             split_config_sync_reset();
-            return ESP_OK;
+            return ESP_OK; // Consume but do not apply
         }
-        ESP_LOGI(TAG, "ble_cfg: recv sync_version=%u >= own=%u — accepting",
-                 recv_sum, own_sum);
     }
 
     // For bond sync: protect against a newly-promoted master (that has no peer bonds
@@ -329,9 +333,23 @@ esp_err_t split_config_sync_on_fragment(const uint8_t *src_mac,
             brem -= sec_sz;
         }
 
-        // Count our local peer bonds
+        // Count our local peer bonds based on persistent profile validity.
+        // We do NOT use ble_store_util_count() here because it is unreliable
+        // when the BLE radio is suspended or still syncing (which is exactly
+        // when this sync happens).
         int local_peer_count = 0;
-        ble_store_util_count(BLE_STORE_OBJ_TYPE_PEER_SEC, &local_peer_count);
+        // RULE: Master ignores Slave's bond data. Master is the source of truth.
+        if (splitmod_get_role() == SPLIT_ROLE_MASTER) {
+            ESP_LOGW(TAG, "Bond Sync Guard: Master ignores Slave's bond data. Requesting corrective reverse sync.");
+            if (out_reverse_ble_sync) *out_reverse_ble_sync = true;
+            split_config_sync_reset();
+            return ESP_OK;
+        }
+
+        const cfg_ble_state_t *st = cfg_ble_get_state();
+        for (int i = 0; i < CFG_BLE_MAX_PROFILES; i++) {
+            if (st->profiles[i].is_valid) local_peer_count++;
+        }
 
         ESP_LOGI(TAG, "Bond sync guard: incoming_peers=%d local_peers=%d",
                  incoming_peer_count, local_peer_count);

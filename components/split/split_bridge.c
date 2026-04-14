@@ -82,7 +82,7 @@ static void apply_ble_routing_for_role(split_role_t role)
 
     if (!should_suspend) {
         // Bonds are already pre-warmed by config sync.  Skip directed ADV —
-        // Android ignores it and wastes 1.28 s; the host is already scanning.
+        // it reduces radio congestion during the initial heavy config sync.
         ble_hid_skip_directed_adv();
     }
     ble_hid_set_suspended(should_suspend);

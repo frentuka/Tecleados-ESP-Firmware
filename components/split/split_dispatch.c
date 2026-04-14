@@ -22,6 +22,8 @@
 #include "split_bridge.h"
 #include "split_bench.h"
 #include "split_task.h"
+#include "cfg_ble.h"
+#include "tusb.h"
 
 #define TAG "SPLIT_DP"
 
@@ -85,6 +87,7 @@ static void handle_role_negotiate_msg(const uint8_t *src_mac,
                                              split_session_own_mac(), own_pref,
                                              tud_mounted() ? 1u : 0u,
                                              ble_hid_is_connected() ? 1u : 0u,
+                                             cfg_ble_get_state()->has_unsynced_updates,
                                              split_role_load_last(),
                                              &decided);
     if (ret != ESP_OK || decided == SPLIT_ROLE_NONE) return;

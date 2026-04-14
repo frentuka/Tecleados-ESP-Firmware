@@ -28,6 +28,8 @@
 #include "split_bridge.h"
 #include "split_bench.h"
 #include "blemod.h"
+#include "cfg_ble.h"
+#include "tusb.h"
 #include "usbmod.h"
 
 #define TAG "SPLIT_TK"
@@ -62,9 +64,9 @@ static TickType_t s_last_reconnect_at = 0;
 static uint32_t   s_reconnect_interval = SPLIT_RECONNECT_MS_MIN;
 static TickType_t s_pairing_deadline  = 0;
 
-static volatile bool s_config_sync_pending     = false;
-static volatile bool s_config_sync_incremental = false;
-static volatile bool s_reverse_ble_sync        = false;
+static volatile bool     s_config_sync_pending   = false;
+static volatile uint32_t s_config_sync_kind_mask = 0; // Bitmask of (1 << cfgmod_kind_t)
+static volatile bool     s_reverse_ble_sync      = false;
 
 static TaskHandle_t s_task_handle = NULL;
 
@@ -98,9 +100,10 @@ void split_task_send_role_negotiate(void)
 
     split_role_negotiate_payload_t rp = {
         .proposed_role = pref,
-        .usb_connected = tud_mounted() ? 1u : 0u,
-        .ble_connected = ble_hid_is_connected() ? 1u : 0u,
-        .last_role     = (uint8_t)split_role_load_last(),
+        .usb_connected    = (uint8_t)(tud_mounted() ? 1 : 0),
+        .ble_connected    = (uint8_t)(ble_hid_is_connected() ? 1 : 0),
+        .has_unsynced_ble = cfg_ble_get_state()->has_unsynced_updates,
+        .last_role        = (uint8_t)split_role_load_last(),
     };
     memcpy(rp.device_id, split_session_own_mac(), 6);
 
@@ -147,7 +150,10 @@ void split_task_set_pairing_deadline(TickType_t d) { s_pairing_deadline  = d; }
 void split_task_reset_reconnect_backoff(void)      { s_reconnect_interval = SPLIT_RECONNECT_MS_MIN; }
 
 void split_task_request_config_sync_initial(void)      { s_config_sync_pending     = true; }
-void split_task_request_config_sync_incremental(void)  { s_config_sync_incremental = true; }
+void split_task_request_config_sync_incremental(uint8_t kind)
+{
+    if (kind < 32) s_config_sync_kind_mask |= (1u << kind);
+}
 void split_task_request_reverse_ble_sync(void)         { s_reverse_ble_sync        = true; }
 
 /* =========================================================================
@@ -225,11 +231,32 @@ static void drain_deferred_config_sync(TickType_t now)
         split_config_sync_push_all(peer_mac, split_session_next_seq);
     }
 
-    if (s_config_sync_incremental) {
-        s_config_sync_incremental = false;
-        ESP_LOGI(TAG, "running incremental config sync from split_task (%s)",
-                 split_session_get_role() == SPLIT_ROLE_MASTER ? "master→slave" : "slave→master");
-        split_config_sync_push_all(peer_mac, split_session_next_seq);
+    if (s_config_sync_kind_mask != 0) {
+        uint32_t mask = s_config_sync_kind_mask;
+        s_config_sync_kind_mask = 0;
+
+        split_role_t role = split_session_get_role();
+        ESP_LOGI(TAG, "running incremental config sync (mask=0x%02lX, role=%s)",
+                 (unsigned long)mask, role == SPLIT_ROLE_MASTER ? "M->S" : "S->M");
+
+        for (uint8_t i = 0; i < (uint8_t)CFGMOD_KIND_MAX; i++) {
+            if (!(mask & (1u << i))) continue;
+
+            // RULE: Slaves do NOT push BLE or Bond configuration to the Master.
+            if (role == SPLIT_ROLE_SLAVE &&
+                (i == (uint8_t)CFGMOD_KIND_CONNECTION || i == (uint8_t)CFGMOD_KIND_BLE_BOND)) {
+                continue;
+            }
+
+            // Find all entries for this kind
+            for (size_t entry_idx = 0; entry_idx < SPLIT_SYNC_ENTRY_COUNT; entry_idx++) {
+                if (SPLIT_SYNC_ENTRIES[entry_idx].kind == (cfgmod_kind_t)i) {
+                    split_config_sync_push(peer_mac, split_session_next_seq,
+                                            SPLIT_SYNC_ENTRIES[entry_idx].kind,
+                                            SPLIT_SYNC_ENTRIES[entry_idx].key);
+                }
+            }
+        }
     }
 
     if (s_reverse_ble_sync) {

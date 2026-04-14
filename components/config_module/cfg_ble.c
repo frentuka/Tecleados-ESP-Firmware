@@ -27,6 +27,8 @@ struct bond_sync_section {
 } __attribute__((packed));
 
 static cfg_ble_state_t g_cfg_ble_state;
+static uint8_t *s_deferred_bond_buf = NULL;
+static size_t s_deferred_bond_len = 0;
 
 static void ble_default(void *dest) {
     if (!dest) return;
@@ -84,6 +86,11 @@ static bool ble_deserialize(cJSON *json, void *dest) {
         }
     }
 
+    cJSON *j_unsynced = cJSON_GetObjectItemCaseSensitive(json, "unsynced");
+    if (cJSON_IsNumber(j_unsynced)) {
+        st->has_unsynced_updates = (uint8_t)j_unsynced->valueint;
+    }
+
     cJSON *j_sync = cJSON_GetObjectItemCaseSensitive(json, "sync_version");
     if (cJSON_IsNumber(j_sync)) {
         st->sync_version = (uint16_t)j_sync->valueint;
@@ -98,8 +105,9 @@ static cJSON *ble_serialize(const void *src) {
     if (!json) return NULL;
     const cfg_ble_state_t *st = (const cfg_ble_state_t *)src;
 
-    cJSON_AddBoolToObject(json, "routing", st->ble_routing_enabled);
-    cJSON_AddNumberToObject(json, "selected", st->selected_profile);
+    cJSON_AddNumberToObject(json, "routing", st->ble_routing_enabled ? 1 : 0);
+    cJSON_AddNumberToObject(json, "unsynced", st->has_unsynced_updates);
+    cJSON_AddNumberToObject(json, "sync_version", st->sync_version);
 
     cJSON *j_profiles = cJSON_CreateArray();
     if (!j_profiles) {
@@ -226,6 +234,16 @@ void cfg_ble_save_state(const cfg_ble_state_t *state) {
         ESP_LOGE(TAG, "Failed to save BLE config: %s", esp_err_to_name(err));
     } else {
         ESP_LOGI(TAG, "Saved BLE config to NVS");
+    }
+}
+
+void cfg_ble_clear_unsynced(void) {
+    if (g_cfg_ble_state.has_unsynced_updates) {
+        g_cfg_ble_state.has_unsynced_updates = 0;
+        // Use write_storage instead of set_config to avoid firing CONFIG_EVENT_KIND_UPDATED
+        // which would trigger an infinite ping-pong sync loop.
+        cfgmod_write_storage(CFGMOD_KIND_CONNECTION, "ble_cfg", &g_cfg_ble_state, sizeof(cfg_ble_state_t));
+        ESP_LOGI(TAG, "BLE config marked as SYNCED (silent write).");
     }
 }
 
@@ -377,8 +395,14 @@ esp_err_t cfg_ble_bond_write_all(const void *data, size_t len) {
     // Doing so triggers privacy/resolving list updates that access uninitialized
     // internal NimBLE structures, causing a LoadProhibited panic.
     if (!ble_hs_synced()) {
-        ESP_LOGW(TAG, "Bond Sync: Stack not synced. Deferring hardware-dependent writes.");
-        return ESP_ERR_INVALID_STATE; 
+        ESP_LOGW(TAG, "Bond Sync: Stack not synced. Deferring bond application.");
+        if (s_deferred_bond_buf) free(s_deferred_bond_buf);
+        s_deferred_bond_buf = malloc(len);
+        if (s_deferred_bond_buf) {
+            memcpy(s_deferred_bond_buf, data, len);
+            s_deferred_bond_len = len;
+        }
+        return ESP_OK; // Return OK because we've safely deferred it
     }
     
     if (hdr->sync_version < g_cfg_ble_state.sync_version) {
@@ -469,4 +493,14 @@ esp_err_t cfg_ble_bond_write_all(const void *data, size_t len) {
     ble_hid_reinit_bonds();
 
     return ESP_OK;
+}
+
+void cfg_ble_apply_deferred_bonds(void) {
+    if (s_deferred_bond_buf && s_deferred_bond_len > 0) {
+        ESP_LOGI(TAG, "Applying deferred bonds (%u bytes)", (unsigned)s_deferred_bond_len);
+        cfg_ble_bond_write_all(s_deferred_bond_buf, s_deferred_bond_len);
+        free(s_deferred_bond_buf);
+        s_deferred_bond_buf = NULL;
+        s_deferred_bond_len = 0;
+    }
 }
