@@ -13,4 +13,5 @@ The firmware is divided into highly specific modules that run in the `components
 - [[USB_MODULE]] - Details the bidirectional HID communication, NKRO/Boot protocol switching, and the custom system channel for real-time configuration.
 - [[STATUS_MODULE]] - The state aggregator: manages real-time synchronization of BLE, Split, and USB states for the Configurator.
 - [[CONFIG_MODULE]] - The single source of truth for persistent settings, NVS storage, and the USB wire protocol GET/SET handlers.
+- [[CONFIGURATOR]] - The browser-based WebHID configurator: layout editor, KLE import, macro editor, split management, and the Blast+Reconcile transport that talks to all of the above.
 
