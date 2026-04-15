@@ -703,7 +703,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                 </div>
             ) : (
                 <>
-                    <div style={{ width: '100%', overflowX: 'auto', padding: '1rem 0', display: 'flex', justifyContent: 'center' }}>
+                    <div style={{ width: '100%', overflowX: 'auto', padding: '1rem 0' }}>
                         {(() => {
                             const layout = (physicalLayout || DEFAULT_PHYSICAL_LAYOUT);
 
@@ -717,7 +717,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                 return [cx + dx * cos - dy * sin, cy + dx * sin + dy * cos];
                             };
 
-                            let minKeyX = 0, minKeyY = 0, maxKeyX = 17, maxKeyY = 5;
+                            let minKeyX = Infinity, minKeyY = Infinity, maxKeyX = -Infinity, maxKeyY = -Infinity;
                             layout.forEach(row => {
                                 row.forEach(pk => {
                                     if (pk.r && pk.rx !== undefined && pk.ry !== undefined) {
@@ -742,6 +742,8 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                     }
                                 });
                             });
+                            // Fallback for empty layout
+                            if (!isFinite(minKeyX)) { minKeyX = 0; minKeyY = 0; maxKeyX = 17; maxKeyY = 5; }
                             // Add a small margin so rotated key borders don't clip
                             const MARGIN = 0.5;
                             minKeyX -= MARGIN; minKeyY -= MARGIN;
@@ -754,7 +756,8 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                     position: 'relative',
                                     width: `${gridW * 3.2}rem`,
                                     height: `${gridH * 3.2}rem`,
-                                    flexShrink: 0,
+                                    padding: 0,
+                                    margin: '0 auto',
                                 }}>
                                     {layout.map((physRow: PhysKey[], ri: number) => (
                                         <div key={ri} className="keyboard-row">
