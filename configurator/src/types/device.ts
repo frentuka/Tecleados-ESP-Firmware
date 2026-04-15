@@ -37,6 +37,9 @@ export interface PhysKey {
     h: number;
     x: number;
     y: number;
+    r?: number;   // rotation angle in degrees (KLE 'r')
+    rx?: number;  // rotation origin X in KLE units (KLE 'rx')
+    ry?: number;  // rotation origin Y in KLE units (KLE 'ry')
 }
 
 /** Layer data: ROWS × COLS matrix of action codes */
