@@ -74,13 +74,13 @@ Communications follow a **Request/Response** pattern on the Comm channel.
 | Key ID | Field | Description |
 |---|---|---|
 | `0x02` | `PHYSICAL_LAYOUT` | Raw geometry for the UI configurator. |
-| `0x03` | `LAYER_0..3` | Action codes for the key matrix layers. |
-| `0x04` | `MACROS` | The full macro outline (names and IDs). |
-| `0x05` | `MACRO_LIMITS` | Returns max events per macro and max macro slots. |
-| `0x06` | `MACRO_SINGLE` | Detailed event sequence for one macro (GET/SET/DELETE). |
-| `0x07` | `CKEYS` | The full custom key outline. |
-| `0x08` | `CKEY_SINGLE` | Logic rules for one custom key (GET/SET/DELETE). |
-| `0x09` | `SYSTEM` | Device identity, sleep timeouts, and RGB settings. |
+| `0x03–06` | `LAYER_0..3` | Action codes for the key matrix layers. |
+| `0x07` | `MACROS` | The full macro outline (names and IDs). |
+| `0x08` | `MACRO_LIMITS` | Returns max events per macro and max macro slots. |
+| `0x09` | `MACRO_SINGLE` | Detailed event sequence for one macro (GET/SET/DELETE). |
+| `0x0A` | `CKEYS` | The full custom key outline. |
+| `0x0B` | `CKEY_SINGLE` | Logic rules for one custom key (GET/SET/DELETE). |
+| `0x0C` | `SYSTEM` | Device identity (name, split mirror, shared BLE addr). |
 
 ---
 

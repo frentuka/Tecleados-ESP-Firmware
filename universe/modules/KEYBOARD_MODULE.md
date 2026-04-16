@@ -31,7 +31,11 @@ The `kb_mgr` task drives the column GPIOs and reads the row GPIOs at a rate of 1
 - This ensures **0% CPU usage** when the keyboard is idle while maintaining **sub-millisecond latency** on the first press.
 
 #### Split column mirroring
-`kb_matrix_scan()` accepts a `bool mirror_cols` flag. When `true`, physical column `N` is reported as logical column `(COL_COUNT − 1 − N)`. This is used for the mirrored half of a split keyboard (typically the right side), where the GPIO column order is physically reversed relative to the full-keyboard layout. The flag is held in the module-level `s_mirror_cols` static, initialized from `cfg_system_t.split_mirror_cols` in `kb_manager_start()` and kept live via a `CONFIG_EVENT_KIND_UPDATED` handler — changes saved through the Configurator take effect on the next scan cycle without a restart.
+The `kb_matrix_scan()` function accepts a `bool mirror_cols` flag. When enabled, each physical column `N` detected by the scanner is reported as logical column `(KB_MATRIX_COL_COUNT − 1 − N)`. This is essential for the "mirrored" half of a split keyboard (traditionally the right hand), where the physical traces of the columns are often reversed relative to the left half. 
+
+The mirroring state is maintained as a module-level `s_mirror_cols` static in `kb_manager.c`, which is:
+- Initialized from `cfg_system_t.split_mirror_cols` during `kb_manager_start()`.
+- Dynamically updated via a `CONFIG_EVENT_KIND_UPDATED` handler, allowing changes saved in the Configurator to take effect immediately on the next scan cycle without requiring a device restart.
 
 ### 3. Virtual NKRO "Snapshotting"
 To prevent I/O blocking from slowing down the logic engine, the keyboard uses a **Virtual NKRO Map** (`s_v_nkro`):

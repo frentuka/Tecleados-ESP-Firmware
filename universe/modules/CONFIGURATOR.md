@@ -69,11 +69,11 @@ The legacy `HIDService.ts` file is a thin re-export façade that maps old import
 | Component | Tab / Role | What it manages |
 |---|---|---|
 | `App.tsx` | Root shell | Connection state, tab routing, log stream, Developer Mode toggle |
-| `KeyboardLayoutEditor.tsx` | "Layout" tab | Visual key editor, layer switching, KLE import, key test mode, physical layout editing |
+| `KeyboardLayoutEditor.tsx` | "Layout" tab | Visual key editor, layer switching, multi-selection (Ctrl+Drag), physical layout editing |
 | `MacrosDashboard.tsx` | "Macros" tab | Macro list, event sequence editor, CRUD operations |
 | `CustomKeysDashboard.tsx` | "Custom Keys" tab | Press/Release and MultiAction key rule editing |
 | `SplitDashboard.tsx` | "Split" tab | Pairing, role swap, latency benchmark, remote matrix visualizer |
-| `DeviceIdentityDashboard.tsx` | "Device" tab | Device name, split variant, shared BLE address |
+| `DeviceIdentityDashboard.tsx` | "Device" tab | Device name, split mirror/variant, shared BLE address |
 | `StatusWidget.tsx` | Always visible | Live BLE/USB/Split state pushed from [[STATUS_MODULE]] |
 | `DevControlsPanel.tsx` | Dev Mode only | Raw packet log, protocol debug tools |
 
@@ -220,7 +220,7 @@ The configurator is the primary client of `cfg_usb_callback()`. Every user actio
 | Open "Custom Keys" tab | GET | `CFG_KEY_CKEYS` |
 | Edit a custom key | GET / SET | `CFG_KEY_CKEY_SINGLE` |
 | Open "Device" tab | GET | `CFG_KEY_SYSTEM` |
-| Save device identity | SET | `CFG_KEY_SYSTEM` |
+| Save device identity | SET | `CFG_KEY_SYSTEM` (name, mirror_cols, variant) |
 
 ### [[STATUS_MODULE]] — Live State Display
 
@@ -325,11 +325,11 @@ graph TD
 | `utils/layoutUtils.ts` | Physical layout serialization/deserialization including rotation side-map |
 | `utils/packetUtils.ts` | Debug helpers: decodes flag bytes to human-readable strings |
 | `types/protocol.ts` | Single source of truth for all wire protocol constants (mirrors `usb_defs.h`, `cfgmod.h`) |
-| `types/device.ts` | Shared TypeScript types: `PhysKey`, `DeviceStatus`, `CommandResponse` |
+| `types/device.ts` | Shared TypeScript types: `PhysKey`, `DeviceStatus`, `DeviceIdentity` |
 | `types/macros.ts` | Macro and MacroElement type definitions |
 | `types/customKeys.ts` | CustomKey, CustomKeyPR, CustomKeyMA type definitions |
 | `hooks/useMacros.ts` | React hook: macro list state + fetch/save/delete operations |
 | `hooks/useCustomKeys.ts` | React hook: custom key state + fetch/save/delete operations |
-| `components/SearchableKeyModal.tsx` | Searchable HID key picker modal used during key assignment |
+| `components/SearchableKeyModal.tsx` | Searchable HID key picker modal with custom title support |
 | `components/MacroEditorModal.tsx` | Full macro event-sequence editor modal |
 | `components/DevControlsPanel.tsx` | Developer mode raw packet log and debug controls |
