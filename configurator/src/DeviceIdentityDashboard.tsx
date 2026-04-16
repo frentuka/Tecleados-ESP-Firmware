@@ -14,7 +14,7 @@ interface DeviceIdentityDashboardProps {
 const DEFAULT_IDENTITY: DeviceIdentity = {
     device_name: '',
     is_split: false,
-    split_col_offset: 0,
+    split_mirror_cols: false,
     split_variant: '',
     ble_shared_name: '',
     ble_shared_addr: '',
@@ -32,9 +32,9 @@ const DeviceIdentityDashboard: React.FC<DeviceIdentityDashboardProps> = ({ isCon
 
     const isDirty =
         draft.device_name      !== saved.device_name      ||
-        draft.is_split         !== saved.is_split          ||
-        draft.split_col_offset !== saved.split_col_offset  ||
-        draft.split_variant    !== saved.split_variant     ||
+        draft.is_split          !== saved.is_split           ||
+        draft.split_mirror_cols !== saved.split_mirror_cols ||
+        draft.split_variant     !== saved.split_variant     ||
         draft.ble_shared_name  !== saved.ble_shared_name   ||
         draft.ble_shared_addr  !== saved.ble_shared_addr;
 
@@ -168,15 +168,17 @@ const DeviceIdentityDashboard: React.FC<DeviceIdentityDashboardProps> = ({ isCon
                                 transition: 'opacity 0.2s',
                             }}
                         >
-                            <FieldGroup label="Column Offset" hint="Added to raw col index (can be negative)">
-                                <input
-                                    id="di-col-offset"
-                                    type="number"
-                                    min={-127} max={127}
-                                    value={draft.split_col_offset}
-                                    onChange={e => setField('split_col_offset', parseInt(e.target.value, 10) || 0)}
-                                    style={{ ...inputStyle, width: 90, textAlign: 'center' }}
-                                />
+                            <FieldGroup label="Mirror Columns" hint="Column N maps to (MAX_COL−N). Enable on the mirrored half (e.g. right side).">
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                    <Toggle
+                                        id="di-mirror-cols"
+                                        checked={draft.split_mirror_cols}
+                                        onChange={v => setField('split_mirror_cols', v)}
+                                    />
+                                    <label htmlFor="di-mirror-cols" style={{ fontSize: 13, cursor: 'pointer', userSelect: 'none' }}>
+                                        {draft.split_mirror_cols ? 'Enabled' : 'Disabled'}
+                                    </label>
+                                </div>
                             </FieldGroup>
 
                             <FieldGroup label="Variant Name" hint={`e.g. "Left", "Right", "Numpad"`}>

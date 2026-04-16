@@ -74,6 +74,15 @@ esp_err_t cfgmod_register_kind(cfgmod_kind_t kind, cfgmod_default_fn def_fn,
                                cfgmod_on_update_fn update_fn,
                                size_t struct_size);
 
+// Optional per-kind overrides for the USB GET/SET command paths.
+// When registered, cfgmod_handle_usb_comm uses these instead of the default
+// cfgmod_get_config / cfgmod_set_config, allowing a module to apply internal
+// post-processing (e.g. cfg_system's sys_id overlay that keeps each half's
+// device identity independent of config-sync overwrites).
+typedef esp_err_t (*cfgmod_get_fn)(void *out_struct);
+typedef esp_err_t (*cfgmod_set_fn)(const void *in_struct);
+void cfgmod_register_get_set(cfgmod_kind_t kind, cfgmod_get_fn get_fn, cfgmod_set_fn set_fn);
+
 // Fetch a config struct from storage (applies defaults and parses JSON)
 esp_err_t cfgmod_get_config(cfgmod_kind_t kind, const char *key,
                             void *out_struct);

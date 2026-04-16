@@ -5,6 +5,7 @@ import type { Macro } from './types/macros';
 import type { CustomKey } from './types/customKeys';
 
 interface SearchableKeyModalProps {
+    title?: string;
     currentValue: number;
     macros: Macro[];
     customKeys?: CustomKey[];
@@ -12,7 +13,7 @@ interface SearchableKeyModalProps {
     onClose: () => void;
 }
 
-export default function SearchableKeyModal({ currentValue, macros, customKeys = [], onSelect, onClose }: SearchableKeyModalProps) {
+export default function SearchableKeyModal({ title = 'Select Key', currentValue, macros, customKeys = [], onSelect, onClose }: SearchableKeyModalProps) {
     const [searchTerm, setSearchTerm] = useState('');
     const inputRef = useRef<HTMLInputElement>(null);
 
@@ -45,6 +46,7 @@ export default function SearchableKeyModal({ currentValue, macros, customKeys = 
     const [mouseDownOnOverlay, setMouseDownOnOverlay] = useState(false);
 
     const handleOverlayMouseDown = (e: React.MouseEvent) => {
+        e.stopPropagation(); // Prevents clearing selection in the parent layout editor
         if (e.target === e.currentTarget) {
             setMouseDownOnOverlay(true);
         } else {
@@ -53,6 +55,7 @@ export default function SearchableKeyModal({ currentValue, macros, customKeys = 
     };
 
     const handleOverlayMouseUp = (e: React.MouseEvent) => {
+        e.stopPropagation();
         if (mouseDownOnOverlay && e.target === e.currentTarget) {
             onClose();
         }
@@ -65,9 +68,9 @@ export default function SearchableKeyModal({ currentValue, macros, customKeys = 
             onMouseDown={handleOverlayMouseDown}
             onMouseUp={handleOverlayMouseUp}
         >
-            <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <div className="modal-content" onMouseDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>
                 <div className="modal-header">
-                    <h3>Select Key</h3>
+                    <h3>{title}</h3>
                     <button className="btn-close" onClick={onClose}>&times;</button>
                 </div>
                 <div className="modal-search">

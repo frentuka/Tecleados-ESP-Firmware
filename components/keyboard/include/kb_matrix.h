@@ -63,11 +63,15 @@
  * bit in @p out_matrix_bitmap.
  * Bit index = (row_index * KB_MATRIX_COL_COUNT) + col_index.
  * The caller must supply a buffer of at least KB_MATRIX_BITMAP_BYTES bytes.
+ *
+ * @param out_matrix_bitmap  Output bitmap (KB_MATRIX_BITMAP_BYTES).
+ * @param mirror_cols        When true, column N is reported as (COL_COUNT-1-N).
+ *                           Use for the mirrored half of a split keyboard.
  */
-void kb_matrix_scan(uint8_t *out_matrix_bitmap);
+void kb_matrix_scan(uint8_t *out_matrix_bitmap, bool mirror_cols);
 
 void kb_matrix_gpio_init(void);
 
 // Interrupt control
 void kb_matrix_init_isr(TaskHandle_t task_to_notify);
-void kb_matrix_set_interrupts_enabled(bool enabled);
+void kb_matrix_set_interrupts_enabled(bool enabled);

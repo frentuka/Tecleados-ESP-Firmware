@@ -127,6 +127,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
     const fileInputRef = useRef<HTMLInputElement>(null);
     const lastClickedKeyRef = useRef<string | null>(null);
     const isDraggingRef = useRef(false);
+    const keysTouchedInDragRef = useRef<Set<string>>(new Set());
 
     // Sync rowInput/colInput when selection changes
     useEffect(() => {
@@ -500,8 +501,11 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
     const currentLayer = layers[activeLayer];
 
     return (
-        <div className="layout-editor">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+        <div className="layout-editor" onMouseDown={(e) => { if (e.target === e.currentTarget) setSelectedKeys(new Set()); }}>
+            <div
+                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}
+                onMouseDown={(e) => e.stopPropagation()}
+            >
                 <h2 className="section-title">Keyboard Layout</h2>
                 <div className="menu-container" ref={menuRef}>
                     <button className="btn-icon" onClick={() => setIsMenuOpen(!isMenuOpen)} title="Options">
@@ -663,7 +667,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
             )}
 
             {/* Layer tabs */}
-            <div className="layer-tabs">
+            <div className="layer-tabs" onMouseDown={(e) => e.stopPropagation()}>
                 {LAYER_NAMES.map((name, i) => (
                     <button
                         key={i}
@@ -752,7 +756,9 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                             const gridH = maxKeyY - minKeyY;
 
                             return (
-                                <div className="keyboard-grid" style={{
+                                <div className="keyboard-grid"
+                                    onMouseDown={(e) => { if (e.target === e.currentTarget) setSelectedKeys(new Set()); }}
+                                    style={{
                                     position: 'relative',
                                     width: `${gridW * 3.2}rem`,
                                     height: `${gridH * 3.2}rem`,
@@ -809,7 +815,9 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                                             }
                                                             if (e.button !== 0) return;
                                                             e.preventDefault();
+                                                            e.stopPropagation(); // Don't deselect when clicking a key
                                                             isDraggingRef.current = false;
+                                                            keysTouchedInDragRef.current = new Set([physKeyId]);
 
                                                             if (isRowColEditMode) {
                                                                 // Row/Col edit: always single-select
@@ -839,16 +847,33 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                                                     });
                                                                 }
                                                             } else {
-                                                                // Plain click: start potential drag, or single-select
-                                                                setSelectedKeys(new Set([physKeyId]));
+                                                                // Plain click: preserve selection if already selected as part of a group,
+                                                                // otherwise reset selection to just this key.
+                                                                if (!selectedKeys.has(physKeyId)) {
+                                                                    setSelectedKeys(new Set([physKeyId]));
+                                                                }
                                                                 lastClickedKeyRef.current = physKeyId;
                                                             }
                                                         }}
                                                         onMouseEnter={(e) => {
-                                                            if (!isKeyTestMode && e.buttons === 1 && !e.ctrlKey && !e.shiftKey) {
-                                                                // Drag-select: add to selection
+                                                            if (isKeyTestMode) return;
+                                                            if (e.buttons === 1 && !e.shiftKey) {
                                                                 isDraggingRef.current = true;
-                                                                setSelectedKeys(prev => new Set(prev).add(physKeyId));
+                                                                if (e.ctrlKey || e.metaKey) {
+                                                                    // Ctrl+Drag: Toggle keys as you touch them
+                                                                    if (!keysTouchedInDragRef.current.has(physKeyId)) {
+                                                                        keysTouchedInDragRef.current.add(physKeyId);
+                                                                        setSelectedKeys(prev => {
+                                                                            const next = new Set(prev);
+                                                                            if (next.has(physKeyId)) next.delete(physKeyId);
+                                                                            else next.add(physKeyId);
+                                                                            return next;
+                                                                        });
+                                                                    }
+                                                                } else if (!isRowColEditMode) {
+                                                                    // Normal Drag: Add to selection
+                                                                    setSelectedKeys(prev => new Set(prev).add(physKeyId));
+                                                                }
                                                             }
                                                         }}
                                                         onMouseUp={(e) => {
@@ -996,6 +1021,22 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                         })()}
                     </div>
 
+                    {/* Group Selection Actions */}
+                    {selectedKeys.size > 1 && (
+                        <div className="selection-actions-overlay" onMouseDown={(e) => e.stopPropagation()}>
+                            <button
+                                className="btn btn-selection-edit"
+                                onClick={() => setIsModalOpen(true)}
+                                title={`Edit ${selectedKeys.size} selected keys`}
+                            >
+                                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                                    <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
+                                </svg>
+                                Edit Selection ({selectedKeys.size})
+                            </button>
+                        </div>
+                    )}
+
                     {/* Key Search Modal */}
                     {
                         isModalOpen && selectedKeys.size > 0 && (() => {
@@ -1004,6 +1045,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                             const firstValue = (currentLayer[fRow] && fCol < currentLayer[fRow].length) ? currentLayer[fRow][fCol] : 0;
                             return (
                                 <SearchableKeyModal
+                                    title={selectedKeys.size > 1 ? `Edit ${selectedKeys.size} Selected Keys` : 'Select Key'}
                                     currentValue={firstValue}
                                     macros={macros}
                                     customKeys={customKeys}
@@ -1151,7 +1193,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                         };
 
                         return (
-                            <div className="rowcol-edit-panel">
+                            <div className="rowcol-edit-panel" onMouseDown={(e) => e.stopPropagation()}>
                                 <span className="rowcol-edit-label">
                                     R{selectedPk.row} C{selectedPk.col}
                                 </span>
@@ -1218,7 +1260,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                     })()}
 
                     {/* Action buttons */}
-                    <div className="layout-actions">
+                    <div className="layout-actions" onMouseDown={(e) => e.stopPropagation()}>
                         <input
                             type="file"
                             ref={fileInputRef}

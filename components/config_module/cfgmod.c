@@ -54,9 +54,18 @@ typedef struct {
   cfgmod_on_update_fn update_fn;
   size_t struct_size;
   bool registered;
+  cfgmod_get_fn get_fn;  // optional: overrides cfgmod_get_config in USB GET handler
+  cfgmod_set_fn set_fn;  // optional: overrides cfgmod_set_config in USB SET handler
 } cfgmod_registry_t;
 
 static cfgmod_registry_t s_registry[CFGMOD_KIND_MAX];
+
+void cfgmod_register_get_set(cfgmod_kind_t kind, cfgmod_get_fn get_fn, cfgmod_set_fn set_fn) {
+  if (kind < CFGMOD_KIND_MAX) {
+    s_registry[kind].get_fn = get_fn;
+    s_registry[kind].set_fn = set_fn;
+  }
+}
 
 esp_err_t cfgmod_register_kind(cfgmod_kind_t kind, cfgmod_default_fn def_fn,
                                cfgmod_deserialize_fn des_fn,
@@ -311,7 +320,12 @@ esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
     if (kind < CFGMOD_KIND_MAX && s_registry[kind].registered) {
       void *temp_struct = malloc(s_registry[kind].struct_size);
       if (temp_struct) {
-        cfgmod_get_config(kind, key, temp_struct);
+        // Use custom get_fn if available (e.g. cfg_system applies sys_id overlay)
+        if (s_registry[kind].get_fn) {
+          s_registry[kind].get_fn(temp_struct);
+        } else {
+          cfgmod_get_config(kind, key, temp_struct);
+        }
         cJSON *root = s_registry[kind].ser_fn(temp_struct);
         free(temp_struct);
         write_json_response(root,
@@ -335,10 +349,18 @@ esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
       if (kind < CFGMOD_KIND_MAX && s_registry[kind].registered) {
         void *temp_struct = malloc(s_registry[kind].struct_size);
         if (temp_struct) {
-          // Load existing config first to support partial JSON updates
-          cfgmod_get_config(kind, key, temp_struct);
+          // Load existing config first to support partial JSON updates.
+          // Use custom get_fn if available so the base includes per-device
+          // post-processing (e.g. sys_id overlay for system config).
+          if (s_registry[kind].get_fn) {
+            s_registry[kind].get_fn(temp_struct);
+          } else {
+            cfgmod_get_config(kind, key, temp_struct);
+          }
           status = s_registry[kind].des_fn(root, temp_struct)
-                   ? cfgmod_set_config(kind, key, temp_struct)
+                   ? (s_registry[kind].set_fn
+                      ? s_registry[kind].set_fn(temp_struct)
+                      : cfgmod_set_config(kind, key, temp_struct))
                    : ESP_ERR_INVALID_ARG;
           free(temp_struct);
         } else {

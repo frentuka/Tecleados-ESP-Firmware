@@ -12,7 +12,7 @@ typedef struct {
   bool bluetooth_enabled;
   // Split identity
   bool is_split;
-  int8_t split_col_offset;   // added to raw col when is_split is true
+  bool split_mirror_cols;    // when true, column N maps to (COL_COUNT-1-N) — for mirrored right halves
   char split_variant[16];    // e.g. "Left", "Right", "Numpad"
   // Shared BLE identity for split keyboards — configure the same values on both halves
   // so they can seamlessly hand off BLE connections when roles swap.

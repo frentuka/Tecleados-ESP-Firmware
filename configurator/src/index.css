@@ -503,6 +503,46 @@ h3 {
   transform: translateY(-2px);
 }
 
+.selection-actions-overlay {
+  display: flex;
+  justify-content: center;
+  margin: 1rem 0;
+  animation: slideDownIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.btn-selection-edit {
+  background: var(--accent-color) !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  /* Match standard btn padding but maybe a bit more horizontal for this wide button */
+  padding: 0.75rem 1.5rem !important;
+  border-radius: 6px !important;
+  font-weight: 600 !important;
+  font-size: 0.95rem !important;
+  box-shadow: 0 4px 15px rgba(88, 166, 255, 0.2) !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+.btn-selection-edit:hover {
+  background-color: var(--accent-hover) !important;
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(88, 166, 255, 0.3) !important;
+}
+
+.btn-selection-edit:active {
+  transform: translateY(0);
+}
+
+@keyframes slideDownIn {
+  from {
+    transform: translateY(-20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
 .key-pressed {
   background: var(--accent-color) !important;
   color: #fff !important;

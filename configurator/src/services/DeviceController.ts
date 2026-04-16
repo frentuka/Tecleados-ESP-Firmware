@@ -46,9 +46,9 @@ import type { CustomKey } from '../types/customKeys';
 // ── Device Identity ─────────────────────────────────────────────────────────
 export interface DeviceIdentity {
     device_name: string;       // BLE advertised name (per-device fallback)
-    is_split: boolean;         // Whether this unit is part of a split keyboard
-    split_col_offset: number;  // int8: added to raw col when is_split is true
-    split_variant: string;     // e.g. "Left", "Right", "Numpad"
+    is_split: boolean;          // Whether this unit is part of a split keyboard
+    split_mirror_cols: boolean; // When true, column N maps to (COL_COUNT-1-N) — for mirrored right halves
+    split_variant: string;      // e.g. "Left", "Right", "Numpad"
     // Shared BLE identity — set the same values on both halves so they present
     // as one device to the host and can hand off BLE connections on role swap.
     ble_shared_name: string;   // BLE advertised name override (empty = use device_name)
@@ -262,9 +262,9 @@ export class DeviceController {
                 const d = JSON.parse(resp.jsonText);
                 return {
                     device_name:      d.name             ?? 'Antigravity KB',
-                    is_split:         d.is_split          ?? false,
-                    split_col_offset: d.split_col_offset  ?? 0,
-                    split_variant:    d.split_variant     ?? '',
+                    is_split:          d.is_split           ?? false,
+                    split_mirror_cols: d.split_mirror_cols ?? false,
+                    split_variant:     d.split_variant     ?? '',
                     ble_shared_name:  d.ble_shared_name   ?? '',
                     ble_shared_addr:  d.ble_shared_addr   ?? '',
                 };
@@ -279,9 +279,9 @@ export class DeviceController {
         if (!this.isConnected()) return false;
         const payload = {
             name:             identity.device_name,
-            is_split:         identity.is_split,
-            split_col_offset: identity.split_col_offset,
-            split_variant:    identity.split_variant,
+            is_split:          identity.is_split,
+            split_mirror_cols: identity.split_mirror_cols,
+            split_variant:     identity.split_variant,
             ble_shared_name:  identity.ble_shared_name,
             ble_shared_addr:  identity.ble_shared_addr.toUpperCase(),
         };

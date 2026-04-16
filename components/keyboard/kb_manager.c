@@ -19,6 +19,9 @@
 #include "kb_bitmap.h"
 
 #include "cfg_layouts.h"
+#include "cfg_system.h"
+#include "cfgmod.h"
+#include "event_bus.h"
 
 #include "class/hid/hid.h"
 #include "tusb.h"
@@ -52,6 +55,20 @@ static volatile matrix_cb_t s_matrix_cb = NULL;
 static volatile bool s_paused = false;
 
 void kb_manager_set_paused(bool paused) { s_paused = paused; }
+
+/* ---- Mirror-cols flag (live-reloadable from system config) ---- */
+static volatile bool s_mirror_cols = false;
+
+static void kb_sys_config_update_handler(void *arg, esp_event_base_t base,
+                                         int32_t event_id, void *data) {
+    const config_update_event_t *ev = (const config_update_event_t *)data;
+    if (ev->kind == (uint8_t)CFGMOD_KIND_SYSTEM) {
+        cfg_system_t sys;
+        if (cfg_system_get(&sys) == ESP_OK) {
+            s_mirror_cols = sys.is_split && sys.split_mirror_cols;
+        }
+    }
+}
 
 /* ---- Task handle (used to wake the task from kb_manager_set_remote_matrix) ---- */
 static volatile TaskHandle_t s_kb_task_handle = NULL;
@@ -225,7 +242,7 @@ static void kb_manager_task(void *arg) {
         }
 
         /* --- Scan hardware matrix --- */
-        kb_matrix_scan(s_raw_matrix);
+        kb_matrix_scan(s_raw_matrix, s_mirror_cols);
 
         /* Merge injected test keys (or clear them if USB is gone) */
         portENTER_CRITICAL(&s_injected_matrix_lock);
@@ -393,6 +410,11 @@ void kb_manager_start(void) {
     kb_system_action_init();
     kb_custom_key_init();
     cfg_layout_load_all();
+
+    cfg_system_t sys;
+    s_mirror_cols = (cfg_system_get(&sys) == ESP_OK) && sys.is_split && sys.split_mirror_cols;
+    esp_event_handler_register(CONFIG_EVENTS, CONFIG_EVENT_KIND_UPDATED,
+                               kb_sys_config_update_handler, NULL);
 
     memset(s_injected_matrix, 0, sizeof(s_injected_matrix));
     memset(s_remote_matrix,   0, sizeof(s_remote_matrix));
