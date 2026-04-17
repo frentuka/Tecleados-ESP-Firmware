@@ -28,7 +28,7 @@
  * @param mic       Authentication tag (SPLIT_FRAME_MIC_SIZE bytes); zeroed for plaintext messages
  */
 typedef void (*split_transport_recv_cb_t)(const uint8_t *src_mac,
-                                          uint8_t type, uint16_t seq,
+                                          uint8_t type, uint64_t seq,
                                           const uint8_t *payload, size_t len,
                                           const uint8_t *mic);
 
@@ -115,7 +115,7 @@ void split_transport_set_send_cb(split_transport_send_cb_t cb);
  * @return ESP_OK on successful enqueue, error otherwise.
  */
 esp_err_t split_transport_send(const uint8_t *dst_mac,
-                               uint8_t proto_id, uint8_t type, uint16_t seq,
+                               uint8_t proto_id, uint8_t type, uint64_t seq,
                                const uint8_t *payload, size_t payload_len);
 
 /* =========================================================================

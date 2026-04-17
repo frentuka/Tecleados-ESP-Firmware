@@ -7,7 +7,7 @@
 #define TAG "SPLIT_PR"
 
 size_t split_protocol_build_frame(uint8_t *out_buf, size_t out_max,
-                                  uint8_t proto, uint8_t type, uint16_t seq,
+                                  uint8_t proto, uint8_t type, uint64_t seq,
                                   const uint8_t *payload, size_t payload_len)
 {
     size_t total = SPLIT_FRAME_HEADER_SIZE + payload_len + SPLIT_FRAME_MIC_SIZE;
@@ -20,7 +20,11 @@ size_t split_protocol_build_frame(uint8_t *out_buf, size_t out_max,
     hdr->magic = SPLIT_FRAME_MAGIC;
     hdr->proto = proto;
     hdr->type  = type;
-    hdr->seq   = seq;
+    
+    // Copy 48 bits of sequence (little-endian)
+    for (int i = 0; i < 6; i++) {
+        hdr->seq[i] = (uint8_t)((seq >> (i * 8)) & 0xFF);
+    }
 
     // Payload
     if (payload && payload_len > 0) {

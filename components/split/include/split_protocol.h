@@ -14,7 +14,7 @@
 #define SPLIT_PROTO_SPLIT        0x01     // Split keyboard protocol
 #define SPLIT_PROTO_DONGLE       0x02     // Dongle protocol (future)
 
-#define SPLIT_FRAME_HEADER_SIZE  6        // magic(2) + proto(1) + type(1) + seq(2)
+#define SPLIT_FRAME_HEADER_SIZE  10       // magic(2) + proto(1) + type(1) + seq(6)
 #define SPLIT_FRAME_MIC_SIZE     4        // AES-128-CCM truncated auth tag
 #define SPLIT_FRAME_OVERHEAD     (SPLIT_FRAME_HEADER_SIZE + SPLIT_FRAME_MIC_SIZE)
 
@@ -77,7 +77,7 @@ typedef struct __attribute__((packed)) split_frame_header {
     uint16_t magic;      // SPLIT_FRAME_MAGIC
     uint8_t  proto;      // Protocol ID (SPLIT_PROTO_SPLIT, etc.)
     uint8_t  type;       // split_msg_type_t
-    uint16_t seq;        // Monotonic sequence number
+    uint8_t  seq[6];     // 48-bit monotonic sequence number (little-endian)
 } split_frame_header_t;
 
 _Static_assert(sizeof(split_frame_header_t) == SPLIT_FRAME_HEADER_SIZE,
@@ -211,7 +211,7 @@ typedef struct __attribute__((packed)) split_ping_payload {
  * @return Total frame size, or 0 on error.
  */
 size_t split_protocol_build_frame(uint8_t *out_buf, size_t out_max,
-                                  uint8_t proto, uint8_t type, uint16_t seq,
+                                  uint8_t proto, uint8_t type, uint64_t seq,
                                   const uint8_t *payload, size_t payload_len);
 
 /**

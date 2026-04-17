@@ -21,7 +21,7 @@
 static split_pair_data_t   s_pair   = {0};
 static split_pair_phase_t  s_phase  = PAIR_PHASE_IDLE;
 static split_crypto_ecdh_t s_ecdh   = NULL;   // ephemeral ECDH handle (initiator path)
-static uint16_t            s_seq    = 0;       // pairing-phase tx sequence counter
+static uint64_t            s_seq    = 0;       // pairing-phase tx sequence counter
 
 /* =========================================================================
  * Internal helpers

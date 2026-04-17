@@ -17,6 +17,6 @@
  *        Runs in the WiFi task context.
  */
 void split_dispatch_on_message(const uint8_t *src_mac,
-                                uint8_t type, uint16_t seq,
+                                uint8_t type, uint64_t seq,
                                 const uint8_t *payload, size_t len,
                                 const uint8_t *mic);

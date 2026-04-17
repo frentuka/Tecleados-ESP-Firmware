@@ -55,11 +55,13 @@ static void ensure_dma_sem(void)
 #define KDF_LABEL     "split_v1"
 #define KDF_LABEL_LEN (sizeof(KDF_LABEL) - 1)
 
-static void build_nonce(uint16_t seq, uint8_t nonce[SPLIT_CRYPTO_NONCE_SIZE])
+static void build_nonce(uint64_t seq, uint8_t nonce[SPLIT_CRYPTO_NONCE_SIZE])
 {
-    nonce[0] = (uint8_t)(seq & 0xFF);
-    nonce[1] = (uint8_t)(seq >> 8);
-    memset(nonce + 2, 0, SPLIT_CRYPTO_NONCE_SIZE - 2);
+    // Copy 48 bits of sequence (little-endian)
+    for (int i = 0; i < 6; i++) {
+        nonce[i] = (uint8_t)((seq >> (i * 8)) & 0xFF);
+    }
+    memset(nonce + 6, 0, SPLIT_CRYPTO_NONCE_SIZE - 6);
 }
 
 /* =========================================================================
@@ -161,7 +163,7 @@ void split_crypto_ecdh_free(split_crypto_ecdh_t handle)
  * ========================================================================= */
 
 esp_err_t split_crypto_encrypt(const uint8_t key[SPLIT_CRYPTO_KEY_SIZE],
-                                uint16_t seq,
+                                uint64_t seq,
                                 const uint8_t *aad, size_t aad_len,
                                 uint8_t *buf, size_t len,
                                 uint8_t out_mic[SPLIT_CRYPTO_MIC_SIZE])
@@ -221,7 +223,7 @@ esp_err_t split_crypto_encrypt(const uint8_t key[SPLIT_CRYPTO_KEY_SIZE],
 }
 
 esp_err_t split_crypto_decrypt(const uint8_t key[SPLIT_CRYPTO_KEY_SIZE],
-                                uint16_t seq,
+                                uint64_t seq,
                                 const uint8_t *aad, size_t aad_len,
                                 uint8_t *buf, size_t len,
                                 const uint8_t mic[SPLIT_CRYPTO_MIC_SIZE])

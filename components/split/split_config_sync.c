@@ -11,8 +11,11 @@
 #include "esp_err.h"
 #include "cfg_storage_keys.h"
 #include "cfg_ble.h"
-#include "splitmod.h"
+#include "split_session.h"
 #include "host/ble_store.h"
+#include "freertos/semphr.h"
+#include "esp_heap_caps.h"
+#include "esp_timer.h"
 
 // Mirror of the bond sync binary format defined in cfg_ble.c — used to
 // count PEER_SEC records in an incoming blob WITHOUT applying it first.
@@ -90,11 +93,10 @@ esp_err_t split_config_sync_push(const uint8_t *peer_mac, split_seq_alloc_fn_t g
 {
     if (!peer_mac || !get_seq || !key) return ESP_ERR_INVALID_ARG;
 
-    // cfgmod_read_storage requires a pre-allocated buffer; we pass the protocol
-    // maximum so any blob that fits within the fragmentation scheme can be read
-    // in a single call. (255 fragments × SPLIT_CONFIG_SYNC_DATA_MAX bytes each.)
+    // Read from NVS into a temporary buffer in PSRAM to avoid large internal heap spikes.
+    // 57KB in PSRAM is much safer than in internal DRAM.
     size_t   blob_len = SPLIT_CONFIG_SYNC_DATA_MAX * 255;
-    uint8_t *blob     = malloc(blob_len);
+    uint8_t *blob     = heap_caps_malloc(blob_len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!blob) return ESP_ERR_NO_MEM;
 
     esp_err_t ret = cfgmod_read_storage(kind, key, blob, &blob_len);
@@ -196,18 +198,29 @@ typedef struct {
     uint32_t  received;      // bitmask of received fragment indices (up to 32)
     uint8_t  *buf;
     size_t    buf_len;       // allocated size
-    size_t    data_len;      // total expected data length (known after last fragment arrives)
+    size_t    data_len;      // total expected data length
+    
+    // Background deferral fields
+    bool       write_pending;
+    bool       reverse_sync_pending;
+    uint8_t    reply_mac[6];
+    TickType_t last_updated_at;
 } reassembly_t;
 
 static reassembly_t s_rx = {0};
+static portMUX_TYPE s_rx_mux = portMUX_INITIALIZER_UNLOCKED;
+
+#define SPLIT_CFG_REASSEMBLY_TIMEOUT_TICKS  pdMS_TO_TICKS(2000)
 
 void split_config_sync_reset(void)
 {
+    portENTER_CRITICAL(&s_rx_mux);
     if (s_rx.buf) {
         free(s_rx.buf);
         s_rx.buf = NULL;
     }
     memset(&s_rx, 0, sizeof(s_rx));
+    portEXIT_CRITICAL(&s_rx_mux);
 }
 
 esp_err_t split_config_sync_on_fragment(const uint8_t *src_mac,
@@ -244,13 +257,15 @@ esp_err_t split_config_sync_on_fragment(const uint8_t *src_mac,
         memcpy(s_rx.key, key, sizeof(s_rx.key));
 
         s_rx.buf_len = (size_t)frag->fragment_total * SPLIT_CONFIG_SYNC_DATA_MAX;
-        s_rx.buf     = malloc(s_rx.buf_len);
+        s_rx.buf     = heap_caps_malloc(s_rx.buf_len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         if (!s_rx.buf) {
             s_rx.active = false;
             return ESP_ERR_NO_MEM;
         }
         s_rx.data_len = 0;
     }
+
+    s_rx.last_updated_at = xTaskGetTickCount();
 
     if (frag->fragment_idx >= frag->fragment_total) {
         ESP_LOGW(TAG, "bad fragment idx %u / total %u", frag->fragment_idx, frag->fragment_total);
@@ -296,13 +311,10 @@ esp_err_t split_config_sync_on_fragment(const uint8_t *src_mac,
             ESP_LOGI(TAG, "ble_cfg: SLAVE trust mode — accepting Master config (ver %u)", recv_sum);
         } else {
             // I am Master. I own the BLE config. I ignore any BLE config from a Slave.
-            // If the Slave's version is DIFFERENT, we trigger a reverse sync to update it.
             if (own_sum != recv_sum) {
                 ESP_LOGW(TAG, "ble_cfg: Master-Slave sync mismatch (%u != %u). Triggering reverse corrective sync.", 
                          own_sum, recv_sum);
                 if (out_reverse_ble_sync) *out_reverse_ble_sync = true;
-            } else {
-                ESP_LOGI(TAG, "ble_cfg: Slave is already in sync with Master (%u).", own_sum);
             }
             split_config_sync_reset();
             return ESP_OK; // Consume but do not apply
@@ -366,27 +378,82 @@ esp_err_t split_config_sync_on_fragment(const uint8_t *src_mac,
         }
     }
 
-    // All fragments received — write to NVS.
-    esp_err_t ret = cfgmod_write_storage((cfgmod_kind_t)s_rx.kind, s_rx.key,
-                                          s_rx.buf, s_rx.data_len);
+    // All fragments received — mark as pending for background write.
+    // We defer the NVS write to the split_task to avoid blocking the WiFi task.
+    portENTER_CRITICAL(&s_rx_mux);
+    if (s_rx.active) {
+        s_rx.write_pending = true;
+        if (reply_mac) memcpy(s_rx.reply_mac, reply_mac, 6);
+        if (out_reverse_ble_sync && *out_reverse_ble_sync) {
+            s_rx.reverse_sync_pending = true;
+        }
+    }
+    portEXIT_CRITICAL(&s_rx_mux);
+
+    return ESP_OK;
+}
+
+void split_config_sync_process_deferred(void)
+{
+    portENTER_CRITICAL(&s_rx_mux);
+    if (!s_rx.active) {
+        portEXIT_CRITICAL(&s_rx_mux);
+        return;
+    }
+
+    TickType_t now = xTaskGetTickCount();
+    if (now - s_rx.last_updated_at > SPLIT_CFG_REASSEMBLY_TIMEOUT_TICKS && !s_rx.write_pending) {
+        portEXIT_CRITICAL(&s_rx_mux);
+        ESP_LOGW(TAG, "reassembly timeout for kind=%u key=%s — resetting", s_rx.kind, s_rx.key);
+        split_config_sync_reset();
+        return;
+    }
+
+    if (!s_rx.write_pending) {
+        portEXIT_CRITICAL(&s_rx_mux);
+        return;
+    }
+
+    // We have a write pending. Capture state and release mux to perform slow I/O.
+    uint8_t   kind     = s_rx.kind;
+    char      key[SPLIT_CONFIG_SYNC_KEY_LEN + 1];
+    memcpy(key, s_rx.key, sizeof(key));
+    uint8_t  *buf      = s_rx.buf;
+    size_t    data_len = s_rx.data_len;
+    uint8_t   dst_mac[6];
+    memcpy(dst_mac, s_rx.reply_mac, 6);
+    bool      rev_sync = s_rx.reverse_sync_pending;
+    
+    // NULL out the buffer in state so reset doesn't double-free it while we work.
+    s_rx.buf = NULL;
+    s_rx.write_pending = false; 
+    portEXIT_CRITICAL(&s_rx_mux);
+
+    ESP_LOGD(TAG, "background: applying sync kind=%u key=%s (%u bytes)", kind, key, (unsigned)data_len);
+    esp_err_t ret = cfgmod_write_storage((cfgmod_kind_t)kind, key, buf, data_len);
+    
     if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "config sync applied kind=%u key=%s (%u bytes)",
-                 s_rx.kind, s_rx.key, (unsigned)s_rx.data_len);
+        ESP_LOGI(TAG, "config sync applied kind=%u key=%s", kind, key);
+        if (rev_sync) {
+            ESP_LOGI(TAG, "triggering corrective reverse sync for kind=%u key=%s", kind, key);
+            split_config_sync_push(dst_mac, split_session_next_seq, (cfgmod_kind_t)kind, key);
+            if (kind == CFGMOD_KIND_CONNECTION) {
+                split_config_sync_push(dst_mac, split_session_next_seq, CFGMOD_KIND_BLE_BOND, "all");
+            }
+        }
     } else {
-        ESP_LOGW(TAG, "NVS write failed for kind=%u key=%s: %s",
-                 s_rx.kind, s_rx.key, esp_err_to_name(ret));
+        ESP_LOGW(TAG, "background: NVS write failed for kind=%u key=%s: %s", kind, key, esp_err_to_name(ret));
     }
 
-    if (reply_mac && get_seq) {
-        split_config_sync_ack_payload_t ack = {
-            .kind   = s_rx.kind,
-            .status = (ret == ESP_OK) ? 0 : 1,
-        };
-        memcpy(ack.key, s_rx.key, SPLIT_CONFIG_SYNC_KEY_LEN);
-        split_transport_send(reply_mac, SPLIT_PROTO_SPLIT, SPLIT_MSG_CONFIG_SYNC_ACK,
-                             get_seq(), (const uint8_t *)&ack, sizeof(ack));
-    }
+    // Send ACK back to master
+    split_config_sync_ack_payload_t ack = {
+        .kind   = kind,
+        .status = (ret == ESP_OK) ? 0 : 1,
+    };
+    memcpy(ack.key, key, SPLIT_CONFIG_SYNC_KEY_LEN);
+    split_transport_send(dst_mac, SPLIT_PROTO_SPLIT, SPLIT_MSG_CONFIG_SYNC_ACK,
+                         split_session_next_seq(), (const uint8_t *)&ack, sizeof(ack));
 
+    free(buf);
     split_config_sync_reset();
-    return ret;
 }

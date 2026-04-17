@@ -91,7 +91,7 @@ bool split_sync_remote_matrix_changed(void)
 esp_err_t split_sync_send_full_state(const uint8_t *peer_mac,
                                       const uint8_t *matrix,
                                       uint8_t active_layer,
-                                      uint16_t seq)
+                                      uint64_t seq)
 {
     split_key_state_full_payload_t p = {.active_layer = active_layer};
     memcpy(p.matrix, matrix, SPLIT_MATRIX_BYTES);

@@ -61,14 +61,20 @@ static void on_espnow_recv(const esp_now_recv_info_t *info,
     uint8_t       *payload = frame_buf + SPLIT_FRAME_HEADER_SIZE;
     const uint8_t *mic     = frame_buf + SPLIT_FRAME_HEADER_SIZE + payload_len;
 
+    // Reconstruct 48-bit sequence from header (little-endian)
+    uint64_t full_seq = 0;
+    for (int i = 0; i < 6; i++) {
+        full_seq |= ((uint64_t)header.seq[i] << (i * 8));
+    }
+
     if (s_session_key_set) {
         // header bytes are the AAD (authenticated, not encrypted).
-        esp_err_t crypt_ret = split_crypto_decrypt(s_session_key, header.seq,
+        esp_err_t crypt_ret = split_crypto_decrypt(s_session_key, full_seq,
                                                    frame_buf, SPLIT_FRAME_HEADER_SIZE,
                                                    payload, payload_len, mic);
         if (crypt_ret != ESP_OK) {
-            ESP_LOGD(TAG, "decrypt/auth failed from " MACSTR " (seq=%u) — dropped",
-                     MAC2STR(info->src_addr), header.seq);
+            ESP_LOGD(TAG, "decrypt/auth failed from " MACSTR " (seq=%llu) — dropped",
+                     MAC2STR(info->src_addr), (unsigned long long)full_seq);
             return;
         }
     }
@@ -78,7 +84,7 @@ static void on_espnow_recv(const esp_now_recv_info_t *info,
     // pass the in-frame bytes to satisfy the callback signature.
     for (int i = 0; i < s_handler_count; i++) {
         if (s_handlers[i].proto_id == header.proto) {
-            s_handlers[i].cb(info->src_addr, header.type, header.seq,
+            s_handlers[i].cb(info->src_addr, header.type, full_seq,
                              payload, payload_len, mic);
             return;
         }
@@ -255,7 +261,7 @@ void split_transport_set_session_key(const uint8_t *key)
 }
 
 esp_err_t split_transport_send(const uint8_t *dst_mac,
-                               uint8_t proto_id, uint8_t type, uint16_t seq,
+                               uint8_t proto_id, uint8_t type, uint64_t seq,
                                const uint8_t *payload, size_t payload_len)
 {
     if (!s_initialized) return ESP_ERR_INVALID_STATE;

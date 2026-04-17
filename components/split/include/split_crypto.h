@@ -78,7 +78,7 @@ void split_crypto_ecdh_free(split_crypto_ecdh_t handle);
  * @param out_mic   Output: 4-byte authentication tag
  */
 esp_err_t split_crypto_encrypt(const uint8_t key[SPLIT_CRYPTO_KEY_SIZE],
-                                uint16_t seq,
+                                uint64_t seq,
                                 const uint8_t *aad, size_t aad_len,
                                 uint8_t *buf, size_t len,
                                 uint8_t out_mic[SPLIT_CRYPTO_MIC_SIZE]);
@@ -89,7 +89,7 @@ esp_err_t split_crypto_encrypt(const uint8_t key[SPLIT_CRYPTO_KEY_SIZE],
  * @return ESP_OK on success, ESP_ERR_INVALID_CRC on authentication failure.
  */
 esp_err_t split_crypto_decrypt(const uint8_t key[SPLIT_CRYPTO_KEY_SIZE],
-                                uint16_t seq,
+                                uint64_t seq,
                                 const uint8_t *aad, size_t aad_len,
                                 uint8_t *buf, size_t len,
                                 const uint8_t mic[SPLIT_CRYPTO_MIC_SIZE]);

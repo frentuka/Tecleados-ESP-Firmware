@@ -13,7 +13,7 @@
  * critical section).  Passing raw &s_tx_seq and doing (*tx_seq)++ inside this
  * module would bypass that critical section on a dual-core ESP32-S3.
  */
-typedef uint16_t (*split_seq_alloc_fn_t)(void);
+typedef uint64_t (*split_seq_alloc_fn_t)(void);
 
 /* =========================================================================
  * Config kinds that are synced over split link
@@ -71,7 +71,10 @@ esp_err_t split_config_sync_on_fragment(const uint8_t *src_mac,
                                          split_seq_alloc_fn_t get_seq,
                                          bool *out_reverse_ble_sync);
 
-/**
- * @brief Reset any in-progress reassembly (call on disconnect).
- */
 void split_config_sync_reset(void);
+
+/**
+ * @brief Process any deferred reassembly work (NVS writes or timeouts).
+ *        Should be called periodically from split_task.
+ */
+void split_config_sync_process_deferred(void);

@@ -32,10 +32,19 @@ Implemented in [split_role.c]; driven by [split_dispatch.c] on `ROLE_NEGOTIATE` 
 All traffic is secured using **AES-128-CCM** with anti-replay:
 - **Pairing**: unencrypted X25519 ECDH exchange derives a shared session key ([split_pair.c], [split_crypto.c]).
 - **MIC**: every packet carries a MIC authenticated by [split_transport.c] before dispatch.
-- **Replay window**: 16-bit modular sequence window in [split_session.c] — forward half accepted, rest dropped.
+- **On-wire frame layout (packed, little-endian):**
+ *
+ *   `[magic:2][proto:1][type:1][seq:6][payload:0..236][mic:4]`
+ *
+ *   Before encryption: header is authenticated but not encrypted (AAD).
+ *   Payload + MIC are encrypted with AES-128-CCM.
+- **Nonce Security**: 48-bit sequence number stored in the header. Nonce reuse horizon is **~89,000 years** at 100 packets/sec.
+- **Anti-Replay**: 64-bit sequence window in [split_session.c] — strictly increasing sequences accepted, duplicates/older dropped.
 
 ### 3. Fragmentation Protocol
-ESP-NOW's ~240-byte payload limit means large transfers (the full config blob, macro DB, BLE bonds) are fragmented and reassembled by [split_config_sync.c]. Reassembly tracks received fragments in a **32-bit bitmap** → **max 32 fragments / ~7.2 KB per logical message**. The receiver enforces this limit; any `fragment_total > 32` is rejected with `ESP_ERR_INVALID_SIZE`.
+ESP-NOW's ~236-byte payload limit means large transfers (the full config blob, macro DB, BLE bonds) are fragmented and reassembled by [split_config_sync.c]. Reassembly tracks received fragments in a **32-bit bitmap** → **max 32 fragments / ~7.2 KB per logical message**.
+- **Memory**: Large reassembly and push buffers are allocated in **PSRAM** (`MALLOC_CAP_SPIRAM`) to preserve internal DRAM.
+- **Timeout**: Abandoned reassemblies time out after 2 seconds to free heap resources.
 
 ### 4. State-Machine Task
 One FreeRTOS task ([split_task.c]) drives the whole connection lifecycle at ~100 Hz:
@@ -45,7 +54,7 @@ One FreeRTOS task ([split_task.c]) drives the whole connection lifecycle at ~100
 | `IDLE`         | No peer paired — waiting. No periodic transmissions.                                          |
 | `PAIRING`      | Broadcast DISCOVERY every 500 ms; respect pairing deadline.                                   |
 | `CONNECTING`   | Retransmit `ROLE_NEGOTIATE` every 500 ms until the peer ACKs.                                 |
-| `CONNECTED`    | 150 ms heartbeat (slave→master, with master echo for RTT), bench probes (master), drain deferred config-sync work. |
+| `CONNECTED`    | 150 ms heartbeat (slave→master, with master echo for RTT), bench probes (master), drain deferred config-sync work, **process deferred reassembly I/O**. |
 | `DISCONNECTED` | Reconnect with exponential backoff (500 ms → 5 s).                                            |
 
 The task owns all NVS-heavy / blocking work (config sync push). Event-bus and WiFi-task contexts only **request** work via two `volatile bool` flags and one `volatile uint32_t` kind-mask — they never block:
@@ -192,9 +201,9 @@ graph LR
 
 - **Cross-core seq allocator**: `split_session_next_seq()` uses `portMUX_TYPE` critical section. The transport TX context, event-bus task, and WiFi RX task all mint seq numbers; without the mutex two cores could hand out the same seq and poison the anti-replay window.
 - **Deferred work**: `on_config_updated` runs on the event-bus task. It must not call `split_config_sync_push` directly — that path does `vTaskDelay(10 ms)` per-fragment retry and would starve the bus. Instead it sets a bit in `s_config_sync_kind_mask`; `split_task` drains it.
-- **Anti-replay**: dropped replay frames are *not* logged at INFO — a flapping link would spam the log. Use `ESP_LOGD` for visibility during debugging.
-- **NVS from split_task**: the task stack must live in **internal DRAM** (`MALLOC_CAP_INTERNAL`). NVS writes disable the SPI cache; a SPIRAM-backed stack would crash mid-write.
-- **Remote matrix mutex**: `split_sync.c` uses `portMUX_TYPE` for `s_remote` because the WiFi task writes it (on `KEY_STATE_FULL/DELTA` reception) while the keyboard-manager task reads it.
+- **Anti-replay**: 48-bit sequence numbers are verified on every packet. Since the space is practically infinite (millions of packets), a strict "greater than" check is used instead of modular windows.
+- **NVS Deferral**: Fragment reassembly logic in `split_config_sync.c` marks blobs as "write pending" instead of writing immediately. The `split_task` performs the slow `cfgmod_write_storage` call in the background to prevent blocking the WiFi task.
+- **PSRAM for Blobs**: All configuration and reassembly buffers are now moved to PSRAM to avoid large internal heap spikes.
 
 ---
 
@@ -208,3 +217,4 @@ graph LR
 - **USB priority bug fix**: `own_usb_connected` / `peer_usb_connected` were being collected and transmitted in `ROLE_NEGOTIATE` but never consulted in `split_role_decide()`. Priority 2 (USB) is now implemented — a half with a live USB host wins Master over BLE-only or disconnected peers.
 - **Default connectivity mode changed to USB**: `cfg_ble.c` previously defaulted `ble_routing_enabled = true` on a fresh flash. Changed to `false` so a keyboard boots in USB mode and BLE must be explicitly enabled.
 - **Role preference removed**: the `proposed_role` / `preferred_role` system was broken — it was not antisymmetric, meaning both halves could resolve to the same role. The preference check has been removed from `split_role_decide()`. The wire field is retained (sent as 0) for compatibility. The `last_role` priority has also been rewritten with explicit mirror checks that guarantee both sides always resolve at the same priority level, making dual-same-role impossible by construction.
+- **Hardening phase (2026-04)**: CAT-1 security and robustness update. Sequence numbers widened to 48-bit for AES-CCM nonce uniqueness (89,000 year reuse horizon). Deployed background NVS writing to decouple slow flash I/O from the WiFi task. Moved reassembly and push buffers to PSRAM. Added 2s reassembly timeout.

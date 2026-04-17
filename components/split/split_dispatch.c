@@ -224,7 +224,7 @@ static void handle_ble_status_msg(const uint8_t *payload, size_t len)
  * Returns false when the frame should be dropped (replay / out-of-window).
  * ========================================================================= */
 
-static bool gate_incoming_frame(const uint8_t *src_mac, uint8_t type, uint16_t seq)
+static bool gate_incoming_frame(const uint8_t *src_mac, uint8_t type, uint64_t seq)
 {
     bool is_pairing_msg = (type == SPLIT_MSG_DISCOVERY   ||
                            type == SPLIT_MSG_PAIR_REQUEST ||
@@ -232,7 +232,7 @@ static bool gate_incoming_frame(const uint8_t *src_mac, uint8_t type, uint16_t s
 
     if (!is_pairing_msg) {
         if (!split_session_check_rx_seq(seq)) {
-            ESP_LOGD(TAG, "dropped replay seq=%u", seq);
+            ESP_LOGD(TAG, "dropped replay seq=%llu", (unsigned long long)seq);
             return false;
         }
         if (memcmp(src_mac, split_session_peer_mac(), 6) == 0) {
@@ -256,14 +256,14 @@ static bool gate_incoming_frame(const uint8_t *src_mac, uint8_t type, uint16_t s
  * ========================================================================= */
 
 void split_dispatch_on_message(const uint8_t *src_mac,
-                                uint8_t type, uint16_t seq,
+                                uint8_t type, uint64_t seq,
                                 const uint8_t *payload, size_t len,
                                 const uint8_t *mic)
 {
     // MIC was authenticated by split_transport before this callback runs.
     (void)mic;
-    ESP_LOGD(TAG, "rx 0x%02X seq=%u from " MACSTR " (%u B)",
-             type, seq, MAC2STR(src_mac), (unsigned)len);
+    ESP_LOGD(TAG, "rx 0x%02X seq=%llu from " MACSTR " (%u B)",
+             type, (unsigned long long)seq, MAC2STR(src_mac), (unsigned)len);
 
     if (!gate_incoming_frame(src_mac, type, seq)) return;
 

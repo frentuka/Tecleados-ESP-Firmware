@@ -39,7 +39,7 @@ uint16_t split_session_get_latency_us(void);
 void     split_session_set_latency_us(uint16_t v);
 
 /* ---- Sequence number (thread-safe) ------------------------------------- */
-uint16_t split_session_next_seq(void);
+uint64_t split_session_next_seq(void);
 
 /* ---- Anti-replay window ------------------------------------------------ */
 /**
@@ -47,7 +47,7 @@ uint16_t split_session_next_seq(void);
  *        Returns true when the frame is in the forward half of the 16-bit
  *        sequence space, false when it is a duplicate or old.
  */
-bool split_session_check_rx_seq(uint16_t seq);
+bool split_session_check_rx_seq(uint64_t seq);
 void split_session_reset_rx_seq(void);
 
 /* ---- Peer liveness ----------------------------------------------------- */

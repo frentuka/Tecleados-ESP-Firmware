@@ -282,6 +282,7 @@ static void tick_connected(TickType_t now)
     }
 
     drain_deferred_config_sync(now);
+    split_config_sync_process_deferred();
 
     split_role_t role = split_session_get_role();
     if (role == SPLIT_ROLE_SLAVE) {

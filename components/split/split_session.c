@@ -25,14 +25,14 @@ static uint16_t s_latency_us = 0;
 /* s_tx_seq is accessed from split_task, kb_manager_task (via matrix_cb) and
  * the WiFi task (heartbeat echo). On dual-core ESP32-S3 these run in parallel;
  * all accesses must go through split_session_next_seq(). */
-static uint16_t      s_tx_seq  = 0;
+static uint64_t      s_tx_seq  = 0;
 static portMUX_TYPE  s_seq_mux = portMUX_INITIALIZER_UNLOCKED;
 
 /* Long-term AES-128 key derived from X25519 during pairing, stored in NVS. */
 static uint8_t s_stored_key[SPLIT_CRYPTO_KEY_SIZE] = {0};
 
 /* Anti-replay state for inbound packets. */
-static uint16_t s_peer_seq_last  = 0;
+static uint64_t s_peer_seq_last  = 0;
 static bool     s_peer_seq_valid = false;
 
 /* Peer liveness. */
@@ -89,10 +89,10 @@ void     split_session_set_latency_us(uint16_t v) { s_latency_us = v; }
  * Sequence allocator — always go through this to avoid tearing / duplicates.
  * ========================================================================= */
 
-uint16_t split_session_next_seq(void)
+uint64_t split_session_next_seq(void)
 {
     portENTER_CRITICAL(&s_seq_mux);
-    uint16_t s = s_tx_seq++;
+    uint64_t s = s_tx_seq++;
     portEXIT_CRITICAL(&s_seq_mux);
     return s;
 }
@@ -106,11 +106,13 @@ uint16_t split_session_next_seq(void)
  * int16_t while keeping the same wraparound-aware window.
  * ========================================================================= */
 
-bool split_session_check_rx_seq(uint16_t seq)
+bool split_session_check_rx_seq(uint64_t seq)
 {
     if (s_peer_seq_valid) {
-        uint16_t udelta = (uint16_t)(seq - s_peer_seq_last);
-        if (udelta == 0 || udelta >= 0x8000u) {
+        // With a 64-bit counter (using 48 bits for wireless frames), we don't
+        // need wraparound-aware windows like 16-bit space does.
+        // A simple "greater than" check is sufficient and prevents all replays.
+        if (seq <= s_peer_seq_last) {
             return false;
         }
     }
