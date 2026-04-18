@@ -66,6 +66,15 @@ split_state_t split_session_get_state(void) { return s_state; }
 void          split_session_set_state(split_state_t s) { s_state = s; }
 split_role_t  split_session_get_role(void)  { return s_role; }
 void          split_session_set_role(split_role_t r) { s_role = r; }
+/* NOTE (F7 \u2014 sequential-write race): Xtensa 32-bit aligned byte writes are
+ * individually atomic, but callers that write state and role back-to-back
+ * (e.g. set_state(CONNECTED) then set_role(MASTER)) expose a brief window
+ * where another core can observe CONNECTED + ROLE_NONE. All readers that
+ * act on both values together (gate_incoming_frame, heartbeat handler) are
+ * in the WiFi task, which runs concurrently with split_task on the second
+ * core. The window is a single instruction and only leads to a no-op extra
+ * heartbeat echo at worst; full mutex protection is not warranted for this
+ * use case. If the pattern expands into more complex state logic, revisit. */
 
 /* =========================================================================
  * MACs

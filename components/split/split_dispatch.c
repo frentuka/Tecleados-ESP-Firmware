@@ -182,6 +182,12 @@ static void on_role_negotiate(const uint8_t *src_mac, const uint8_t *payload, si
 
 static void handle_role_swap_req(const uint8_t *payload, size_t len)
 {
+    // ---- F9: Guard against replayed/reordered swap requests during CONNECTING.
+    // Without this, a stale ROLE_SWAP_REQ from a previous session arriving
+    // during reconnect would flip ROLE_NONE -> MASTER and corrupt routing.
+    if (split_session_get_state() != SPLIT_STATE_CONNECTED) return;
+    if (len < sizeof(split_role_payload_t)) return;
+
     const split_role_payload_t *req = (const split_role_payload_t *)payload;
     split_role_t new_role;
     split_role_on_swap_req(split_session_get_role(), &new_role);
@@ -298,20 +304,29 @@ static bool gate_incoming_frame(const uint8_t *src_mac, uint8_t type, uint64_t s
 
     if (!is_pairing_msg) {
         if (type == SPLIT_MSG_ROLE_NEGOTIATE) {
-            // Negotiation packets are allowed to reset the sequence space. This is 
-            // safe because they MUST be authenticated via the handshake key (MIC check) 
-            // in split_transport before we even reach here.
-            split_session_reset_rx_seq();
-            split_session_check_rx_seq(seq);
+            // Only reset the anti-replay window for our paired peer.
+            // A rogue device that somehow produces a frame passing the MIC check
+            // must not be able to reset our sequence space (Finding #3).
+            bool from_peer = (memcmp(src_mac, split_session_peer_mac(), 6) == 0);
+            bool connecting = (split_session_get_state() == SPLIT_STATE_CONNECTING &&
+                               memcmp(split_session_peer_mac(), "\x00\x00\x00\x00\x00\x00", 6) == 0);
+            if (from_peer || connecting) {
+                // Negotiation packets are allowed to reset the sequence space.
+                // Safe because they MUST be authenticated via the handshake key
+                // (MIC check) in split_transport before we even reach here.
+                split_session_reset_rx_seq();
+                split_session_check_rx_seq(seq);
+                split_session_mark_peer_seen();
+            }
         } else {
             if (!split_session_check_rx_seq(seq)) {
                 ESP_LOGD(TAG, "dropped replay seq=%llu", (unsigned long long)seq);
                 return false;
             }
-        }
 
-        if (memcmp(src_mac, split_session_peer_mac(), 6) == 0) {
-            split_session_mark_peer_seen();
+            if (memcmp(src_mac, split_session_peer_mac(), 6) == 0) {
+                split_session_mark_peer_seen();
+            }
         }
     }
 

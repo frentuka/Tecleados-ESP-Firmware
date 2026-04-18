@@ -47,9 +47,6 @@ static bool send_status_push(void) {
              s_cache.split_state,
              s_cache.split_role);
 
-    ESP_LOGI(TAG, "Pushing status: P=%d, Pair=%d, Mode=%d, Bm=%04X",
-             s_cache.selected_profile, (int8_t)s_cache.pairing_profile,
-             s_cache.transport_mode, s_cache.connected_bitmap);
 
     uint8_t header[7] = {MODULE_STATUS, 0, 0, 0, 0, 0, 0};
     size_t json_len = strlen(json_buf);
@@ -183,7 +180,6 @@ static void status_on_split_event(void *arg, esp_event_base_t base,
 
 /* Manual status request from configurator (USB callback) */
 static bool status_module_callback(uint8_t *data, uint16_t data_len) {
-    ESP_LOGI(TAG, "Manual status request received");
 
     // If we are the Master (or Standalone), refresh the live data from the stack
     // before responding. This allows the heartbeat poll to self-correct if

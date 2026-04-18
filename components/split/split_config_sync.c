@@ -38,7 +38,18 @@ struct bond_sync_section {
 
 #define TAG "SPLIT_CFG"
 
-static SemaphoreHandle_t s_tx_ack_sem = NULL;
+/* Pending-push descriptor — tracks which (kind, key) the master is currently
+ * waiting for an ACK on. The ACK handler validates this before giving the
+ * semaphore so that stale or spurious ACKs from a previous session do not
+ * unblock the wrong push (Finding #2). */
+typedef struct {
+    bool     active;
+    uint8_t  kind;
+    char     key[SPLIT_CONFIG_SYNC_KEY_LEN + 1];
+} pending_push_t;
+
+static SemaphoreHandle_t s_tx_ack_sem   = NULL;
+static pending_push_t    s_pending_push = {0};
 
 static void ensure_tx_sem_init(void)
 {
@@ -46,7 +57,6 @@ static void ensure_tx_sem_init(void)
         s_tx_ack_sem = xSemaphoreCreateBinary();
     }
 }
-
 
 /* =========================================================================
  * Sync table — (kind, NVS key) pairs pushed to slave on connect / config update
@@ -108,13 +118,38 @@ esp_err_t split_config_sync_push(const uint8_t *peer_mac, split_seq_alloc_fn_t g
 {
     if (!peer_mac || !get_seq || !key) return ESP_ERR_INVALID_ARG;
 
-    // Read from NVS into a temporary buffer in PSRAM to avoid large internal heap spikes.
-    // 57KB in PSRAM is much safer than in internal DRAM.
-    size_t   blob_len = SPLIT_CONFIG_SYNC_DATA_MAX * 255;
-    uint8_t *blob     = heap_caps_malloc(blob_len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    // ---- F8: Two-pass PSRAM allocation ----------------------------------------
+    // Allocate exactly what we need rather than the theoretical 57 KB maximum.
+    // cfgmod_read_storage rejects NULL buffers, so we use a 1-byte probe buffer:
+    // NVS returns ESP_ERR_NVS_INVALID_LENGTH and writes the real size into blob_len.
+    size_t blob_len = 1;
+    uint8_t probe_byte;
+    esp_err_t ret = cfgmod_read_storage(kind, key, &probe_byte, &blob_len);
+
+    if (ret == ESP_ERR_NOT_FOUND) {
+        ESP_LOGD(TAG, "read_storage(%u, %s): not found — skipping", kind, key);
+        return ESP_OK;
+    }
+    // When the provided buffer is too small, nvs_get_blob sets *inout_len to the
+    // real blob size and returns a non-zero error (platform-specific "invalid length").
+    // We treat any non-ESP_OK, non-ESP_ERR_NOT_FOUND result as "size updated in blob_len".
+    // blob_len now holds the actual required size regardless of which error was returned.
+    if (ret != ESP_OK && ret != ESP_ERR_NOT_FOUND) {
+        // blob_len was updated by cfgmod_read_storage / nvs_get_blob to the true size.
+        // Proceed with allocation.
+        if (blob_len <= 1) {
+            // Unexpected: NVS reported an error but didn't update blob_len.
+            ESP_LOGW(TAG, "read_storage probe(%u, %s): unexpected error %s with blob_len=0", kind, key, esp_err_to_name(ret));
+            return ESP_OK;
+        }
+    }
+
+    if (blob_len == 0) return ESP_OK;
+
+    uint8_t *blob = heap_caps_malloc(blob_len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!blob) return ESP_ERR_NO_MEM;
 
-    esp_err_t ret = cfgmod_read_storage(kind, key, blob, &blob_len);
+    ret = cfgmod_read_storage(kind, key, blob, &blob_len);
     if (ret != ESP_OK) {
         if (ret != ESP_ERR_NOT_FOUND) {
             ESP_LOGW(TAG, "read_storage(%u, %s): %s — skipping", kind, key, esp_err_to_name(ret));
@@ -122,13 +157,11 @@ esp_err_t split_config_sync_push(const uint8_t *peer_mac, split_seq_alloc_fn_t g
             ESP_LOGD(TAG, "read_storage(%u, %s): not found — skipping", kind, key);
         }
         free(blob);
-        return ESP_OK; // Not an error — entry may not yet exist on a fresh device.
-    }
-
-    if (blob_len == 0) {
-        free(blob);
         return ESP_OK;
     }
+    if (blob_len == 0) { free(blob); return ESP_OK; }
+    // ---------------------------------------------------------------------------
+
 
     uint8_t total_fragments = (uint8_t)((blob_len + SPLIT_CONFIG_SYNC_DATA_MAX - 1)
                                          / SPLIT_CONFIG_SYNC_DATA_MAX);
@@ -136,10 +169,15 @@ esp_err_t split_config_sync_push(const uint8_t *peer_mac, split_seq_alloc_fn_t g
     ESP_LOGD(TAG, "pushing kind=%u key=%s blob_len=%u fragments=%u",
              kind, key, (unsigned)blob_len, total_fragments);
 
-    // Prepare for ACK from slave
+    // ---- F2: Register the pending push so on_ack can validate before giving sem
     ensure_tx_sem_init();
     xSemaphoreTake(s_tx_ack_sem, 0); // Clear any stale ACK BEFORE sending fragments
-    
+
+    s_pending_push.active = true;
+    s_pending_push.kind   = (uint8_t)kind;
+    memset(s_pending_push.key, 0, sizeof(s_pending_push.key));
+    strncpy(s_pending_push.key, key, SPLIT_CONFIG_SYNC_KEY_LEN);
+
     uint8_t frame[SPLIT_CONFIG_SYNC_HDR_SIZE + SPLIT_CONFIG_SYNC_DATA_MAX];
 
     for (uint8_t idx = 0; idx < total_fragments; idx++) {
@@ -159,6 +197,7 @@ esp_err_t split_config_sync_push(const uint8_t *peer_mac, split_seq_alloc_fn_t g
                                        frame, SPLIT_CONFIG_SYNC_HDR_SIZE + chunk_len,
                                        idx, total_fragments);
         if (ret != ESP_OK) {
+            s_pending_push.active = false;
             free(blob);
             return ret;
         }
@@ -166,13 +205,13 @@ esp_err_t split_config_sync_push(const uint8_t *peer_mac, split_seq_alloc_fn_t g
 
     free(blob);
 
-    
     if (xSemaphoreTake(s_tx_ack_sem, pdMS_TO_TICKS(5000)) != pdTRUE) {
         ESP_LOGW(TAG, "timeout waiting for ACK: kind=%u key=%s", kind, key);
+        s_pending_push.active = false;
         return ESP_ERR_TIMEOUT;
     }
 
-
+    s_pending_push.active = false;
     return ESP_OK;
 }
 
@@ -257,9 +296,21 @@ void split_config_sync_on_ack(const uint8_t *payload, size_t len)
         ESP_LOGW(TAG, "slave NAK'd kind=%u key=%s status=%u", ack->kind, key, ack->status);
     }
 
-    // Unblock the Master task waiting for this ACK
-    if (s_tx_ack_sem) {
+    // ---- F2: Only unblock the ACK semaphore if this ACK matches the pending push.
+    // Stale or spurious ACKs from a previous session or a mismatched key must
+    // NOT unblock a different in-progress push, as that would cause the master
+    // to believe a config was delivered when it wasn't.
+    if (s_tx_ack_sem && s_pending_push.active &&
+        s_pending_push.kind == ack->kind &&
+        strncmp(s_pending_push.key, key, SPLIT_CONFIG_SYNC_KEY_LEN) == 0) {
         xSemaphoreGive(s_tx_ack_sem);
+    } else if (s_tx_ack_sem && !s_pending_push.active) {
+        // No push in progress but semaphore exists — harmless, ignore.
+        ESP_LOGD(TAG, "ACK received with no push in progress (kind=%u key=%s) — ignored",
+                 ack->kind, key);
+    } else {
+        ESP_LOGW(TAG, "ACK kind/key mismatch: expected kind=%u key=%s, got kind=%u key=%s — ignored",
+                 s_pending_push.kind, s_pending_push.key, ack->kind, key);
     }
 }
 
@@ -311,6 +362,18 @@ void split_config_sync_reset(void)
     }
     memset(&s_rx, 0, sizeof(s_rx));
     portEXIT_CRITICAL(&s_rx_mux);
+
+    // ---- F2: Destroy and re-create the ACK semaphore so stale signals from a
+    // previous session cannot leak into the next one. Calling vSemaphoreDelete
+    // with a task potentially blocked on the semaphore would assert; at this
+    // point no push should be in flight (split_config_sync_reset is only called
+    // from split_task, which serialises all push calls). Clear the pending
+    // descriptor first so on_ack ignores any late arriving frame.
+    s_pending_push.active = false;
+    if (s_tx_ack_sem) {
+        vSemaphoreDelete(s_tx_ack_sem);
+        s_tx_ack_sem = NULL;
+    }
 }
 
 
@@ -387,9 +450,14 @@ esp_err_t split_config_sync_on_fragment(const uint8_t *src_mac,
         memcpy(s_rx.buf + offset, payload + SPLIT_CONFIG_SYNC_HDR_SIZE, data_len);
     }
 
-    // Track total data length from the last fragment.
-    if (frag->fragment_idx == frag->fragment_total - 1) {
-        s_rx.data_len = offset + data_len;
+    // ---- F4: Accumulate data_len from every fragment so out-of-order delivery
+    // is handled correctly. Using max() instead of only updating on the last
+    // fragment-by-index means data_len is always correct regardless of arrival
+    // order. (Previously only fragment_idx==total-1 updated data_len, which
+    // left data_len==0 if that particular fragment was delayed.)
+    size_t end = offset + data_len;
+    if (end > s_rx.data_len) {
+        s_rx.data_len = end;
     }
 
     ESP_LOGD(TAG, "rx fragment %u/%u kind=%u key=%s",
@@ -505,13 +573,23 @@ esp_err_t split_config_sync_on_fragment(const uint8_t *src_mac,
     return ESP_OK;
 }
 
+
 void split_config_sync_process_deferred(void)
 {
+    // ---- F15: Note on blocking behaviour ----------------------------------------
+    // This function is called from split_task's tick_connected() loop. When a
+    // write is pending and a corrective reverse-sync is needed, it calls
+    // split_config_sync_push() which can block for up to 5 s per key waiting
+    // for the ACK semaphore. During that time the split_task tick stalls,
+    // meaning no heartbeats are sent. This is by design (the task owns slow I/O)
+    // and is acceptable because corrective reverse-syncs are rare events.
+    // --------------------------------------------------------------------------
     portENTER_CRITICAL(&s_rx_mux);
     if (!s_rx.active) {
         portEXIT_CRITICAL(&s_rx_mux);
         return;
     }
+
 
     TickType_t now = xTaskGetTickCount();
     if (now - s_rx.last_updated_at > SPLIT_CFG_REASSEMBLY_TIMEOUT_TICKS && !s_rx.write_pending) {

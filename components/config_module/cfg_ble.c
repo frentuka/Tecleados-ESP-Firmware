@@ -291,15 +291,6 @@ static int collect_cb(int obj_type, union ble_store_value *val, void *cookie) {
         ctx->offset += sz;
         ctx->count++;
 
-        if (obj_type == BLE_STORE_OBJ_TYPE_PEER_SEC || obj_type == BLE_STORE_OBJ_TYPE_OUR_SEC) {
-            const uint8_t *pa = val->sec.peer_addr.val;
-            ESP_LOGI(TAG, "BOND_READ sec type=%d peer=%02X:%02X:%02X:%02X:%02X:%02X irk=%d",
-                     obj_type, pa[0], pa[1], pa[2], pa[3], pa[4], pa[5], val->sec.irk_present);
-        } else if (obj_type == BLE_STORE_OBJ_TYPE_CCCD) {
-            const uint8_t *pa = val->cccd.peer_addr.val;
-            ESP_LOGI(TAG, "BOND_READ cccd peer=%02X:%02X:%02X:%02X:%02X:%02X handle=%d flags=%d",
-                     pa[0], pa[1], pa[2], pa[3], pa[4], pa[5], val->cccd.chr_val_handle, val->cccd.flags);
-        }
 
         return 0; // continue
     } else if (!ctx->buf) {
@@ -375,7 +366,6 @@ esp_err_t cfg_ble_bond_read_all(void *out_buf, size_t *inout_len) {
     }
 
     *inout_len = required;
-    ESP_LOGI(TAG, "Bond read_all V2: %u bytes (%d sections)", (unsigned)required, (int)num_types);
     return ESP_OK;
 }
 
@@ -440,34 +430,18 @@ esp_err_t cfg_ble_bond_write_all(const void *data, size_t len) {
                 case BLE_STORE_OBJ_TYPE_OUR_SEC:
                     memcpy(&val.sec, rec_data, sizeof(val.sec));
                     rc = ble_store_write_our_sec(&val.sec);
-                    {
-                        const uint8_t *pa = val.sec.peer_addr.val;
-                        ESP_LOGI(TAG, "BOND_WRITE our_sec peer=%02X:%02X:%02X:%02X:%02X:%02X rc=%d",
-                                 pa[0], pa[1], pa[2], pa[3], pa[4], pa[5], rc);
-                    }
                     break;
                 case BLE_STORE_OBJ_TYPE_PEER_SEC:
                     memcpy(&val.sec, rec_data, sizeof(val.sec));
                     rc = ble_store_write_peer_sec(&val.sec);
-                    {
-                        const uint8_t *pa = val.sec.peer_addr.val;
-                        ESP_LOGI(TAG, "BOND_WRITE peer_sec peer=%02X:%02X:%02X:%02X:%02X:%02X irk=%d rc=%d",
-                                 pa[0], pa[1], pa[2], pa[3], pa[4], pa[5], val.sec.irk_present, rc);
-                    }
                     break;
                 case BLE_STORE_OBJ_TYPE_CCCD:
                     memcpy(&val.cccd, rec_data, sizeof(val.cccd));
                     rc = ble_store_write_cccd(&val.cccd);
-                    {
-                        const uint8_t *pa = val.cccd.peer_addr.val;
-                        ESP_LOGI(TAG, "BOND_WRITE cccd peer=%02X:%02X:%02X:%02X:%02X:%02X handle=%d rc=%d",
-                                 pa[0], pa[1], pa[2], pa[3], pa[4], pa[5], val.cccd.chr_val_handle, rc);
-                    }
                     break;
                 case BLE_STORE_OBJ_TYPE_LOCAL_IRK:
                     memcpy(&val.local_irk, rec_data, sizeof(val.local_irk));
                     rc = ble_store_write_local_irk(&val.local_irk);
-                    ESP_LOGI(TAG, "BOND_WRITE local_irk rc=%d", rc);
                     break;
             }
 
@@ -477,7 +451,6 @@ esp_err_t cfg_ble_bond_write_all(const void *data, size_t len) {
                 // the resolving list while transitioning. It's harmless since 
                 // we call ble_hid_reinit_bonds() at the end.
                 if (rc == 530) {
-                    ESP_LOGI(TAG, "Bond write partial (HCI 0x12) for type %d (ignored, pending re-warm)", sec->type);
                 } else {
                     ESP_LOGW(TAG, "Failed to write bond record type %d, rc=%d", sec->type, rc);
                 }
@@ -486,7 +459,6 @@ esp_err_t cfg_ble_bond_write_all(const void *data, size_t len) {
         }
         
         p += sec_data_len; rem -= sec_data_len;
-        ESP_LOGI(TAG, "Bond write_all: applied %d records of type %d", (int)sec->record_count, (int)sec->type);
     }
 
     // Warm the resolving list
@@ -497,7 +469,6 @@ esp_err_t cfg_ble_bond_write_all(const void *data, size_t len) {
 
 void cfg_ble_apply_deferred_bonds(void) {
     if (s_deferred_bond_buf && s_deferred_bond_len > 0) {
-        ESP_LOGI(TAG, "Applying deferred bonds (%u bytes)", (unsigned)s_deferred_bond_len);
         cfg_ble_bond_write_all(s_deferred_bond_buf, s_deferred_bond_len);
         free(s_deferred_bond_buf);
         s_deferred_bond_buf = NULL;

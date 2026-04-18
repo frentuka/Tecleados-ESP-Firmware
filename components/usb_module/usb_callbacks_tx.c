@@ -112,7 +112,6 @@ void tx_blast_handle_bitmap(const usb_packet_msg_t *msg)
     }
 
     if (all_mid_received) {
-        ESP_LOGI(TAG, "Blast: all MID packets confirmed. Sending LAST.");
         if (!tx_send_packet_by_index(tx_blast_total_packets - 1)) {
             ESP_LOGE(TAG, "Blast: failed to send LAST packet. Aborting.");
             build_send_single_msg_packet(PAYLOAD_FLAG_ABORT, 0, 0, NULL);
@@ -152,7 +151,6 @@ static bool tx_send_packet_by_index(uint16_t index)
     usb_crc_prepare_packet((uint8_t*) &msg);
 
     if (!send_single_packet((uint8_t *) &msg, COMM_REPORT_SIZE)) {
-        ESP_LOGE(TAG, "tx_send_packet_by_index: report send failed for index %u", index);
         return false;
     }
 
@@ -170,7 +168,6 @@ static bool tx_blast_send_all_mid_packets()
         if (!tx_send_packet_by_index(i)) return false;
     }
 
-    ESP_LOGI(TAG, "Blast: sent %u MID packets", tx_blast_total_packets - 2);
     return true;
 }
 

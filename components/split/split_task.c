@@ -30,9 +30,7 @@
 #include "split_config_sync.h"
 #include "split_bridge.h"
 #include "split_bench.h"
-#include "blemod.h"
 #include "cfg_ble.h"
-#include "tusb.h"
 #include "usbmod.h"
 
 #define TAG "SPLIT_TK"
@@ -67,9 +65,13 @@ static TickType_t s_last_reconnect_at = 0;
 static uint32_t   s_reconnect_interval = SPLIT_RECONNECT_MS_MIN;
 static TickType_t s_pairing_deadline  = 0;
 
-static volatile bool     s_config_sync_pending   = false;
-static volatile uint32_t s_config_sync_kind_mask = 0; // Bitmask of (1 << cfgmod_kind_t)
-static volatile bool     s_reverse_ble_sync      = false;
+/* Deferred-work flags written from non-task contexts (event-bus, WiFi task).
+ * Protected by s_defer_mux: the |= compound operator is NOT atomic on a
+ * dual-core Xtensa — a bare volatile is insufficient. */
+static bool          s_config_sync_pending   = false;
+static uint32_t      s_config_sync_kind_mask = 0; // Bitmask of (1 << cfgmod_kind_t)
+static bool          s_reverse_ble_sync      = false;
+static portMUX_TYPE  s_defer_mux = portMUX_INITIALIZER_UNLOCKED;
 
 static TaskHandle_t s_task_handle = NULL;
 
@@ -165,12 +167,26 @@ void split_task_reset_discovery_timer(void)        { s_last_discovery_tx = 0; }
 void split_task_set_pairing_deadline(TickType_t d) { s_pairing_deadline  = d; }
 void split_task_reset_reconnect_backoff(void)      { s_reconnect_interval = SPLIT_RECONNECT_MS_MIN; }
 
-void split_task_request_config_sync_initial(void)      { s_config_sync_pending     = true; }
+void split_task_request_config_sync_initial(void)
+{
+    portENTER_CRITICAL(&s_defer_mux);
+    s_config_sync_pending = true;
+    portEXIT_CRITICAL(&s_defer_mux);
+}
 void split_task_request_config_sync_incremental(uint8_t kind)
 {
-    if (kind < 32) s_config_sync_kind_mask |= (1u << kind);
+    if (kind < 32) {
+        portENTER_CRITICAL(&s_defer_mux);
+        s_config_sync_kind_mask |= (1u << kind);
+        portEXIT_CRITICAL(&s_defer_mux);
+    }
 }
-void split_task_request_reverse_ble_sync(void)         { s_reverse_ble_sync        = true; }
+void split_task_request_reverse_ble_sync(void)
+{
+    portENTER_CRITICAL(&s_defer_mux);
+    s_reverse_ble_sync = true;
+    portEXIT_CRITICAL(&s_defer_mux);
+}
 
 /* =========================================================================
  * Per-state tick handlers
@@ -237,17 +253,24 @@ static void drain_deferred_config_sync(TickType_t now)
 {
     const uint8_t *peer_mac = split_session_peer_mac();
 
-    if (split_session_get_role() == SPLIT_ROLE_MASTER && s_config_sync_pending &&
-        (now - split_session_connected_at()) >= pdMS_TO_TICKS(SPLIT_CONFIG_SYNC_SETTLE_MS)) {
-        s_config_sync_pending = false;
+    portENTER_CRITICAL(&s_defer_mux);
+    bool do_initial = (split_session_get_role() == SPLIT_ROLE_MASTER && s_config_sync_pending &&
+                       (now - split_session_connected_at()) >= pdMS_TO_TICKS(SPLIT_CONFIG_SYNC_SETTLE_MS));
+    if (do_initial) s_config_sync_pending = false;
+
+    uint32_t mask = s_config_sync_kind_mask;
+    s_config_sync_kind_mask = 0;
+
+    bool do_reverse_ble = s_reverse_ble_sync;
+    s_reverse_ble_sync = false;
+    portEXIT_CRITICAL(&s_defer_mux);
+
+    if (do_initial) {
         ESP_LOGI(TAG, "running initial config sync from split_task");
         split_config_sync_push_all(peer_mac, split_session_next_seq);
     }
 
-    if (s_config_sync_kind_mask != 0) {
-        uint32_t mask = s_config_sync_kind_mask;
-        s_config_sync_kind_mask = 0;
-
+    if (mask != 0) {
         split_role_t role = split_session_get_role();
         ESP_LOGI(TAG, "running incremental config sync (mask=0x%02lX, role=%s)",
                  (unsigned long)mask, role == SPLIT_ROLE_MASTER ? "M->S" : "S->M");
@@ -264,11 +287,9 @@ static void drain_deferred_config_sync(TickType_t now)
             // Push all entries for this kind (including recursive sub-keys for macros)
             split_config_sync_push_kind(peer_mac, split_session_next_seq, (cfgmod_kind_t)i);
         }
-
     }
 
-    if (s_reverse_ble_sync) {
-        s_reverse_ble_sync = false;
+    if (do_reverse_ble) {
         ESP_LOGI(TAG, "reverse BLE sync: pushing own ble_cfg + bond to peer");
         split_config_sync_push(peer_mac, split_session_next_seq,
                                 CFGMOD_KIND_CONNECTION, "ble_cfg");
@@ -318,10 +339,11 @@ static void tick_disconnected(TickType_t now)
     if (split_pair_is_paired()) {
         ESP_LOGI(TAG, "reconnect attempt (backoff=%lu ms)",
                  (unsigned long)s_reconnect_interval);
-        // Reset transport to stored key before sending ROLE_NEGOTIATE.
-        // The salt will be rotated by the dispatch logic upon receiving a peer response
-        // or by the first negotiation trigered below if it's the first attempt.
-        split_transport_set_session_key(split_session_stored_key());
+        // Do NOT touch the session key here. The handshake key slot already holds
+        // the paired key and handles ROLE_NEGOTIATE decryption via the dual-key
+        // fallback in split_transport. Setting the session key to the stored key
+        // would break the TSK architecture: the TSK is NULL until the next
+        // successful ROLE_NEGOTIATE exchange derives it from fresh salts.
         if (split_session_get_local_salt() == 0) {
             split_session_set_local_salt(esp_random());
         }

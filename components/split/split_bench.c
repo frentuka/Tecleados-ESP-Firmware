@@ -38,6 +38,16 @@ static bench_t s_bench = {0};
 
 void split_bench_start(void)
 {
+    // ---- F14: Only the MASTER runs the benchmark tick; starting it on a slave
+    // would leave active=true forever (the tick never fires for non-masters) and
+    // report misleading "active" state to the configurator.
+    if (split_session_get_state() != SPLIT_STATE_CONNECTED ||
+        split_session_get_role()  != SPLIT_ROLE_MASTER) {
+        ESP_LOGW(TAG, "bench start ignored: not master/connected (state=%u role=%u)",
+                 (unsigned)split_session_get_state(), (unsigned)split_session_get_role());
+        return;
+    }
+
     memset(&s_bench, 0, sizeof(s_bench));
     s_bench.active        = true;
     s_bench.started_at    = xTaskGetTickCount();

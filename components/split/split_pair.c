@@ -91,6 +91,7 @@ esp_err_t split_pair_start(void)
 {
     ecdh_cleanup();
     s_phase = PAIR_PHASE_BROADCASTING;
+    s_seq   = 0;   // F10: Reset pairing-phase TX counter for the fresh session.
     ESP_LOGI(TAG, "pairing started (broadcasting DISCOVERY)");
     return ESP_OK;
 }

@@ -330,14 +330,16 @@ esp_err_t split_transport_send(const uint8_t *dst_mac,
         bool use_handshake = (proto_id == SPLIT_PROTO_SPLIT && 
                              (type == SPLIT_MSG_ROLE_NEGOTIATE || type == SPLIT_MSG_DISCOVERY));
         
-        // DISCOVERY and PAIRING messages are sent as plaintext (unencrypted) during initial handshake.
+        // DISCOVERY, PAIR_REQUEST, and PAIR_RESPONSE are always sent as
+        // plaintext — they bootstrap the session before any shared key exists.
+        // Fall through to esp_now_send below without encrypting the frame.
         bool type_is_plaintext = (type == SPLIT_MSG_DISCOVERY || 
                                   type == SPLIT_MSG_PAIR_REQUEST || 
                                   type == SPLIT_MSG_PAIR_RESPONSE);
 
-        if (type_is_plaintext) {
-            // Send as plaintext (unencrypted)
-        } else {
+        if (!type_is_plaintext) {
+            // All other frames are encrypted with either the TSK (session key)
+            // or the paired key (handshake key for ROLE_NEGOTIATE).
             const uint8_t *key = (use_handshake && s_handshake_key_set) ? s_handshake_key : s_session_key;
 
             // Encrypt payload in-place; fill the MIC trailer that build_frame zeroed.
@@ -352,7 +354,14 @@ esp_err_t split_transport_send(const uint8_t *dst_mac,
                 return crypt_ret;
             }
         }
+        // Note: if type_is_plaintext is true, the frame is sent as-is (MIC
+        // placeholder bytes remain zeroed). The receiver also skips decryption
+        // for these types (see on_espnow_recv), so the zeroed MIC is expected.
     }
+    // If neither key is set (pre-pairing bootstrap), the frame is always
+    // plaintext and falls through to esp_now_send with zeroed MIC \u2014 this is
+    // the correct behaviour before a shared key has been established.
+
 
 
 

@@ -66,7 +66,7 @@ typedef enum split_msg_type : uint8_t {
 /**
  * On-wire frame layout (packed, little-endian):
  *
- *   [magic:2][proto:1][type:1][seq:2][payload:0..240][mic:4]
+ *   `[magic:2][proto:1][type:1][seq:6][payload:0..240][mic:4]`  (frame version 0x02)
  *
  * Before encryption: header is authenticated but not encrypted (AAD).
  * Payload + MIC are encrypted with AES-128-CCM.
@@ -80,7 +80,7 @@ typedef struct __attribute__((packed)) split_frame_header {
 } split_frame_header_t;
 
 _Static_assert(sizeof(split_frame_header_t) == SPLIT_FRAME_HEADER_SIZE,
-               "Frame header must be exactly 6 bytes");
+               "Frame header must be exactly 10 bytes");
 
 /* =========================================================================
  * Message Payloads

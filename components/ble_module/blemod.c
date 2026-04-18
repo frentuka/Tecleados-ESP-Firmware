@@ -157,7 +157,6 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
   switch (event->type) {
   case BLE_GAP_EVENT_CONNECT:
     if (event->connect.status == 0) {
-      ESP_LOGI(TAG, "Device connected, handle=%d", event->connect.conn_handle);
       struct ble_gap_conn_desc desc;
       if (ble_gap_conn_find(event->connect.conn_handle, &desc) == 0) {
         int profile = (arg != NULL) ? (int)(intptr_t)arg - 1 : -1;
@@ -171,7 +170,7 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
         if (profile >= 0 && profile < CFG_BLE_MAX_PROFILES) {
             s_conn_handles[profile] = event->connect.conn_handle;
             s_reconnect_retries = 0; // successful connection — reset retry counter
-            ESP_LOGI(TAG, "Mapped connection %d to profile %d (via arg)", event->connect.conn_handle, profile);
+            ESP_LOGI(TAG, "Device connected: handle=%d, profile=%d", event->connect.conn_handle, profile);
             esp_event_post(BLE_EVENTS, BLE_EVENT_PROFILE_CONNECTED, &profile, sizeof(int), 0);
         } else {
             ESP_LOGW(TAG, "Could not map connection to profile!");
@@ -182,7 +181,7 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
       }
 
       int rc = ble_gap_security_initiate(event->connect.conn_handle);
-      ESP_LOGI(TAG, "Security initiation requested: %d", rc);
+      ESP_LOGD(TAG, "Security initiation requested: %d", rc);
     } else {
       ESP_LOGI(TAG, "Connection failed (status %d)", event->connect.status);
       int sel = s_directed_profile;
@@ -325,20 +324,18 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
   case BLE_GAP_EVENT_ENC_CHANGE:
     // Gives us information when encryption and pairing process is complete
     if (event->enc_change.status == 0) {
-      ESP_LOGI(TAG, "Connection successfully encrypted (pairing complete)");
-
       // Re-query connection to get the resolved Identity Address (Post-IRK exchange)
       struct ble_gap_conn_desc desc;
       if (ble_gap_conn_find(event->enc_change.conn_handle, &desc) == 0) {
           s_pending_addr = desc.peer_id_addr;
-          ESP_LOGI(TAG, "Identity resolved: %02X:%02X:%02X:%02X:%02X:%02X",
+          ESP_LOGD(TAG, "Identity resolved: %02X:%02X:%02X:%02X:%02X:%02X",
                    s_pending_addr.val[0], s_pending_addr.val[1], s_pending_addr.val[2],
                    s_pending_addr.val[3], s_pending_addr.val[4], s_pending_addr.val[5]);
       }
 
       // If we were in pairing mode, fire event so cfg_ble saves credentials.
       if (s_pairing_profile >= 0 && s_pairing_profile < CFG_BLE_MAX_PROFILES) {
-          ESP_LOGI(TAG, "Pairing complete for profile %d. Firing event.", s_pairing_profile);
+          ESP_LOGD(TAG, "Pairing complete for profile %d. Firing event.", s_pairing_profile);
 
           cfg_ble_state_t st_unsync = *cfg_ble_get_state();
           st_unsync.has_unsynced_updates = 1;
@@ -351,7 +348,7 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
           memcpy(result.addr, s_pending_addr.val, 6);
           esp_event_post(BLE_EVENTS, BLE_EVENT_PAIRING_COMPLETE, &result, sizeof(result), 0);
 
-          ESP_LOGI(TAG, "Pairing success. Clearing s_pairing_profile.");
+          ESP_LOGD(TAG, "Pairing success. Clearing s_pairing_profile.");
           s_pairing_profile = -1;
           esp_timer_stop(s_pairing_timeout_timer);
       } else {
@@ -385,7 +382,7 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
       if (s_reconn_phase == RECONN_PHASE_SELECTED || s_reconn_phase == RECONN_PHASE_FOREVER) {
           s_reconn_phase = RECONN_PHASE_FINITE;
           memset(s_reconnect_cycles, 0, sizeof(s_reconnect_cycles));
-          ESP_LOGI(TAG, "First connection established. Transitioning to FINITE Phase.");
+          ESP_LOGD(TAG, "First connection established. Transitioning to FINITE Phase.");
       }
 
       int connected_profile = -1;
@@ -430,7 +427,7 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
     break;
 
   case BLE_GAP_EVENT_SUBSCRIBE:
-    ESP_LOGI(TAG,
+    ESP_LOGD(TAG,
              "Subscribe event: conn_handle=%d, attr_handle=%d, "
              "cur_notify=%d, cur_indicate=%d",
              event->subscribe.conn_handle, event->subscribe.attr_handle,
@@ -439,7 +436,7 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
     if (event->subscribe.cur_notify == 1) {
       int bat_rc =
           ble_hid_notify_battery_level(event->subscribe.conn_handle, battery_get_level_pct());
-      ESP_LOGI(TAG, "Sent battery notification on subscribe, rc=%d", bat_rc);
+      ESP_LOGD(TAG, "Sent battery notification on subscribe, rc=%d", bat_rc);
     }
     break;
 
@@ -454,12 +451,12 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
     break;
 
   case BLE_GAP_EVENT_MTU:
-    ESP_LOGI(TAG, "MTU update event; conn_handle=%d mtu=%d",
+    ESP_LOGD(TAG, "MTU update event; conn_handle=%d mtu=%d",
              event->mtu.conn_handle, event->mtu.value);
     break;
 
   case BLE_GAP_EVENT_CONN_UPDATE:
-    ESP_LOGI(TAG, "Connection parameters updated, status=%d",
+    ESP_LOGD(TAG, "Connection parameters updated, status=%d",
              event->conn_update.status);
     return 0; // Accept
 
