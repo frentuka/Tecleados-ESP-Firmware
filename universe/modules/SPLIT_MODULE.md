@@ -37,8 +37,8 @@ All traffic is secured using **AES-128-CCM** with anti-replay:
  *   `[magic:2][proto:1][type:1][seq:6][payload:0..236][mic:4]`  (frame version 0x02)
  *
  *   The 10-byte header is the AAD (authenticated but not encrypted). Payload + MIC are AES-128-CCM encrypted.
-- **Nonce Security**: 48-bit sequence number stored in the header. Nonce reuse horizon is **~89,000 years** at 100 packets/sec.
-- **Anti-Replay**: 64-bit strictly-increasing window in [split_session.c]. Duplicates and replays are dropped.
+- **Nonce Security & Cross-Reboot Epoch**: 48-bit sequence number stored in the header. To prevent nonce reuse across reboots, an NVS-backed **Sequence Epoch** (`spl_epc`) is incremented on boot. The epoch occupies the top 16 bits of the 48-bit sequence, while the lower 32 bits form a per-session packet counter.
+- **Anti-Replay**: Simple strictly-increasing check in [split_session.c]. Because the 48-bit space is practically infinite, a strict `seq > last_seq` evaluation is used instead of modular windows. Duplicates and replays are implicitly dropped.
 
 #### Key Hierarchy (TSK-first architecture)
 
@@ -234,7 +234,7 @@ graph LR
 
 - **Cross-core seq allocator**: `split_session_next_seq()` uses `portMUX_TYPE` critical section. The transport TX context, event-bus task, and WiFi RX task all mint seq numbers; without the mutex two cores could hand out the same seq and poison the anti-replay window.
 - **Deferred work**: `on_config_updated` runs on the event-bus task. It must not call `split_config_sync_push` directly — that path does `vTaskDelay(10 ms)` per-fragment retry and would starve the bus. Instead it sets a bit in `s_config_sync_kind_mask`; `split_task` drains it.
-- **Anti-replay**: 48-bit sequence numbers are verified on every packet. Since the space is practically infinite (millions of packets), a strict "greater than" check is used instead of modular windows.
+- **Anti-replay**: 48-bit sequence numbers are verified on every packet. The upper 16 bits use a persistent **Sequence Epoch** to prevent reusing sequence numbers across resets. Since the space is practically infinite, a strict "greater than" check is used instead of modular windows.
 - **NVS Deferral**: Fragment reassembly logic in `split_config_sync.c` marks blobs as "write pending" instead of writing immediately. The `split_task` performs the slow `cfgmod_write_storage` call in the background to prevent blocking the WiFi task.
 - **PSRAM for Blobs**: All configuration and reassembly buffers are now moved to PSRAM to avoid large internal heap spikes.
 
@@ -251,7 +251,7 @@ graph LR
 - **USB priority bug fix**: `own_usb_connected` / `peer_usb_connected` were being collected and transmitted in `ROLE_NEGOTIATE` but never consulted in `split_role_decide()`. Priority 2 (USB) is now implemented.
 - **Default connectivity mode changed to USB**: `cfg_ble.c` previously defaulted `ble_routing_enabled = true` on a fresh flash. Changed to `false` so a keyboard boots in USB mode and BLE must be explicitly enabled.
 - **Role preference removed**: the `proposed_role` / `preferred_role` system was broken — it was not antisymmetric. The wire field is retained (sent as 0) for compatibility. The `last_role` priority has been rewritten with explicit mirror checks.
-- **Hardening phase (2026-04 / security)**: sequence numbers widened to 48-bit. Background NVS writing deployed. Reassembly and push buffers moved to PSRAM. 2 s reassembly timeout added.
+- **Hardening phase (2026-04 / security)**: sequence numbers widened to 48-bit with an **NVS-backed Sequence Epoch** to prevent cross-reboot nonce reuse. Background NVS writing deployed. Reassembly and push buffers moved to PSRAM. 2 s reassembly timeout added. Out-of-bounds memory vulnerabilities in the dispatch layer were eliminated.
 - **TSK (Transient Session Key) architecture (2026-04 / crypto hardening)**:
   - Added `random_salt` field to `split_role_negotiate_payload_t` (wire version bumped to `0x02`).
   - `split_crypto_derive_session_key()` API changed from `(nonce_a[], nonce_b[])` to `(uint32_t salt_own, uint32_t salt_peer)` with symmetric min/max sort so both sides always produce the same TSK.

@@ -18,6 +18,7 @@
  * ========================================================================= */
 
 void split_session_init(void);
+void split_session_init_epoch(void);
 
 /* ---- State machine ----------------------------------------------------- */
 split_state_t split_session_get_state(void);

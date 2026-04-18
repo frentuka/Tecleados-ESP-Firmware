@@ -364,15 +364,13 @@ void split_config_sync_reset(void)
     portEXIT_CRITICAL(&s_rx_mux);
 
     // ---- F2: Destroy and re-create the ACK semaphore so stale signals from a
-    // previous session cannot leak into the next one. Calling vSemaphoreDelete
-    // with a task potentially blocked on the semaphore would assert; at this
-    // point no push should be in flight (split_config_sync_reset is only called
-    // from split_task, which serialises all push calls). Clear the pending
-    // descriptor first so on_ack ignores any late arriving frame.
+    // previous session cannot leak into the next one. 
+    // Calling vSemaphoreDelete with a task potentially blocked on the semaphore 
+    // would assert causing a crash. Thus we Give the semaphore so the waiter 
+    // unblocks and naturally aborts when it sees s_pending_push is inactive.
     s_pending_push.active = false;
     if (s_tx_ack_sem) {
-        vSemaphoreDelete(s_tx_ack_sem);
-        s_tx_ack_sem = NULL;
+        xSemaphoreGive(s_tx_ack_sem);
     }
 }
 
@@ -496,6 +494,12 @@ esp_err_t split_config_sync_on_fragment(const uint8_t *src_mac,
                          own_sum, recv_sum);
                 if (out_reverse_ble_sync) *out_reverse_ble_sync = true;
             }
+            
+            split_config_sync_ack_payload_t ack = { .kind = s_rx.kind, .status = 1 };
+            memcpy(ack.key, s_rx.key, SPLIT_CONFIG_SYNC_KEY_LEN);
+            split_transport_send(src_mac, SPLIT_PROTO_SPLIT, SPLIT_MSG_CONFIG_SYNC_ACK,
+                                 get_seq(), (const uint8_t *)&ack, sizeof(ack));
+                                 
             split_config_sync_reset();
             return ESP_OK; // Consume but do not apply
         }
@@ -534,6 +538,12 @@ esp_err_t split_config_sync_on_fragment(const uint8_t *src_mac,
         if (splitmod_get_role() == SPLIT_ROLE_MASTER) {
             ESP_LOGW(TAG, "Bond Sync Guard: Master ignores Slave's bond data. Requesting corrective reverse sync.");
             if (out_reverse_ble_sync) *out_reverse_ble_sync = true;
+            
+            split_config_sync_ack_payload_t ack = { .kind = s_rx.kind, .status = 1 };
+            memcpy(ack.key, s_rx.key, SPLIT_CONFIG_SYNC_KEY_LEN);
+            split_transport_send(src_mac, SPLIT_PROTO_SPLIT, SPLIT_MSG_CONFIG_SYNC_ACK,
+                                 get_seq(), (const uint8_t *)&ack, sizeof(ack));
+                                 
             split_config_sync_reset();
             return ESP_OK;
         }
@@ -553,6 +563,12 @@ esp_err_t split_config_sync_on_fragment(const uint8_t *src_mac,
                      "rejecting and requesting reverse sync",
                      local_peer_count, incoming_peer_count);
             if (out_reverse_ble_sync) *out_reverse_ble_sync = true;
+            
+            split_config_sync_ack_payload_t ack = { .kind = s_rx.kind, .status = 1 };
+            memcpy(ack.key, s_rx.key, SPLIT_CONFIG_SYNC_KEY_LEN);
+            split_transport_send(src_mac, SPLIT_PROTO_SPLIT, SPLIT_MSG_CONFIG_SYNC_ACK,
+                                 get_seq(), (const uint8_t *)&ack, sizeof(ack));
+                                 
             split_config_sync_reset();
             return ESP_OK;
         }

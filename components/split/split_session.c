@@ -4,6 +4,7 @@
 
 #include "esp_mac.h"
 #include "esp_log.h"
+#include "cfgmod.h"
 
 #define TAG "SPLIT_SES"
 
@@ -26,6 +27,7 @@ static uint16_t s_latency_us = 0;
  * the WiFi task (heartbeat echo). On dual-core ESP32-S3 these run in parallel;
  * all accesses must go through split_session_next_seq(). */
 static uint64_t      s_tx_seq  = 0;
+static uint32_t      s_tx_seq_epoch = 0;
 static portMUX_TYPE  s_seq_mux = portMUX_INITIALIZER_UNLOCKED;
 
 /* Long-term AES-128 key derived from X25519 during pairing, stored in NVS. */
@@ -56,6 +58,17 @@ void split_session_init(void)
 {
     esp_read_mac(s_own_mac, ESP_MAC_WIFI_STA);
     ESP_LOGI(TAG, "own MAC: " MACSTR, MAC2STR(s_own_mac));
+}
+
+void split_session_init_epoch(void)
+{
+    size_t len = sizeof(s_tx_seq_epoch);
+    if (cfgmod_read_storage(CFGMOD_KIND_SYSTEM, "spl_epc", &s_tx_seq_epoch, &len) != ESP_OK) {
+        s_tx_seq_epoch = 0;
+    }
+    s_tx_seq_epoch++;
+    cfgmod_write_storage(CFGMOD_KIND_SYSTEM, "spl_epc", &s_tx_seq_epoch, sizeof(s_tx_seq_epoch));
+    ESP_LOGI(TAG, "Split Sequence Epoch loaded: %lu", (unsigned long)s_tx_seq_epoch);
 }
 
 /* =========================================================================
@@ -117,7 +130,7 @@ uint64_t split_session_next_seq(void)
 void split_session_reset_tx_seq(void)
 {
     portENTER_CRITICAL(&s_seq_mux);
-    s_tx_seq = 0;
+    s_tx_seq = ((uint64_t)(s_tx_seq_epoch & 0xFFFF) << 32) | 1;
     portEXIT_CRITICAL(&s_seq_mux);
 }
 

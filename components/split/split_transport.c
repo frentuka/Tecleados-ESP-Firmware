@@ -92,8 +92,7 @@ static void on_espnow_recv(const esp_now_recv_info_t *info,
 
         // 2. Try handshake key if primary failed (or wasn't set) and message type allows it
         if (crypt_ret != ESP_OK && s_handshake_key_set) {
-            bool type_allows_handshake = (header.type == SPLIT_MSG_ROLE_NEGOTIATE || 
-                                          header.type == SPLIT_MSG_DISCOVERY);
+            bool type_allows_handshake = (header.type == SPLIT_MSG_ROLE_NEGOTIATE);
             
             if (type_allows_handshake) {
                 crypt_ret = split_crypto_decrypt(s_handshake_key, full_seq,

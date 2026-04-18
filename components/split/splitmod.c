@@ -109,6 +109,7 @@ static void on_kb_system_action(void *arg, esp_event_base_t base,
 esp_err_t splitmod_init(void)
 {
     split_session_init();
+    split_session_init_epoch();
 
     esp_err_t ret = split_transport_init();
     if (ret != ESP_OK) {
