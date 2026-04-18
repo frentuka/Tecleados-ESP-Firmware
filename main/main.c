@@ -35,6 +35,7 @@
 
 #include "ble_controller.h"
 #include "event_bus.h"
+#include "splitmod.h"
 
 #define TAG "MAIN"
 
@@ -67,6 +68,7 @@ static void init_procedure(void) {
   ble_controller_init();
   status_module_init();
 
+  splitmod_init();
   kb_manager_start();
 }
 

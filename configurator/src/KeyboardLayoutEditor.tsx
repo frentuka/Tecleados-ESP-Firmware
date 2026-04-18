@@ -96,6 +96,8 @@ const DEFAULT_PHYSICAL_LAYOUT: PhysKey[][] = [
     [{ row: 3, col: 0, w: 2.25, h: 1, x: 0, y: 3 }, { row: 3, col: 2, w: 1, h: 1, x: 2.25, y: 3 }, { row: 3, col: 3, w: 1, h: 1, x: 3.25, y: 3 }, { row: 3, col: 4, w: 1, h: 1, x: 4.25, y: 3 }, { row: 3, col: 5, w: 1, h: 1, x: 5.25, y: 3 }, { row: 3, col: 6, w: 1, h: 1, x: 6.25, y: 3 }, { row: 3, col: 7, w: 1, h: 1, x: 7.25, y: 3 }, { row: 3, col: 8, w: 1, h: 1, x: 8.25, y: 3 }, { row: 3, col: 9, w: 1, h: 1, x: 9.25, y: 3 }, { row: 3, col: 10, w: 1, h: 1, x: 10.25, y: 3 }, { row: 3, col: 11, w: 1, h: 1, x: 11.25, y: 3 }, { row: 3, col: 12, w: 1.75, h: 1, x: 12.25, y: 3 }, { row: 3, col: 13, w: 1, h: 1, x: 14, y: 3 }, { row: 3, col: 14, w: 1, h: 1, x: 15, y: 3 }],
     // Row 4: LCTRL(1.25u) LGUI(1.25u) LALT(1.25u) SPACE(6.25u) RALT FN1 FN2 ← ↓ →
     [{ row: 4, col: 0, w: 1.25, h: 1, x: 0, y: 4 }, { row: 4, col: 1, w: 1.25, h: 1, x: 1.25, y: 4 }, { row: 4, col: 2, w: 1.25, h: 1, x: 2.5, y: 4 }, { row: 4, col: 5, w: 6.25, h: 1, x: 3.75, y: 4 }, { row: 4, col: 9, w: 1, h: 1, x: 10, y: 4 }, { row: 4, col: 10, w: 1, h: 1, x: 11, y: 4 }, { row: 4, col: 11, w: 1, h: 1, x: 12, y: 4 }, { row: 4, col: 12, w: 1, h: 1, x: 13, y: 4 }, { row: 4, col: 13, w: 1, h: 1, x: 14, y: 4 }, { row: 4, col: 14, w: 1, h: 1, x: 15, y: 4 }],
+    // Row 5: (Optional/Thumb keys)
+    []
 ];
 
 
@@ -125,6 +127,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
     const fileInputRef = useRef<HTMLInputElement>(null);
     const lastClickedKeyRef = useRef<string | null>(null);
     const isDraggingRef = useRef(false);
+    const keysTouchedInDragRef = useRef<Set<string>>(new Set());
 
     // Sync rowInput/colInput when selection changes
     useEffect(() => {
@@ -498,8 +501,11 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
     const currentLayer = layers[activeLayer];
 
     return (
-        <div className="layout-editor">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+        <div className="layout-editor" onMouseDown={(e) => { if (e.target === e.currentTarget) setSelectedKeys(new Set()); }}>
+            <div
+                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}
+                onMouseDown={(e) => e.stopPropagation()}
+            >
                 <h2 className="section-title">Keyboard Layout</h2>
                 <div className="menu-container" ref={menuRef}>
                     <button className="btn-icon" onClick={() => setIsMenuOpen(!isMenuOpen)} title="Options">
@@ -623,7 +629,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                 // Validate all keys are within matrix bounds
                                 const outOfBounds = parsed.flat().find(k => k.row >= MATRIX_ROWS || k.col >= MATRIX_COLS);
                                 if (outOfBounds) {
-                                    setKleError(`Key at row ${outOfBounds.row}, col ${outOfBounds.col} exceeds matrix bounds (max ${MATRIX_ROWS - 1} rows, ${MATRIX_COLS - 1} cols).`);
+                                    setKleError(`Key at row ${outOfBounds.row}, col ${outOfBounds.col} exceeds matrix bounds (max row index ${MATRIX_ROWS - 1}, max column index ${MATRIX_COLS - 1}).`);
                                     return;
                                 }
 
@@ -661,7 +667,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
             )}
 
             {/* Layer tabs */}
-            <div className="layer-tabs">
+            <div className="layer-tabs" onMouseDown={(e) => e.stopPropagation()}>
                 {LAYER_NAMES.map((name, i) => (
                     <button
                         key={i}
@@ -704,31 +710,66 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                     <div style={{ width: '100%', overflowX: 'auto', padding: '1rem 0' }}>
                         {(() => {
                             const layout = (physicalLayout || DEFAULT_PHYSICAL_LAYOUT);
-                            let maxKeyX = 15;
-                            let maxKeyY = 5;
 
+                            // Compute the true bounding box, accounting for rotated keys.
+                            // For a rotated key we rotate all 4 corners around (rx, ry) and
+                            // take the min/max of the resulting coordinates.
+                            const rotatePoint = (x: number, y: number, cx: number, cy: number, deg: number): [number, number] => {
+                                const rad = deg * Math.PI / 180;
+                                const cos = Math.cos(rad), sin = Math.sin(rad);
+                                const dx = x - cx, dy = y - cy;
+                                return [cx + dx * cos - dy * sin, cy + dx * sin + dy * cos];
+                            };
+
+                            let minKeyX = Infinity, minKeyY = Infinity, maxKeyX = -Infinity, maxKeyY = -Infinity;
                             layout.forEach(row => {
                                 row.forEach(pk => {
-                                    maxKeyX = Math.max(maxKeyX, pk.x + pk.w);
-                                    maxKeyY = Math.max(maxKeyY, pk.y + pk.h);
+                                    if (pk.r && pk.rx !== undefined && pk.ry !== undefined) {
+                                        const corners: [number, number][] = [
+                                            [pk.x,        pk.y       ],
+                                            [pk.x + pk.w, pk.y       ],
+                                            [pk.x,        pk.y + pk.h],
+                                            [pk.x + pk.w, pk.y + pk.h],
+                                        ];
+                                        corners.forEach(([cx, cy]) => {
+                                            const [rx, ry] = rotatePoint(cx, cy, pk.rx!, pk.ry!, pk.r!);
+                                            minKeyX = Math.min(minKeyX, rx);
+                                            minKeyY = Math.min(minKeyY, ry);
+                                            maxKeyX = Math.max(maxKeyX, rx);
+                                            maxKeyY = Math.max(maxKeyY, ry);
+                                        });
+                                    } else {
+                                        minKeyX = Math.min(minKeyX, pk.x);
+                                        minKeyY = Math.min(minKeyY, pk.y);
+                                        maxKeyX = Math.max(maxKeyX, pk.x + pk.w);
+                                        maxKeyY = Math.max(maxKeyY, pk.y + pk.h);
+                                    }
                                 });
                             });
+                            // Fallback for empty layout
+                            if (!isFinite(minKeyX)) { minKeyX = 0; minKeyY = 0; maxKeyX = 17; maxKeyY = 5; }
+                            // Add a small margin so rotated key borders don't clip
+                            const MARGIN = 0.5;
+                            minKeyX -= MARGIN; minKeyY -= MARGIN;
+                            maxKeyX += MARGIN; maxKeyY += MARGIN;
+                            const gridW = maxKeyX - minKeyX;
+                            const gridH = maxKeyY - minKeyY;
 
                             return (
-                                <div className="keyboard-grid" style={{
+                                <div className="keyboard-grid"
+                                    onMouseDown={(e) => { if (e.target === e.currentTarget) setSelectedKeys(new Set()); }}
+                                    style={{
                                     position: 'relative',
-                                    width: `${maxKeyX * 3.2}rem`,
-                                    height: `${maxKeyY * 3.2}rem`,
+                                    width: `${gridW * 3.2}rem`,
+                                    height: `${gridH * 3.2}rem`,
+                                    padding: 0,
                                     margin: '0 auto',
-                                    padding: '0',
-                                    boxSizing: 'content-box',
-                                    minWidth: 'min-content'
                                 }}>
                                     {layout.map((physRow: PhysKey[], ri: number) => (
                                         <div key={ri} className="keyboard-row">
                                             {physRow.map((pk: PhysKey) => {
                                                 const rowData = currentLayer?.[pk.row];
-                                                const code = (rowData && pk.col < rowData.length) ? rowData[pk.col] : 0;
+                                                const code = (rowData && Array.isArray(rowData) && pk.col >= 0 && pk.col < rowData.length) ? (rowData[pk.col] ?? 0) : 0;
                                                 const physKeyId = `${pk.row}-${pk.col}`;
                                                 const isPressed = pressedCodes.has(code) || heldTestKeys.has(physKeyId);
                                                 const isSelected = selectedKeys.has(physKeyId);
@@ -738,13 +779,18 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                                         key={physKeyId}
                                                         className={`keyboard-key ${getKeyClass(code)} ${isSelected ? 'key-selected' : ''} ${isPressed ? 'key-pressed' : ''}`}
                                                         style={{
-                                                            left: `${pk.x * 3.2}rem`,
-                                                            top: `${pk.y * 3.2}rem`,
+                                                            left: `${(pk.x - minKeyX) * 3.2}rem`,
+                                                            top: `${(pk.y - minKeyY) * 3.2}rem`,
                                                             width: `${pk.w * 3.2 - 0.25}rem`,
                                                             height: `${pk.h * 3.2 - 0.25}rem`,
                                                             position: 'absolute',
                                                             cursor: isKeyTestMode ? 'crosshair' : 'pointer',
                                                             zIndex: isSelected ? 5 : undefined,
+                                                            ...(pk.r ? {
+                                                                transform: `rotate(${pk.r}deg)`,
+                                                                // transform-origin is relative to the element's own top-left corner
+                                                                transformOrigin: `${(pk.rx! - pk.x) * 3.2}rem ${(pk.ry! - pk.y) * 3.2}rem`,
+                                                            } : {}),
                                                         }}
                                                         onMouseDown={(e) => {
                                                             if (isKeyTestMode) {
@@ -769,7 +815,9 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                                             }
                                                             if (e.button !== 0) return;
                                                             e.preventDefault();
+                                                            e.stopPropagation(); // Don't deselect when clicking a key
                                                             isDraggingRef.current = false;
+                                                            keysTouchedInDragRef.current = new Set([physKeyId]);
 
                                                             if (isRowColEditMode) {
                                                                 // Row/Col edit: always single-select
@@ -799,16 +847,33 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                                                     });
                                                                 }
                                                             } else {
-                                                                // Plain click: start potential drag, or single-select
-                                                                setSelectedKeys(new Set([physKeyId]));
+                                                                // Plain click: preserve selection if already selected as part of a group,
+                                                                // otherwise reset selection to just this key.
+                                                                if (!selectedKeys.has(physKeyId)) {
+                                                                    setSelectedKeys(new Set([physKeyId]));
+                                                                }
                                                                 lastClickedKeyRef.current = physKeyId;
                                                             }
                                                         }}
                                                         onMouseEnter={(e) => {
-                                                            if (!isKeyTestMode && e.buttons === 1 && !e.ctrlKey && !e.shiftKey) {
-                                                                // Drag-select: add to selection
+                                                            if (isKeyTestMode) return;
+                                                            if (e.buttons === 1 && !e.shiftKey) {
                                                                 isDraggingRef.current = true;
-                                                                setSelectedKeys(prev => new Set(prev).add(physKeyId));
+                                                                if (e.ctrlKey || e.metaKey) {
+                                                                    // Ctrl+Drag: Toggle keys as you touch them
+                                                                    if (!keysTouchedInDragRef.current.has(physKeyId)) {
+                                                                        keysTouchedInDragRef.current.add(physKeyId);
+                                                                        setSelectedKeys(prev => {
+                                                                            const next = new Set(prev);
+                                                                            if (next.has(physKeyId)) next.delete(physKeyId);
+                                                                            else next.add(physKeyId);
+                                                                            return next;
+                                                                        });
+                                                                    }
+                                                                } else if (!isRowColEditMode) {
+                                                                    // Normal Drag: Add to selection
+                                                                    setSelectedKeys(prev => new Set(prev).add(physKeyId));
+                                                                }
                                                             }
                                                         }}
                                                         onMouseUp={(e) => {
@@ -843,7 +908,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                                         onContextMenu={(e) => {
                                                             if (isKeyTestMode) e.preventDefault();
                                                         }}
-                                                        title={isRowColEditMode ? `R${pk.row} C${pk.col}` : `[${pk.row},${pk.col}] = 0x${code.toString(16).toUpperCase().padStart(4, '0')}`}
+                                                        title={isRowColEditMode ? `R${pk.row} C${pk.col}` : `[${pk.row},${pk.col}] = 0x${(code ?? 0).toString(16).toUpperCase().padStart(4, '0')}`}
                                                     >
                                                         <span className="key-label">
                                                             {isRowColEditMode ? `R${pk.row} C${pk.col}` : getKeyName(code, macros, customKeys)}
@@ -857,16 +922,16 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                     {isRowColEditMode && (() => {
                                         const UNIT = 3.2 * 16;
                                         const GAP = 0.25 * 16;
-                                        const svgW = maxKeyX * UNIT;
-                                        const svgH = maxKeyY * UNIT;
+                                        const svgW = gridW * UNIT;
+                                        const svgH = gridH * UNIT;
                                         const MARGIN = 20;
 
                                         // Collect keys grouped by row and col
                                         const rowKeys = new Map<number, { cx: number; cy: number }[]>();
                                         const colKeys = new Map<number, { cx: number; cy: number }[]>();
                                         layout.forEach(physRow => physRow.forEach(pk => {
-                                            const cx = (pk.x + pk.w / 2) * UNIT - GAP / 2;
-                                            const cy = (pk.y + pk.h / 2) * UNIT - GAP / 2;
+                                            const cx = (pk.x - minKeyX + pk.w / 2) * UNIT - GAP / 2;
+                                            const cy = (pk.y - minKeyY + pk.h / 2) * UNIT - GAP / 2;
                                             if (!rowKeys.has(pk.row)) rowKeys.set(pk.row, []);
                                             rowKeys.get(pk.row)!.push({ cx, cy });
                                             if (!colKeys.has(pk.col)) colKeys.set(pk.col, []);
@@ -956,6 +1021,22 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                         })()}
                     </div>
 
+                    {/* Group Selection Actions */}
+                    {selectedKeys.size > 1 && (
+                        <div className="selection-actions-overlay" onMouseDown={(e) => e.stopPropagation()}>
+                            <button
+                                className="btn btn-selection-edit"
+                                onClick={() => setIsModalOpen(true)}
+                                title={`Edit ${selectedKeys.size} selected keys`}
+                            >
+                                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                                    <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
+                                </svg>
+                                Edit Selection ({selectedKeys.size})
+                            </button>
+                        </div>
+                    )}
+
                     {/* Key Search Modal */}
                     {
                         isModalOpen && selectedKeys.size > 0 && (() => {
@@ -964,6 +1045,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                             const firstValue = (currentLayer[fRow] && fCol < currentLayer[fRow].length) ? currentLayer[fRow][fCol] : 0;
                             return (
                                 <SearchableKeyModal
+                                    title={selectedKeys.size > 1 ? `Edit ${selectedKeys.size} Selected Keys` : 'Select Key'}
                                     currentValue={firstValue}
                                     macros={macros}
                                     customKeys={customKeys}
@@ -1111,7 +1193,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                         };
 
                         return (
-                            <div className="rowcol-edit-panel">
+                            <div className="rowcol-edit-panel" onMouseDown={(e) => e.stopPropagation()}>
                                 <span className="rowcol-edit-label">
                                     R{selectedPk.row} C{selectedPk.col}
                                 </span>
@@ -1178,7 +1260,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                     })()}
 
                     {/* Action buttons */}
-                    <div className="layout-actions">
+                    <div className="layout-actions" onMouseDown={(e) => e.stopPropagation()}>
                         <input
                             type="file"
                             ref={fileInputRef}

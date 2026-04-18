@@ -169,6 +169,7 @@ Byte  Field        Size  Description
 | `0x09` | `CFG_KEY_MACRO_SINGLE`   | Macro      | `{id}` → full macro             | Upsert or `{delete:id}` |
 | `0x0A` | `CFG_KEY_CKEYS`          | CKey       | Returns CKey outline            | —                       |
 | `0x0B` | `CFG_KEY_CKEY_SINGLE`    | CKey       | `{id}` → full CKey              | Upsert or `{delete:id}` |
+| `0x0C` | `CFG_KEY_SYSTEM`         | System     | Returns device identity         | Stores device identity  |
 
 ## 9. System Commands
 

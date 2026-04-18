@@ -15,6 +15,7 @@
  */
 
 #include "ble_hid_service.h"
+#include "battery.h"
 
 #include <assert.h>
 #include <stdint.h>
@@ -351,7 +352,7 @@ static int dis_access_cb(uint16_t conn_handle, uint16_t attr_handle,
 
 static int bas_access_cb(uint16_t conn_handle, uint16_t attr_handle,
                          struct ble_gatt_access_ctxt *ctxt, void *arg) {
-  uint8_t battery_level = 69;
+  uint8_t battery_level = battery_get_level_pct();
   int rc = os_mbuf_append(ctxt->om, &battery_level, sizeof(battery_level));
   return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
 }

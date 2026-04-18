@@ -3,13 +3,15 @@ import { hidService } from './HIDService';
 import KeyboardLayoutEditor from './KeyboardLayoutEditor';
 import MacrosDashboard from './MacrosDashboard';
 import CustomKeysDashboard from './CustomKeysDashboard';
+import SplitDashboard from './SplitDashboard';
 import StatusWidget from './StatusWidget';
 import DevControlsPanel from './components/DevControlsPanel';
+import DeviceIdentityDashboard from './DeviceIdentityDashboard';
 import { useConfirm } from './hooks/useConfirm';
 import { useMacros } from './hooks/useMacros';
 import { useCustomKeys } from './hooks/useCustomKeys';
 import { getFlagsString } from './utils/packetUtils';
-import type { LogMessage } from './types/device';
+import type { DeviceStatus, LogMessage } from './types/device';
 import './index.css';
 
 // Re-export types for backward compatibility — consumers can import from './App'
@@ -19,7 +21,7 @@ export type { CustomKey } from './types/customKeys';
 
 function App() {
   const [isConnected, setIsConnected] = useState(false);
-  const [deviceStatus, setDeviceStatus] = useState<{ mode: number; profile: number; pairing: number; bitmap: number } | null>(null);
+  const [deviceStatus, setDeviceStatus] = useState<DeviceStatus | null>(null);
   const [isDeveloperMode, setIsDeveloperMode] = useState<boolean>(() => {
     return localStorage.getItem('isDeveloperMode') === 'true';
   });
@@ -70,7 +72,7 @@ function App() {
     hidService.onConnectionChange(handler);
 
     // Also listen for status updates (pushed from ESP)
-    const statusHandler = (status: { mode: number; profile: number; pairing: number; bitmap: number }) => {
+    const statusHandler = (status: DeviceStatus) => {
       setDeviceStatus(status);
     };
     hidService.onStatusUpdate(statusHandler);
@@ -89,15 +91,19 @@ function App() {
     }
   }, [isConnected]);
 
-  // Trigger data fetch on connect
+  // Trigger data fetch on connect and maintain a 5s heartbeat poll for status
   useEffect(() => {
     if (isConnected) {
       fetchStatus();
       fetchMacroLimits();
       fetchCustomKeys();
       fetchMacros();
+
+      const interval = setInterval(fetchStatus, 5000);
+      return () => clearInterval(interval);
     }
   }, [isConnected, fetchStatus, fetchMacroLimits, fetchCustomKeys, fetchMacros]);
+
 
   // Raw packet logging (display only — ACKs and reassembly are handled by HIDService)
   const handleLogReceived = useCallback((data: Uint8Array) => {
@@ -170,7 +176,13 @@ function App() {
             selectedProfile={deviceStatus?.profile ?? 0}
             pairingProfile={deviceStatus?.pairing ?? -1}
             connectedBitmap={deviceStatus?.bitmap ?? 0}
+            splitState={deviceStatus?.split_state ?? 0}
+            splitRole={deviceStatus?.split_role ?? 0}
             onOfflineClick={handleConnect}
+            onBleToggleRouting={() => hidService.bleToggleRouting()}
+            onBleConnect={p => hidService.bleConnect(p)}
+            onBleToggleConn={p => hidService.bleToggleConn(p)}
+            onBlePair={p => hidService.blePair(p)}
           />
         </div>
 
@@ -243,13 +255,30 @@ function App() {
             />
           </div>
 
-          {isDeveloperMode && (
-            <DevControlsPanel
+          <div className="glass-panel">
+            <SplitDashboard
               isConnected={isConnected}
-              logs={logs}
-              onClearLogs={() => setLogs([])}
-              onAddLog={addLog}
+              deviceStatus={deviceStatus}
+              onLog={addLog}
             />
+          </div>
+
+          {isDeveloperMode && (
+            <>
+              <div className="glass-panel">
+                <DeviceIdentityDashboard
+                  isConnected={isConnected}
+                  onLog={addLog}
+                />
+              </div>
+
+              <DevControlsPanel
+                isConnected={isConnected}
+                logs={logs}
+                onClearLogs={() => setLogs([])}
+                onAddLog={addLog}
+              />
+            </>
           )}
         </>
       )}

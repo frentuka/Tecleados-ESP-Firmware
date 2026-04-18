@@ -1,6 +1,6 @@
 # USB Module
 
-The `usb_module` component implements the full USB stack for the DF-ONE keyboard firmware. It exposes the device to the host as a **dual-interface HID device**: one interface for keyboard input (6KRO, NKRO, consumer control) and one bidirectional vendor-defined interface used as a reliable configuration and command channel.
+The `usb_module` component implements the full USB stack for the TEF keyboard firmware. It exposes the device to the host as a **dual-interface HID device**: one interface for keyboard input (6KRO, NKRO, consumer control) and one bidirectional vendor-defined interface used as a reliable configuration and command channel.
 
 Built on top of **TinyUSB** via `esp_tinyusb`, the module adds its own multi-packet reliability protocol on the comm channel, with two operating modes: **sequential** (small payloads, one ACK per packet) and **blast** (large payloads sent in bulk, with bitmap-based reconciliation for any missed packets).
 
@@ -71,7 +71,7 @@ The device presents itself to the host with the following identity:
 | Vendor ID    | `0x303A`    |
 | Product ID   | `0x1324`    |
 | Manufacturer | `Tecleados` |
-| Product      | `DF-ONE`    |
+| Product      | `TEF`    |
 | Serial       | `13548`     |
 
 There are **two HID interfaces**:

@@ -6,7 +6,7 @@
 #include "esp_err.h"
 #include "kb_matrix.h"
 
-// One layer of the keymap (5 rows × 15 cols)
+// One layer of the keymap (6 rows × 18 cols)
 typedef struct cfg_layer {
   uint16_t keys[KB_MATRIX_ROW_COUNT][KB_MATRIX_COL_COUNT];
 } cfg_layer_t;

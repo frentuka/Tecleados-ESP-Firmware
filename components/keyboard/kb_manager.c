@@ -19,6 +19,9 @@
 #include "kb_bitmap.h"
 
 #include "cfg_layouts.h"
+#include "cfg_system.h"
+#include "cfgmod.h"
+#include "event_bus.h"
 
 #include "class/hid/hid.h"
 #include "tusb.h"
@@ -40,10 +43,73 @@ static const uint32_t MIN_REPORT_RATE_HZ  = 1;   // Minimum Hz for forced period
 static uint8_t s_injected_matrix[KB_MATRIX_BITMAP_BYTES];
 static portMUX_TYPE s_injected_matrix_lock = portMUX_INITIALIZER_UNLOCKED;
 
+/* ---- Remote half matrix (split keyboard MASTER mode) ---- */
+static uint8_t s_remote_matrix[KB_MATRIX_BITMAP_BYTES];
+static portMUX_TYPE s_remote_matrix_lock = portMUX_INITIALIZER_UNLOCKED;
+
+/* ---- Matrix-change callback (split keyboard SLAVE mode) ---- */
+typedef void (*matrix_cb_t)(const uint8_t *matrix, size_t len, uint8_t layer);
+static volatile matrix_cb_t s_matrix_cb = NULL;
+
 /* ---- Pause control ---- */
 static volatile bool s_paused = false;
 
 void kb_manager_set_paused(bool paused) { s_paused = paused; }
+
+/* ---- Mirror-cols flag (live-reloadable from system config) ---- */
+static volatile bool s_mirror_cols = false;
+
+static void kb_sys_config_update_handler(void *arg, esp_event_base_t base,
+                                         int32_t event_id, void *data) {
+    const config_update_event_t *ev = (const config_update_event_t *)data;
+    if (ev->kind == (uint8_t)CFGMOD_KIND_SYSTEM) {
+        cfg_system_t sys;
+        if (cfg_system_get(&sys) == ESP_OK) {
+            s_mirror_cols = sys.is_split && sys.split_mirror_cols;
+        }
+    }
+}
+
+/* ---- Task handle (used to wake the task from kb_manager_set_remote_matrix) ---- */
+static volatile TaskHandle_t s_kb_task_handle = NULL;
+
+/* ---- Scan-rate divisor (battery-aware power saving) ---- */
+static volatile uint8_t s_scan_divisor = 1;
+
+void kb_manager_set_scan_divisor(uint8_t divisor)
+{
+    s_scan_divisor = divisor ? divisor : 1;
+}
+
+void kb_manager_set_matrix_cb(void (*cb)(const uint8_t *matrix, size_t len,
+                                          uint8_t layer))
+{
+    s_matrix_cb = cb;
+}
+
+void kb_manager_set_remote_matrix(const uint8_t *bitmap)
+{
+    bool has_keys = false;
+    portENTER_CRITICAL(&s_remote_matrix_lock);
+    if (bitmap) {
+        memcpy(s_remote_matrix, bitmap, KB_MATRIX_BITMAP_BYTES);
+        for (size_t i = 0; i < KB_MATRIX_BITMAP_BYTES; i++) {
+            if (s_remote_matrix[i]) { has_keys = true; break; }
+        }
+    } else {
+        memset(s_remote_matrix, 0, KB_MATRIX_BITMAP_BYTES);
+    }
+    portEXIT_CRITICAL(&s_remote_matrix_lock);
+
+    // Wake the kb_manager_task if it is sleeping in ulTaskNotifyTake.
+    // Without this, incoming remote keystrokes from the slave are delayed
+    // up to 100 ms (the ulTaskNotifyTake timeout) before the master scans
+    // and processes them.  The notify is a no-op if the task is already awake.
+    if (has_keys) {
+        TaskHandle_t h = s_kb_task_handle;
+        if (h) xTaskNotifyGive(h);
+    }
+}
 
 /* ---- Debounce ---- */
 static uint8_t s_debounce[KB_MATRIX_KEYS];
@@ -126,10 +192,16 @@ static void kb_manager_task(void *arg) {
     bool s_last_boot_protocol = false;
     bool s_matrix_nonempty    = false; // cached: true when s_matrix has any pressed keys
 
+    /* Callback prev-state (split SLAVE mode delta tracking) */
+    uint8_t s_cb_last[KB_MATRIX_BITMAP_BYTES];
+    bool    s_cb_last_valid = false;
+    memset(s_cb_last, 0, sizeof(s_cb_last));
+
     memset(s_matrix, 0, sizeof(s_matrix));
     memset(s_active_action_codes, 0, sizeof(s_active_action_codes));
 
     kb_matrix_init_isr(xTaskGetCurrentTaskHandle());
+    s_kb_task_handle = xTaskGetCurrentTaskHandle(); // expose handle for remote-matrix wakeup
 
     const int64_t min_scan_interval_us = 1000000LL / (int64_t)MAX_POLLING_RATE_HZ;
 
@@ -137,8 +209,9 @@ static void kb_manager_task(void *arg) {
         int64_t now_us    = esp_timer_get_time();
         int64_t elapsed_us = now_us - s_seconds_timer;
 
-        /* Rate-limit scanning to MAX_POLLING_RATE_HZ */
-        if (now_us - s_last_scan_us < min_scan_interval_us) {
+        /* Rate-limit scanning to MAX_POLLING_RATE_HZ / s_scan_divisor */
+        int64_t effective_interval_us = min_scan_interval_us * (int64_t)s_scan_divisor;
+        if (now_us - s_last_scan_us < effective_interval_us) {
             /* If no keys are held, sleep in interrupt mode until a key wakes us.
              * s_matrix_nonempty is updated after every debounce; use the cached value. */
             if (!s_matrix_nonempty && !s_paused) {
@@ -155,32 +228,42 @@ static void kb_manager_task(void *arg) {
                     kb_matrix_set_interrupts_enabled(false);
                     now_us = esp_timer_get_time();
                 } else {
-                    taskYIELD();
+                    /* taskYIELD() would spin-starve IDLE (lower priority) and
+                     * trigger the task watchdog.  Block for one tick instead. */
+                    vTaskDelay(1);
                     continue;
                 }
             } else {
-                taskYIELD();
+                /* Same issue: yield-spinning starves IDLE1.  Block for one tick
+                 * so the WDT can be fed before the next scan window opens. */
+                vTaskDelay(1);
                 continue;
             }
         }
 
         /* --- Scan hardware matrix --- */
-        kb_matrix_scan(s_raw_matrix);
+        kb_matrix_scan(s_raw_matrix, s_mirror_cols);
 
         /* Merge injected test keys (or clear them if USB is gone) */
+        portENTER_CRITICAL(&s_injected_matrix_lock);
         if (tud_suspended() || !tud_ready()) {
-            portENTER_CRITICAL(&s_injected_matrix_lock);
             memset(s_injected_matrix, 0, sizeof(s_injected_matrix));
-            portEXIT_CRITICAL(&s_injected_matrix_lock);
         } else {
-            portENTER_CRITICAL(&s_injected_matrix_lock);
             for (size_t i = 0; i < sizeof(s_raw_matrix); i++) {
                 s_raw_matrix[i] |= s_injected_matrix[i];
             }
-            portEXIT_CRITICAL(&s_injected_matrix_lock);
         }
+        portEXIT_CRITICAL(&s_injected_matrix_lock);
 
         debounce_update(s_raw_matrix, s_matrix);
+
+        /* Merge remote half matrix (split keyboard MASTER mode; zero when slave/disconnected) */
+        portENTER_CRITICAL(&s_remote_matrix_lock);
+        for (size_t i = 0; i < KB_MATRIX_BITMAP_BYTES; i++) {
+            s_matrix[i] |= s_remote_matrix[i];
+        }
+        portEXIT_CRITICAL(&s_remote_matrix_lock);
+
         s_scan_count++;
         s_last_scan_us = now_us;
 
@@ -197,9 +280,11 @@ static void kb_manager_task(void *arg) {
             uint32_t peak_hz = (s_min_report_interval_us > 0 && s_min_report_interval_us != LLONG_MAX)
                                ? (uint32_t)(1000000LL / s_min_report_interval_us) : 0;
 
+            static bool s_logged_boot_protocol = false;
             bool boot_proto_now = usb_keyboard_use_boot_protocol();
-            if (boot_proto_now != s_last_boot_protocol) {
+            if (boot_proto_now != s_logged_boot_protocol) {
                 ESP_LOGI(TAG, "Boot protocol: now %s", boot_proto_now ? "6KRO" : "NKRO");
+                s_logged_boot_protocol = boot_proto_now;
             }
 
             if (reports_per_sec < MIN_REPORT_RATE_HZ / 2) {
@@ -215,46 +300,74 @@ static void kb_manager_task(void *arg) {
             s_seconds_timer       = now_us;
         }
 
+        /* --- Matrix-change callback (split SLAVE mode) --- */
+        matrix_cb_t mcb = s_matrix_cb;
+        if (mcb) {
+            bool cb_changed = !s_cb_last_valid ||
+                              memcmp(s_matrix, s_cb_last, KB_MATRIX_BITMAP_BYTES) != 0;
+            if (cb_changed) {
+                mcb(s_matrix, KB_MATRIX_BITMAP_BYTES, kb_macro_get_active_layer());
+                memcpy(s_cb_last, s_matrix, KB_MATRIX_BITMAP_BYTES);
+                s_cb_last_valid = true;
+            }
+        } else {
+            // Reset tracking so next registration gets a fresh full-state send
+            s_cb_last_valid = false;
+        }
+
         /* --- Process matrix edges --- */
         bool boot_protocol = usb_keyboard_use_boot_protocol();
         bool matrix_changed = !s_last_matrix_valid ||
                               memcmp(s_matrix, s_last_matrix, KB_MATRIX_BITMAP_BYTES) != 0;
 
         if (matrix_changed) {
-            /* XOR the bitmaps to find only the changed bits, then use __builtin_ctz
-             * to visit only those positions.  For a typical single keypress this
-             * iterates 1 bit instead of all KB_MATRIX_KEYS (108). */
-            uint8_t diff[KB_MATRIX_BITMAP_BYTES];
-            for (size_t i = 0; i < KB_MATRIX_BITMAP_BYTES; i++) {
-                diff[i] = s_matrix[i] ^ (s_last_matrix_valid ? s_last_matrix[i] : 0);
-            }
+            if (s_matrix_cb) {
+                /* Split SLAVE mode: this half only forwards its raw matrix to the
+                 * master (via s_matrix_cb / on_matrix_change).  All action
+                 * processing — HID keys, layer state, macros, BLE actions — is
+                 * the master's responsibility.  Processing actions here too would
+                 * cause double-execution and tap/hold timing divergence (BLE
+                 * latency shifts the master's window relative to the slave's).
+                 * Just sync s_last_matrix so matrix_changed stays accurate. */
+                memcpy(s_last_matrix, s_matrix, KB_MATRIX_BITMAP_BYTES);
+                s_last_matrix_valid = true;
+            } else {
+                /* Master / standalone: process every key edge. */
+                /* XOR the bitmaps to find only the changed bits, then use __builtin_ctz
+                 * to visit only those positions.  For a typical single keypress this
+                 * iterates 1 bit instead of all KB_MATRIX_KEYS (108). */
+                uint8_t diff[KB_MATRIX_BITMAP_BYTES];
+                for (size_t i = 0; i < KB_MATRIX_BITMAP_BYTES; i++) {
+                    diff[i] = s_matrix[i] ^ (s_last_matrix_valid ? s_last_matrix[i] : 0);
+                }
 
-            for (size_t byte_idx = 0; byte_idx < KB_MATRIX_BITMAP_BYTES; byte_idx++) {
-                uint8_t d = diff[byte_idx];
-                while (d) {
-                    int bit_pos = __builtin_ctz(d);
-                    size_t bit  = byte_idx * 8 + (size_t)bit_pos;
+                for (size_t byte_idx = 0; byte_idx < KB_MATRIX_BITMAP_BYTES; byte_idx++) {
+                    uint8_t d = diff[byte_idx];
+                    while (d) {
+                        int bit_pos = __builtin_ctz(d);
+                        size_t bit  = byte_idx * 8 + (size_t)bit_pos;
 
-                    if (bit >= KB_MATRIX_KEYS) break; /* ignore bitmap padding bits */
+                        if (bit >= KB_MATRIX_KEYS) break; /* ignore bitmap padding bits */
 
-                    uint8_t r   = (uint8_t)(bit / KB_MATRIX_COL_COUNT);
-                    uint8_t c   = (uint8_t)(bit % KB_MATRIX_COL_COUNT);
-                    bool    curr = kb_bit_get(s_matrix, bit);
+                        uint8_t r   = (uint8_t)(bit / KB_MATRIX_COL_COUNT);
+                        uint8_t c   = (uint8_t)(bit % KB_MATRIX_COL_COUNT);
+                        bool    curr = kb_bit_get(s_matrix, bit);
 
-                    if (curr) {
-                        /* Key down: resolve action on current layer and remember it */
-                        uint8_t layer    = kb_macro_get_active_layer();
-                        uint16_t action  = kb_layout_get_action_code(r, c, layer);
-                        s_active_action_codes[r][c] = action;
-                        kb_macro_process_action(action, true);
-                    } else {
-                        /* Key up: fire release on the same action code as the press */
-                        uint16_t action = s_active_action_codes[r][c];
-                        kb_macro_process_action(action, false);
-                        s_active_action_codes[r][c] = ACTION_CODE_NONE;
+                        if (curr) {
+                            /* Key down: resolve action on current layer and remember it */
+                            uint8_t layer    = kb_macro_get_active_layer();
+                            uint16_t action  = kb_layout_get_action_code(r, c, layer);
+                            s_active_action_codes[r][c] = action;
+                            kb_macro_process_action(action, true);
+                        } else {
+                            /* Key up: fire release on the same action code as the press */
+                            uint16_t action = s_active_action_codes[r][c];
+                            kb_macro_process_action(action, false);
+                            s_active_action_codes[r][c] = ACTION_CODE_NONE;
+                        }
+
+                        d &= (uint8_t)(d - 1); /* clear lowest set bit */
                     }
-
-                    d &= (uint8_t)(d - 1); /* clear lowest set bit */
                 }
             }
         }
@@ -298,7 +411,13 @@ void kb_manager_start(void) {
     kb_custom_key_init();
     cfg_layout_load_all();
 
+    cfg_system_t sys;
+    s_mirror_cols = (cfg_system_get(&sys) == ESP_OK) && sys.is_split && sys.split_mirror_cols;
+    esp_event_handler_register(CONFIG_EVENTS, CONFIG_EVENT_KIND_UPDATED,
+                               kb_sys_config_update_handler, NULL);
+
     memset(s_injected_matrix, 0, sizeof(s_injected_matrix));
+    memset(s_remote_matrix,   0, sizeof(s_remote_matrix));
     usbmod_register_callback(MODULE_SYSTEM, kb_system_usb_callback);
     kb_matrix_gpio_init();
 
@@ -306,7 +425,7 @@ void kb_manager_start(void) {
 
     BaseType_t ret = xTaskCreateWithCaps(
         kb_manager_task, "kb_mgr", 6144, NULL, 5, NULL,
-        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
     );
     if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to create kb_manager_task: %d", (int)ret);

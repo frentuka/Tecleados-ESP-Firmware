@@ -18,6 +18,8 @@ typedef enum cfgmod_kind : uint8_t {
   CFGMOD_KIND_SYSTEM,
   CFGMOD_KIND_PHYSICAL,  // Raw blob kind — not registered, uses direct NVS read/write
   CFGMOD_KIND_CKEY,      // Custom Keys
+  CFGMOD_KIND_SPLIT,     // Split keyboard pairing data
+  CFGMOD_KIND_BLE_BOND,  // Bulk serialization of nimble_bond namespace
   CFGMOD_KIND_MAX
 } cfgmod_kind_t;
 
@@ -34,6 +36,7 @@ typedef enum cfgmod_key_id : uint8_t {
   CFG_KEY_MACRO_SINGLE,
   CFG_KEY_CKEYS,        // Custom Keys outline (all names/IDs)
   CFG_KEY_CKEY_SINGLE,  // Single Custom Key GET / SET / DELETE
+  CFG_KEY_SYSTEM,       // Device identity (name, split config)
   CFG_KEY_MAX
 } cfgmod_key_id_t;
 
@@ -70,6 +73,15 @@ esp_err_t cfgmod_register_kind(cfgmod_kind_t kind, cfgmod_default_fn def_fn,
                                cfgmod_serialize_fn ser_fn,
                                cfgmod_on_update_fn update_fn,
                                size_t struct_size);
+
+// Optional per-kind overrides for the USB GET/SET command paths.
+// When registered, cfgmod_handle_usb_comm uses these instead of the default
+// cfgmod_get_config / cfgmod_set_config, allowing a module to apply internal
+// post-processing (e.g. cfg_system's sys_id overlay that keeps each half's
+// device identity independent of config-sync overwrites).
+typedef esp_err_t (*cfgmod_get_fn)(void *out_struct);
+typedef esp_err_t (*cfgmod_set_fn)(const void *in_struct);
+void cfgmod_register_get_set(cfgmod_kind_t kind, cfgmod_get_fn get_fn, cfgmod_set_fn set_fn);
 
 // Fetch a config struct from storage (applies defaults and parses JSON)
 esp_err_t cfgmod_get_config(cfgmod_kind_t kind, const char *key,

@@ -28,6 +28,9 @@ extern void cfg_system_register(void);
 extern void cfg_physical_register(void);
 extern void cfg_ble_init(void);
 
+extern esp_err_t cfg_ble_bond_read_all(void *out_buf, size_t *inout_len);
+extern esp_err_t cfg_ble_bond_write_all(const void *data, size_t len);
+
 #define TAG "cfg_module"
 
 #define CFGMOD_NVS_NAMESPACE "cfg"
@@ -40,6 +43,8 @@ static const char *const s_kind_ns[CFGMOD_KIND_MAX] = {
     [CFGMOD_KIND_SYSTEM]     = NULL,
     [CFGMOD_KIND_PHYSICAL]   = NULL,
     [CFGMOD_KIND_CKEY]       = "cfg_ck",
+    [CFGMOD_KIND_SPLIT]      = "cfg_spl",
+    [CFGMOD_KIND_BLE_BOND]   = NULL,           // Handled by cfg_ble_bond_{read,write}_all; ns unused
 };
 
 typedef struct {
@@ -49,9 +54,18 @@ typedef struct {
   cfgmod_on_update_fn update_fn;
   size_t struct_size;
   bool registered;
+  cfgmod_get_fn get_fn;  // optional: overrides cfgmod_get_config in USB GET handler
+  cfgmod_set_fn set_fn;  // optional: overrides cfgmod_set_config in USB SET handler
 } cfgmod_registry_t;
 
 static cfgmod_registry_t s_registry[CFGMOD_KIND_MAX];
+
+void cfgmod_register_get_set(cfgmod_kind_t kind, cfgmod_get_fn get_fn, cfgmod_set_fn set_fn) {
+  if (kind < CFGMOD_KIND_MAX) {
+    s_registry[kind].get_fn = get_fn;
+    s_registry[kind].set_fn = set_fn;
+  }
+}
 
 esp_err_t cfgmod_register_kind(cfgmod_kind_t kind, cfgmod_default_fn def_fn,
                                cfgmod_deserialize_fn des_fn,
@@ -94,6 +108,7 @@ static const cfgmod_key_map_t s_key_map[CFG_KEY_MAX] = {
    [CFG_KEY_MACRO_SINGLE] = { CFGMOD_KIND_MACRO, "macros" },
    [CFG_KEY_CKEYS]        = { CFGMOD_KIND_CKEY, "ckeys" },
    [CFG_KEY_CKEY_SINGLE]  = { CFGMOD_KIND_CKEY, "ckeys" },
+   [CFG_KEY_SYSTEM]       = { CFGMOD_KIND_SYSTEM, "sys" },
 };
 
 /*
@@ -305,7 +320,12 @@ esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
     if (kind < CFGMOD_KIND_MAX && s_registry[kind].registered) {
       void *temp_struct = malloc(s_registry[kind].struct_size);
       if (temp_struct) {
-        cfgmod_get_config(kind, key, temp_struct);
+        // Use custom get_fn if available (e.g. cfg_system applies sys_id overlay)
+        if (s_registry[kind].get_fn) {
+          s_registry[kind].get_fn(temp_struct);
+        } else {
+          cfgmod_get_config(kind, key, temp_struct);
+        }
         cJSON *root = s_registry[kind].ser_fn(temp_struct);
         free(temp_struct);
         write_json_response(root,
@@ -329,10 +349,18 @@ esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
       if (kind < CFGMOD_KIND_MAX && s_registry[kind].registered) {
         void *temp_struct = malloc(s_registry[kind].struct_size);
         if (temp_struct) {
-          // Load existing config first to support partial JSON updates
-          cfgmod_get_config(kind, key, temp_struct);
+          // Load existing config first to support partial JSON updates.
+          // Use custom get_fn if available so the base includes per-device
+          // post-processing (e.g. sys_id overlay for system config).
+          if (s_registry[kind].get_fn) {
+            s_registry[kind].get_fn(temp_struct);
+          } else {
+            cfgmod_get_config(kind, key, temp_struct);
+          }
           status = s_registry[kind].des_fn(root, temp_struct)
-                   ? cfgmod_set_config(kind, key, temp_struct)
+                   ? (s_registry[kind].set_fn
+                      ? s_registry[kind].set_fn(temp_struct)
+                      : cfgmod_set_config(kind, key, temp_struct))
                    : ESP_ERR_INVALID_ARG;
           free(temp_struct);
         } else {
@@ -496,6 +524,10 @@ esp_err_t cfgmod_read_storage(cfgmod_kind_t kind, const char *key,
     return ESP_ERR_INVALID_ARG;
   }
 
+  if (kind == CFGMOD_KIND_BLE_BOND) {
+      return cfg_ble_bond_read_all(out_buf, inout_len);
+  }
+
   const char *ns, *nvs_key;
   char nvs_key_buf[16] = {0};
   esp_err_t err = resolve_ns_and_key(kind, key, &ns, &nvs_key, nvs_key_buf, sizeof(nvs_key_buf));
@@ -517,6 +549,10 @@ esp_err_t cfgmod_write_storage(cfgmod_kind_t kind, const char *key,
     return ESP_ERR_INVALID_ARG;
   }
 
+  if (kind == CFGMOD_KIND_BLE_BOND) {
+      return cfg_ble_bond_write_all(data, len);
+  }
+
   const char *ns, *nvs_key;
   char nvs_key_buf[16] = {0};
   esp_err_t err = resolve_ns_and_key(kind, key, &ns, &nvs_key, nvs_key_buf, sizeof(nvs_key_buf));
@@ -532,6 +568,17 @@ esp_err_t cfgmod_write_storage(cfgmod_kind_t kind, const char *key,
     err = nvs_commit(handle);
   }
   nvs_close(handle);
+
+  // Refresh the in-memory cache for registered kinds.  Config sync writes
+  // via cfgmod_write_storage directly (not cfgmod_set_config), so without
+  // this the cached state (e.g. cfg_system's ble_shared_addr, cfg_ble's
+  // profile nonces) would stay stale after a sync and the new master would
+  // compute the wrong BLE address.
+  if (err == ESP_OK && kind < CFGMOD_KIND_MAX
+      && s_registry[kind].registered && s_registry[kind].update_fn) {
+      s_registry[kind].update_fn(key);
+  }
+
   return err;
 }
 
@@ -616,9 +663,7 @@ esp_err_t cfgmod_set_config(cfgmod_kind_t kind, const char *key,
   esp_err_t err = cfgmod_write_storage(kind, key, in_struct, s_registry[kind].struct_size);
 
   if (err == ESP_OK) {
-    if (s_registry[kind].update_fn) {
-      s_registry[kind].update_fn(key);
-    }
+    // update_fn is now called inside cfgmod_write_storage.
     cfgmod_post_update_event(kind, key);
   }
   return err;

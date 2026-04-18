@@ -38,3 +38,27 @@ uint16_t ble_hid_get_connected_profiles_bitmap(void);
 
 /** @brief Returns the profile currently being paired, or -1 if not pairing. */
 int ble_hid_get_pairing_profile(void);
+
+/** @brief Suspend or resume BLE operations (disconnects and stops advertising) without altering configuration. Used by Split Keyboard slave. */
+void ble_hid_set_suspended(bool suspended);
+
+/** @brief Returns true if BLE operations are currently suspended. */
+bool ble_hid_is_suspended(void);
+
+/** @brief Reinitialize NimBLE to load newly-synced bond keys into the BLE controller's
+ *         hardware resolving list.  Must only be called while suspended (Split slave mode);
+ *         no-op otherwise.  Call this after a bond sync completes so that
+ *         ble_hid_set_suspended(false) can start advertising immediately. */
+void ble_hid_reinit_bonds(void);
+
+/** @brief Request that the next ble_hid_set_suspended(false) skips HIGH_DUTY
+ *         directed advertising and goes straight to undirected GEN_DISC.
+ *         Used during split role swaps where the host is already scanning
+ *         (Android ignores directed ADV, costing 1.28 s for nothing). */
+void ble_hid_skip_directed_adv(void);
+
+/** @brief Prime the reconnection queue with a known set of active host profiles.
+ *         The selected_profile (if >= 0) will be used to prioritize the first pick.
+ *         Used during role swaps to ensure the new Master restores all previous
+ *         connections immediately. */
+void ble_hid_seed_handover_state(uint16_t bitmap, int8_t selected_profile);

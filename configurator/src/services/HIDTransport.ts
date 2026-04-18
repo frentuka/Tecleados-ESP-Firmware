@@ -150,8 +150,11 @@ export class HIDTransport {
             if (devices.length > 0) {
                 const target = devices.find((d: any) => this.isCommInterface(d));
                 if (!target) {
-                    console.error('[HIDTransport] No valid Comm interface found.',
-                        devices.map((d: any) => ({ name: d.productName, collections: d.collections })));
+                    const debugInfo = devices.map((d: any) => 
+                        `${d.productName} cols: ${(d.collections||[]).map((c:any) => `UP:${c.usagePage}`).join(',')}`
+                    ).join('\n');
+                    alert(`Fail: No Comm interface (0xFFFF) found.\nDevices seen:\n${debugInfo}`);
+                    console.error('[HIDTransport] No valid Comm interface found.', debugInfo);
                     return false;
                 }
 
@@ -159,6 +162,7 @@ export class HIDTransport {
                 this.wantConnection = true;
                 const ok = await this.openDevice(target);
                 if (!ok) {
+                    alert(`Fail: dev.open() returned false for ${target.productName}. Check browser console for SecurityError or UnknownError.`);
                     console.warn('[HIDTransport] Initial open failed, starting reconnect polling');
                     this.startReconnectPolling();
                 }
@@ -182,7 +186,8 @@ export class HIDTransport {
             this.notifyConnectionChange(true);
             this.stopReconnectPolling();
             return true;
-        } catch (error) {
+        } catch (error: any) {
+            alert(`Error opening HID device: ${error?.message || error}`);
             console.error('Error opening HID device:', error);
             this.device = null;
             return false;
@@ -208,7 +213,7 @@ export class HIDTransport {
     }
 
     public getDeviceName(): string {
-        return this.device?.productName || 'DF-ONE Full Layout';
+        return this.device?.productName || 'TEF Full Layout';
     }
 
     // ── Connection Observers ──
@@ -738,6 +743,8 @@ export class HIDTransport {
                         profile: data.profile,
                         pairing: data.pairing ?? -1,
                         bitmap: data.bitmap,
+                        split_state: data.split_state ?? 0,
+                        split_role: data.split_role ?? 0,
                     };
                     this.statusUpdateCallbacks.forEach(cb => cb(normalizedStatus));
                 } catch (e) {

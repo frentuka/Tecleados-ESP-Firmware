@@ -17,6 +17,8 @@ export interface DeviceStatus {
     profile: number;
     pairing: number;
     bitmap: number;
+    split_state: number; // split_state_t (0=disabled…5=disconnected)
+    split_role: number;  // split_role_t (0=none, 1=master, 2=slave)
 }
 
 /** A single entry in the communication log */
@@ -35,6 +37,9 @@ export interface PhysKey {
     h: number;
     x: number;
     y: number;
+    r?: number;   // rotation angle in degrees (KLE 'r')
+    rx?: number;  // rotation origin X in KLE units (KLE 'rx')
+    ry?: number;  // rotation origin Y in KLE units (KLE 'ry')
 }
 
 /** Layer data: ROWS × COLS matrix of action codes */

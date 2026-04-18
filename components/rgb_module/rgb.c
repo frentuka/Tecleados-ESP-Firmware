@@ -16,6 +16,7 @@
 #include "driver/rmt_encoder.h"
 
 #include "event_bus.h"
+#include "splitmod.h"
 
 static const char *TAG = "RGB_Light";
 
@@ -23,6 +24,9 @@ static const char *TAG = "RGB_Light";
 static bool s_inited = false;
 static volatile bool s_on = false;
 static volatile RGBColor s_color = {0,0,0};
+
+// When true, the split state owns the LED and caps-lock events are ignored
+static volatile bool s_split_override = false;
 
 static led_strip_handle_t s_strip = NULL;
 
@@ -73,12 +77,69 @@ static void rgb_worker_task(void *arg)
 
 static void rgb_led_state_handler(void *arg, esp_event_base_t base,
                                   int32_t event_id, void *data) {
+    if (s_split_override) return;  // split state owns the LED
     uint8_t led = *(uint8_t *)data;
     if (led & KB_LED_BIT_CAPS_LOCK) {
         rgb_set_color((RGBColor){25, 0, 0});
         rgb_set(true);
     } else {
         rgb_set(false);
+    }
+}
+
+static void rgb_split_event_handler(void *arg, esp_event_base_t base,
+                                     int32_t event_id, void *data) {
+    switch ((split_event_id_t)event_id) {
+
+    case SPLIT_EVENT_PAIR_STARTED:
+        // Solid blue while in pairing mode
+        s_split_override = true;
+        rgb_set_color((RGBColor){0, 0, 40});
+        rgb_set(true);
+        break;
+
+    case SPLIT_EVENT_PAIR_COMPLETE:
+        // Brief green confirmation — will be overridden by CONNECTED soon
+        s_split_override = true;
+        rgb_set_color((RGBColor){0, 40, 0});
+        rgb_set(true);
+        break;
+
+    case SPLIT_EVENT_PAIR_FAILED:
+        // Red on failure
+        s_split_override = true;
+        rgb_set_color((RGBColor){40, 0, 0});
+        rgb_set(true);
+        break;
+
+    case SPLIT_EVENT_CONNECTED:
+        // Clear override — caps-lock handler resumes
+        s_split_override = false;
+        rgb_set(false);
+        break;
+
+    case SPLIT_EVENT_DISCONNECTED:
+        // Dim red to indicate lost connection
+        s_split_override = true;
+        rgb_set_color((RGBColor){15, 0, 0});
+        rgb_set(true);
+        break;
+
+    case SPLIT_EVENT_STALE:
+        // Dim yellow to indicate stale link
+        s_split_override = true;
+        rgb_set_color((RGBColor){20, 10, 0});
+        rgb_set(true);
+        break;
+
+    case SPLIT_EVENT_STALE_RECOVERED:
+        // Clear override — link is healthy again
+        s_split_override = false;
+        rgb_set(false);
+        break;
+
+    default:
+        break;
     }
 }
 
@@ -89,7 +150,7 @@ int rgb_init(gpio_num_t data_gpio)
     led_strip_config_t strip_cfg = {
         .strip_gpio_num = data_gpio,
         .max_leds = 1,                  // un solo LED integrado
-        .led_pixel_format = LED_PIXEL_FORMAT_GRB, // WS2812 es GRB
+        .color_component_format = LED_STRIP_COLOR_COMPONENT_FMT_GRB, // WS2812 es GRB
         .led_model = LED_MODEL_WS2812,
         .flags.invert_out = false
     };
@@ -98,7 +159,9 @@ int rgb_init(gpio_num_t data_gpio)
         .clk_src = RMT_CLK_SRC_DEFAULT,
         .resolution_hz = 10000000,      // 10 MHz estable para WS2812
         .mem_block_symbols = 64,
-        .flags.with_dma = false,
+        .flags = {
+            .with_dma = false,
+        }
     };
 
     ESP_RETURN_ON_ERROR(led_strip_new_rmt_device(&strip_cfg, &rmt_cfg, &s_strip),
@@ -121,6 +184,7 @@ int rgb_init(gpio_num_t data_gpio)
     s_inited = true;
 
     esp_event_handler_register(KB_EVENTS, KB_EVENT_LED_STATE, rgb_led_state_handler, NULL);
+    esp_event_handler_register(SPLIT_EVENTS, ESP_EVENT_ANY_ID, rgb_split_event_handler, NULL);
 
     ESP_LOGI(TAG, "Init on GPIO %d: OK", (int)data_gpio);
     return 0;

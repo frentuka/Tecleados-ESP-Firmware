@@ -45,7 +45,7 @@ bool send_single_packet(uint8_t *packet, uint16_t packet_len)
     
     while (!tud_hid_n_ready(ITF_NUM_HID_COMM)) {
         if (xTaskGetTickCount() - start_tick > wait_timeout_ticks) {
-            ESP_LOGE(TAG, "HID endpoint not ready for over 100ms (timeout).");
+            ESP_LOGW(TAG, "USB is not connected");
             return false;
         }
         vTaskDelay(1); // Yield to other tasks for 1 tick

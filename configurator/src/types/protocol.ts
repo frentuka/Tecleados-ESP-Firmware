@@ -31,6 +31,35 @@ export const MODULE_CONFIG = 0x00;
 export const MODULE_SYSTEM = 0x01;
 export const MODULE_ACTION = 0x02;
 export const MODULE_STATUS = 0x03;
+export const MODULE_SPLIT  = 0x04;
+export const MODULE_BLE    = 0x05;
+
+// ── BLE Commands (MODULE_BLE payload byte 0) ────────────────────────────────
+export const BLE_CMD_TOGGLE_ROUTING = 0x01; // Toggle BLE on/off
+export const BLE_CMD_PAIR           = 0x02; // [cmd, profile_id]
+export const BLE_CMD_CONNECT        = 0x03; // [cmd, profile_id]
+export const BLE_CMD_TOGGLE_CONN    = 0x04; // [cmd, profile_id]
+
+// ── Split Commands (MODULE_SPLIT payload byte 0) ────────────────────────
+export const SPLIT_CMD_START_PAIRING  = 0x01; // [cmd, timeout_ms_le32 (opt)]
+export const SPLIT_CMD_CANCEL_PAIRING = 0x02;
+export const SPLIT_CMD_UNPAIR         = 0x03;
+export const SPLIT_CMD_GET_REMOTE_MATRIX = 0x05;
+export const SPLIT_CMD_ROLE_SWAP         = 0x06;
+export const SPLIT_CMD_RUN_BENCH         = 0x07;
+export const SPLIT_CMD_GET_BENCH         = 0x08;
+
+// ── Split State / Role (mirrors split_state_t / split_role_t) ───────────
+export const SPLIT_STATE_DISABLED     = 0;
+export const SPLIT_STATE_IDLE         = 1;
+export const SPLIT_STATE_PAIRING      = 2;
+export const SPLIT_STATE_CONNECTING   = 3;
+export const SPLIT_STATE_CONNECTED    = 4;
+export const SPLIT_STATE_DISCONNECTED = 5;
+
+export const SPLIT_ROLE_NONE   = 0;
+export const SPLIT_ROLE_MASTER = 1;
+export const SPLIT_ROLE_SLAVE  = 2;
 
 // ── Config Commands ─────────────────────────────────────────────────────
 export const CFG_CMD_GET = 0x00;
@@ -49,6 +78,7 @@ export const CFG_KEY_MACRO_LIMITS = 0x08;
 export const CFG_KEY_MACRO_SINGLE = 0x09;
 export const CFG_KEY_CKEYS = 0x0a;
 export const CFG_KEY_CKEY_SINGLE = 0x0b;
+export const CFG_KEY_SYSTEM = 0x0c;  // Device identity (name, split config)
 
 // ── System Commands ─────────────────────────────────────────────────────
 export const SYS_CMD_INJECT_KEY = 0x01;

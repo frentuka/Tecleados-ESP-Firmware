@@ -391,6 +391,15 @@ static void process_system_action(uint16_t action, bool is_pressed) {
         return;
     }
 
+    /* Split keyboard actions — routed through tap/hold engine */
+    bool is_split_action = (action == SYS_ACTION_SPLIT_PAIR   ||
+                            action == SYS_ACTION_SPLIT_ROLE_SWAP ||
+                            action == SYS_ACTION_SPLIT_DISCONNECT);
+    if (is_split_action) {
+        kb_system_action_process(action, is_pressed);
+        return;
+    }
+
     /* Brightness and RGB — stubs for future implementation */
     if (is_pressed) {
         if (action == SYS_ACTION_BRIGHTNESS_UP || action == SYS_ACTION_BRIGHTNESS_DOWN) {
@@ -584,13 +593,13 @@ void kb_macro_init(void) {
                          macros_serialize, on_macros_updated, sizeof(cfg_macro_list_t));
 
     xTaskCreateWithCaps(macro_task, "kb_macro", 5120, NULL, 4, NULL,
-                        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+                        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 
     for (int i = 0; i < 4; i++) {
         char name[12];
         snprintf(name, sizeof(name), "kb_tap_%d", i);
         xTaskCreateWithCaps(tap_worker_task, name, 3072, NULL, 4, NULL,
-                            MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+                            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     }
 
     ESP_LOGI(TAG, "Macro engine initialized");

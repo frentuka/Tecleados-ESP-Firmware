@@ -1,12 +1,13 @@
 dependencies:
-  idf: ">=5.0"
+  idf: '>=6.0'
   espressif/led_strip:
-    version: "^2.5.3"
+    version: ^3.0.0
   espressif/button:
-    version: "^4.0.0"
+    version: ^4.1.6
   espressif/esp_tinyusb:
-    version: "*"
+    version: '*'
   espressif/esp32_s3_usb_otg:
-    version: "^2.0.0"
+    version: ^2.0.4
     rules:
-      - if: "target in [esp32s3]"
+    - if: target in [esp32s3]
+  espressif/cjson: ^1.7.19

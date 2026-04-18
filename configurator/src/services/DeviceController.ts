@@ -14,6 +14,7 @@ import {
     MODULE_CONFIG,
     MODULE_SYSTEM,
     MODULE_STATUS,
+    MODULE_SPLIT,
     CFG_CMD_GET,
     CFG_CMD_SET,
     CFG_KEY_MACROS,
@@ -23,11 +24,36 @@ import {
     CFG_KEY_CKEY_SINGLE,
     SYS_CMD_INJECT_KEY,
     SYS_CMD_CLEAR_INJECTED,
+    SPLIT_CMD_START_PAIRING,
+    SPLIT_CMD_CANCEL_PAIRING,
+    SPLIT_CMD_UNPAIR,
+    SPLIT_CMD_GET_REMOTE_MATRIX,
+    SPLIT_CMD_ROLE_SWAP,
+    SPLIT_CMD_RUN_BENCH,
+    SPLIT_CMD_GET_BENCH,
+    CFG_KEY_SYSTEM,
+    MODULE_BLE,
+    BLE_CMD_TOGGLE_ROUTING,
+    BLE_CMD_PAIR,
+    BLE_CMD_CONNECT,
+    BLE_CMD_TOGGLE_CONN,
 } from '../types/protocol';
 
 import type { CommandResponse, DeviceStatus } from '../types/device';
 import type { Macro, MacroLimits } from '../types/macros';
 import type { CustomKey } from '../types/customKeys';
+
+// ── Device Identity ─────────────────────────────────────────────────────────
+export interface DeviceIdentity {
+    device_name: string;       // BLE advertised name (per-device fallback)
+    is_split: boolean;          // Whether this unit is part of a split keyboard
+    split_mirror_cols: boolean; // When true, column N maps to (COL_COUNT-1-N) — for mirrored right halves
+    split_variant: string;      // e.g. "Left", "Right", "Numpad"
+    // Shared BLE identity — set the same values on both halves so they present
+    // as one device to the host and can hand off BLE connections on role swap.
+    ble_shared_name: string;   // BLE advertised name override (empty = use device_name)
+    ble_shared_addr: string;   // Shared static random BLE address "AA:BB:CC:DD:EE:FF" (empty = auto)
+}
 
 // Re-export transport for backward compatibility
 export { HIDTransport };
@@ -99,6 +125,8 @@ export class DeviceController {
                     profile: data.profile,
                     pairing: data.pairing ?? -1,
                     bitmap: data.bitmap,
+                    split_state: data.split_state ?? 0,
+                    split_role: data.split_role ?? 0,
                 };
             } catch (e) {
                 console.error('Failed to parse status JSON:', e);
@@ -119,6 +147,152 @@ export class DeviceController {
         if (!this.isConnected()) return false;
         const payload = new Uint8Array([MODULE_SYSTEM, SYS_CMD_CLEAR_INJECTED]);
         return this.transport.sendCustomCommReport(payload);
+    }
+
+    // ── Split keyboard commands ─────────────────────────────────────────
+
+    public async splitStartPairing(timeoutMs = 0): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        const payload = new Uint8Array(6);
+        payload[0] = MODULE_SPLIT;
+        payload[1] = SPLIT_CMD_START_PAIRING;
+        // Encode 4-byte LE timeout
+        payload[2] = (timeoutMs >>> 0) & 0xFF;
+        payload[3] = (timeoutMs >>> 8) & 0xFF;
+        payload[4] = (timeoutMs >>> 16) & 0xFF;
+        payload[5] = (timeoutMs >>> 24) & 0xFF;
+        return this.transport.sendCustomCommReport(payload);
+    }
+
+    public async splitCancelPairing(): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        return this.transport.sendCustomCommReport(
+            new Uint8Array([MODULE_SPLIT, SPLIT_CMD_CANCEL_PAIRING])
+        );
+    }
+
+    public async splitUnpair(): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        return this.transport.sendCustomCommReport(
+            new Uint8Array([MODULE_SPLIT, SPLIT_CMD_UNPAIR])
+        );
+    }
+
+    public async splitGetRemoteMatrix(): Promise<Uint8Array | null> {
+        if (!this.isConnected()) return null;
+        const resp = await this.sendCommand(
+            new Uint8Array([MODULE_SPLIT, SPLIT_CMD_GET_REMOTE_MATRIX])
+        );
+        if (resp && resp.status === 0 && resp.jsonText.length > 0) {
+            try {
+                const parsed = JSON.parse(resp.jsonText) as number[];
+                return new Uint8Array(parsed);
+            } catch { /* fall through */ }
+        }
+        return null;
+    }
+
+    public async splitRoleSwap(): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        return this.transport.sendCustomCommReport(
+            new Uint8Array([MODULE_SPLIT, SPLIT_CMD_ROLE_SWAP])
+        );
+    }
+
+    public async splitRunBenchmark(): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        return this.transport.sendCustomCommReport(
+            new Uint8Array([MODULE_SPLIT, SPLIT_CMD_RUN_BENCH])
+        );
+    }
+
+    public async splitGetBench(): Promise<{active: boolean, min: number, avg: number, max: number, lost: number} | null> {
+        if (!this.isConnected()) return null;
+        const resp = await this.sendCommand(
+            new Uint8Array([MODULE_SPLIT, SPLIT_CMD_GET_BENCH]), 1000
+        );
+        if (resp && resp.status === 0 && resp.jsonText.length > 0) {
+            try {
+                return JSON.parse(resp.jsonText);
+            } catch { /* fall through */ }
+        }
+        return null;
+    }
+
+    // ── BLE commands ───────────────────────────────────────────────────────
+    // These work regardless of which half is USB-connected: if the connected
+    // device is the slave it forwards the command to master over the split link.
+
+    public async bleToggleRouting(): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        return this.transport.sendCustomCommReport(
+            new Uint8Array([MODULE_BLE, BLE_CMD_TOGGLE_ROUTING])
+        );
+    }
+
+    public async blePair(profileId: number): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        return this.transport.sendCustomCommReport(
+            new Uint8Array([MODULE_BLE, BLE_CMD_PAIR, profileId])
+        );
+    }
+
+    public async bleConnect(profileId: number): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        return this.transport.sendCustomCommReport(
+            new Uint8Array([MODULE_BLE, BLE_CMD_CONNECT, profileId])
+        );
+    }
+
+    public async bleToggleConn(profileId: number): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        return this.transport.sendCustomCommReport(
+            new Uint8Array([MODULE_BLE, BLE_CMD_TOGGLE_CONN, profileId])
+        );
+    }
+
+    // ── Device Identity ─────────────────────────────────────────────────────
+
+    public async fetchDeviceIdentity(): Promise<DeviceIdentity | null> {
+        if (!this.isConnected()) return null;
+        const buf = this.buildConfigPayload(CFG_CMD_GET, CFG_KEY_SYSTEM);
+        const resp = await this.sendCommand(buf);
+        if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
+            try {
+                const d = JSON.parse(resp.jsonText);
+                return {
+                    device_name:      d.name             ?? 'Antigravity KB',
+                    is_split:          d.is_split           ?? false,
+                    split_mirror_cols: d.split_mirror_cols ?? false,
+                    split_variant:     d.split_variant     ?? '',
+                    ble_shared_name:  d.ble_shared_name   ?? '',
+                    ble_shared_addr:  d.ble_shared_addr   ?? '',
+                };
+            } catch (e) {
+                console.error('fetchDeviceIdentity parse error:', e);
+            }
+        }
+        return null;
+    }
+
+    public async saveDeviceIdentity(identity: DeviceIdentity): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        const payload = {
+            name:             identity.device_name,
+            is_split:          identity.is_split,
+            split_mirror_cols: identity.split_mirror_cols,
+            split_variant:     identity.split_variant,
+            ble_shared_name:  identity.ble_shared_name,
+            ble_shared_addr:  identity.ble_shared_addr.toUpperCase(),
+        };
+        const jsonBytes = new TextEncoder().encode(JSON.stringify(payload));
+        const buf = new Uint8Array(3 + jsonBytes.length);
+        buf[0] = MODULE_CONFIG;
+        buf[1] = CFG_CMD_SET;
+        buf[2] = CFG_KEY_SYSTEM;
+        buf.set(jsonBytes, 3);
+        const resp = await this.sendCommand(buf);
+        return resp !== null && resp.status === 0;
     }
 
     // ── Macros ──────────────────────────────────────────────────────────

@@ -1,4 +1,12 @@
 import React, { useState, useEffect } from 'react';
+import {
+  SPLIT_STATE_CONNECTED,
+  SPLIT_STATE_PAIRING,
+  SPLIT_STATE_CONNECTING,
+  SPLIT_STATE_DISCONNECTED,
+  SPLIT_ROLE_MASTER,
+  SPLIT_ROLE_SLAVE,
+} from './types/protocol';
 
 interface StatusWidgetProps {
   isConnected: boolean;
@@ -6,14 +14,29 @@ interface StatusWidgetProps {
   selectedProfile: number; // 0-8 (displayed as 1-9)
   pairingProfile: number; // 0-8, or -1 if none
   connectedBitmap: number; // 16-bit bitmap
+  splitState?: number;  // split_state_t
+  splitRole?: number;   // split_role_t
   onExpandChange?: (isExpanded: boolean) => void;
   onOfflineClick?: () => void;
+  // BLE action callbacks — wired up from App to hidService.ble*()
+  onBleToggleRouting?: () => void;
+  onBleConnect?: (profileId: number) => void;
+  onBleToggleConn?: (profileId: number) => void;
+  onBlePair?: (profileId: number) => void;
 }
 
-const StatusWidget: React.FC<StatusWidgetProps> = ({ isConnected, transportMode, selectedProfile, pairingProfile, connectedBitmap, onExpandChange, onOfflineClick }) => {
+const StatusWidget: React.FC<StatusWidgetProps> = ({ isConnected, transportMode, selectedProfile, pairingProfile, connectedBitmap, splitState = 0, splitRole = 0, onExpandChange, onOfflineClick, onBleToggleRouting, onBleConnect, onBleToggleConn, onBlePair }) => {
   const [isPersistent, setIsPersistent] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
   const isBle = transportMode === 1;
+
+  // Split state helpers
+  const isSplitConnected = splitState === SPLIT_STATE_CONNECTED;
+  const isSplitPairing   = splitState === SPLIT_STATE_PAIRING || splitState === SPLIT_STATE_CONNECTING;
+  const isSplitDisconnected = splitState === SPLIT_STATE_DISCONNECTED;
+  const splitActive = isSplitConnected || isSplitPairing || isSplitDisconnected;
+  const splitColor = isSplitConnected ? '#2ecc71' : isSplitPairing ? '#f39c12' : isSplitDisconnected ? '#e74c3c' : 'rgba(255,255,255,0.3)';
+  const splitRoleLabel = splitRole === SPLIT_ROLE_MASTER ? 'M' : splitRole === SPLIT_ROLE_SLAVE ? 'S' : '';
   const profileRange = Array.from({ length: 9 }, (_, i) => i); // Indexes 0-8
 
   // Track expansion state for collision avoidance
@@ -56,14 +79,19 @@ const StatusWidget: React.FC<StatusWidgetProps> = ({ isConnected, transportMode,
         <div className="status-expandable">
           <div className="status-divider-v"></div>
           <div className="status-section mode-section">
-            <div className={`mode-icon ${!isBle ? 'active' : ''}`} title="USB Mode">
+            <div className={`mode-icon ${!isBle ? 'active' : ''}`} title="USB Mode (always active when connected via USB)">
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="16 18 22 12 16 6"></polyline>
                 <polyline points="8 6 2 12 8 18"></polyline>
               </svg>
             </div>
             <div className="mode-separator">/</div>
-            <div className={`mode-icon ${isBle ? 'active' : ''}`} title="BLE Mode">
+            <div
+              className={`mode-icon ${isBle ? 'active' : ''}`}
+              title={isBle ? 'BLE active — click to disable' : 'BLE inactive — click to enable'}
+              onClick={e => { e.stopPropagation(); onBleToggleRouting?.(); }}
+              style={{ cursor: onBleToggleRouting ? 'pointer' : 'default' }}
+            >
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M7 7l10 10-5 5V2l5 5L7 17"></path>
               </svg>
@@ -79,11 +107,20 @@ const StatusWidget: React.FC<StatusWidgetProps> = ({ isConnected, transportMode,
                     const isSelected = selectedProfile === p;
                     const isConnectedProfile = (connectedBitmap & (1 << p)) !== 0;
                     const isPairing = pairingProfile === p;
+                    const canClick = !!(onBleConnect || onBleToggleConn || onBlePair);
+                    const tooltip = [
+                        `Profile ${p + 1}: ${isPairing ? 'Pairing…' : isConnectedProfile ? 'Connected' : 'Disconnected'}${isSelected ? ' (active)' : ''}`,
+                        canClick ? 'Click=connect  Dbl-click=toggle  Right-click=pair' : '',
+                    ].filter(Boolean).join(' · ');
                     return (
                       <div
                         key={p}
                         className={`profile-indicator ${isSelected ? 'selected' : ''} ${isConnectedProfile ? 'connected-p' : ''} ${isPairing ? 'pairing' : ''}`}
-                        title={`Profile ${p + 1}: ${isPairing ? 'Pairing...' : isConnectedProfile ? 'Connected' : 'Disconnected'}${isSelected ? ' (Selected)' : ''}`}
+                        title={tooltip}
+                        style={{ cursor: canClick ? 'pointer' : 'default' }}
+                        onClick={e => { e.stopPropagation(); onBleConnect?.(p); }}
+                        onDoubleClick={e => { e.stopPropagation(); onBleToggleConn?.(p); }}
+                        onContextMenu={e => { e.preventDefault(); e.stopPropagation(); onBlePair?.(p); }}
                       >
                         {p + 1}
                       </div>
@@ -92,6 +129,29 @@ const StatusWidget: React.FC<StatusWidgetProps> = ({ isConnected, transportMode,
               </div>
             </div>
           </div>
+
+          {/* Split keyboard indicator */}
+          {splitActive && (
+            <>
+              <div className="status-divider-v"></div>
+              <div
+                className="status-section"
+                title={`Split: ${isSplitConnected ? 'Connected' : isSplitPairing ? 'Pairing' : 'Disconnected'}${splitRoleLabel ? ` (${splitRoleLabel === 'M' ? 'Master' : 'Slave'})` : ''}`}
+                style={{ gap: 4, paddingRight: 4 }}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={splitColor} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="2" y="7" width="20" height="14" rx="2" ry="2"/>
+                  <path d="M16 3h-4M12 3v4M8 3h4"/>
+                  <line x1="12" y1="7" x2="12" y2="21"/>
+                </svg>
+                {splitRoleLabel && (
+                  <span style={{ fontSize: 9, fontWeight: 800, color: splitColor, letterSpacing: 0.5 }}>
+                    {splitRoleLabel}
+                  </span>
+                )}
+              </div>
+            </>
+          )}
         </div>
       )}
 

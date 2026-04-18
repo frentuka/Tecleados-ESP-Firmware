@@ -15,8 +15,10 @@ typedef struct {
 
 typedef struct {
     cfg_ble_profile_t profiles[CFG_BLE_MAX_PROFILES];
-    uint8_t selected_profile; // 0 to 8
-    bool ble_routing_enabled; // True if BLE_TG is ON
+    uint8_t selected_profile;     // 0 to 8
+    bool ble_routing_enabled;     // True if BLE_TG is ON
+    uint8_t has_unsynced_updates; // 1 if we have fresh pairing data not yet shared with peer
+    uint16_t sync_version;        // Version counter to resolve split-brain conflicts
 } cfg_ble_state_t;
 
 /**
@@ -33,3 +35,34 @@ const cfg_ble_state_t *cfg_ble_get_state(void);
  * @brief Updates the BLE configuration and saves it to NVS.
  */
 void cfg_ble_save_state(const cfg_ble_state_t *state);
+
+/**
+ * @brief Updates the selected profile in-memory only.
+ */
+void cfg_ble_set_selected_profile(uint8_t index);
+
+
+/**
+ * @brief Reload the in-memory BLE config from NVS.
+ */
+void cfg_ble_reload(void);
+
+/**
+ * @brief Serializes the entire nimble_bond NVS namespace into a single dynamically allocated buffer.
+ */
+esp_err_t cfg_ble_bond_read_all(void *out_buf, size_t *inout_len);
+
+/**
+ * @brief Clears the nimble_bond NVS namespace and deserializes the payload into individual elements.
+ */
+esp_err_t cfg_ble_bond_write_all(const void *data, size_t len);
+
+/**
+ * @brief Mark bond state as synced.
+ */
+void cfg_ble_clear_unsynced(void);
+
+/**
+ * @brief Immediately applies any deferred bonds that arrived while out-of-sync.
+ */
+void cfg_ble_apply_deferred_bonds(void);

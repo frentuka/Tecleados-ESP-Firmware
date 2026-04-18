@@ -1,6 +1,6 @@
 /**
  * @file main.c
- * @brief Test runner entry point for DF-ONE firmware host tests.
+ * @brief Test runner entry point for TEF firmware host tests.
  *
  * Includes production .c files (linked against mocks via shim headers),
  * then all test files. Compiles and runs on the host machine.
@@ -50,6 +50,14 @@
 #include "../../components/usb_module/usb_callbacks_rx.c"
 #include "../../components/status_module/statusmod.c"
 
+/* Split production sources — GCC/Clang only.
+ * split_protocol.h uses __attribute__((packed)) and a C23 fixed-type enum
+ * (`: uint8_t` syntax) that MSVC cl.exe does not support under /std:c17. */
+#ifndef _MSC_VER
+#include "../../components/split/split_protocol.c"
+#include "../../components/split/split_crypto.c"
+#endif
+
 #undef TAG
 
 /* ======================================================================
@@ -69,6 +77,12 @@
 /* System tests */
 #include "system/test_event_bus.c"
 #include "system/test_status_module.c"
+
+/* Split tests (GCC/Clang only — same constraint as production sources above) */
+#ifndef _MSC_VER
+#include "split/test_split_protocol.c"
+#include "split/test_split_crypto.c"
+#endif
 
 int main(int argc, char *argv[]) {
     return test_run_all(argc, argv);

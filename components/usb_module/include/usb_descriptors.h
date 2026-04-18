@@ -147,7 +147,7 @@ static uint8_t const desc_configuration[] = {
 
     // Interface 1: HID Comm (bidirectional)
     TUD_HID_INOUT_DESCRIPTOR(ITF_NUM_HID_COMM, // bInterfaceNumber
-                             0,                // iInterface (no string)
+                             0,                // iInterface (Index 5: "Tecleados Comms ITF")
                              false,            // protocol (0=no boot interface)
                              sizeof(desc_hid_report_comm), // wDescriptorLength
                              EPNUM_HID_COMM_OUT, // bEndpointAddress (OUT)
@@ -160,7 +160,7 @@ static uint8_t const desc_configuration[] = {
 static char const *string_desc_arr[] = {
     (const char[]){0x09, 0x04},      // 0: Language
     "Tecleados",                     // 1: Manufacturer
-    "DF-ONE",                        // 2: Product
+    "TEF",                     // 2: Product
     "13548",                         // 3: Serial
     "Tecleados Deltafors Donaltron", // 4: Keyboard interface
     "Tecleados Comms ITF"            // 5: Bulk COMM interface

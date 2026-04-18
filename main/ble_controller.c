@@ -5,11 +5,20 @@
 #include "kb_layout.h"
 #include "blemod.h"
 #include "event_bus.h"
+#include "splitmod.h"
 
 static const char *TAG = "ble_ctrl";
 
 static void on_kb_sys_action(void *arg, esp_event_base_t base,
                              int32_t event_id, void *event_data) {
+    // In split-slave mode, physical key presses are forwarded to the master,
+    // which processes them authoritatively via its own tap/hold engine.
+    // Handling them here too causes double-execution with mismatched timing
+    // (BLE latency shifts the master's tap/hold window relative to the slave's),
+    // which can fire KB_EV_HOLD (pair) on the slave while KB_EV_SINGLE_TAP
+    // (connect/select) fires on the master — or vice versa.
+    if (splitmod_get_role() == SPLIT_ROLE_SLAVE) return;
+
     const kb_sys_action_event_t *ev = (const kb_sys_action_event_t *)event_data;
     uint16_t action_code = ev->action_code;
     kb_action_ev_t event = (kb_action_ev_t)ev->event;
