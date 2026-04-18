@@ -42,6 +42,14 @@ extern const size_t             SPLIT_SYNC_ENTRY_COUNT;
 esp_err_t split_config_sync_push_all(const uint8_t *peer_mac, split_seq_alloc_fn_t get_seq);
 
 /**
+ * @brief Push all entries of a specific kind to the slave.
+ *        Handles index-based recursive pushes for Macros and Custom Keys.
+ */
+esp_err_t split_config_sync_push_kind(const uint8_t *peer_mac, split_seq_alloc_fn_t get_seq,
+                                       cfgmod_kind_t kind);
+
+
+/**
  * @brief Push a single (kind, key) entry to the slave.
  *        Called by the CONFIG_EVENT_KIND_UPDATED handler for incremental sync.
  */

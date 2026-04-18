@@ -11,6 +11,8 @@
 #include "esp_err.h"
 #include "cfg_storage_keys.h"
 #include "cfg_ble.h"
+#include "cfg_macros.h"
+#include "cfg_custom_keys.h"
 #include "split_session.h"
 #include "host/ble_store.h"
 #include "freertos/semphr.h"
@@ -32,9 +34,19 @@ struct bond_sync_section {
 } __attribute__((packed));
 
 #define SPLIT_CFG_SEND_RETRIES   3    // Max attempts per fragment
-#define SPLIT_CFG_RETRY_DELAY_MS 10   // Delay between retries (and after success, to pace the burst)
+#define SPLIT_CFG_RETRY_DELAY_MS 30   // Delay between retries (and after success, to pace the burst)
 
 #define TAG "SPLIT_CFG"
+
+static SemaphoreHandle_t s_tx_ack_sem = NULL;
+
+static void ensure_tx_sem_init(void)
+{
+    if (s_tx_ack_sem == NULL) {
+        s_tx_ack_sem = xSemaphoreCreateBinary();
+    }
+}
+
 
 /* =========================================================================
  * Sync table — (kind, NVS key) pairs pushed to slave on connect / config update
@@ -46,10 +58,13 @@ const split_sync_entry_t SPLIT_SYNC_ENTRIES[] = {
     { CFGMOD_KIND_LAYOUT,   CFG_ST_LAYER_2 },
     { CFGMOD_KIND_LAYOUT,   CFG_ST_LAYER_3 },
     { CFGMOD_KIND_SYSTEM,   "sys"           },
-    { CFGMOD_KIND_CONNECTION, "ble_cfg"     },
     { CFGMOD_KIND_PHYSICAL, CFG_ST_PHYSICAL_LAYOUT },
+    { CFGMOD_KIND_MACRO,    "mac_idx"       },
+    { CFGMOD_KIND_CKEY,     "ck_idx"        },
+    { CFGMOD_KIND_CONNECTION, "ble_cfg"     },
     { CFGMOD_KIND_BLE_BOND, "all"           },
 };
+
 
 const size_t SPLIT_SYNC_ENTRY_COUNT =
     sizeof(SPLIT_SYNC_ENTRIES) / sizeof(SPLIT_SYNC_ENTRIES[0]);
@@ -103,6 +118,8 @@ esp_err_t split_config_sync_push(const uint8_t *peer_mac, split_seq_alloc_fn_t g
     if (ret != ESP_OK) {
         if (ret != ESP_ERR_NOT_FOUND) {
             ESP_LOGW(TAG, "read_storage(%u, %s): %s — skipping", kind, key, esp_err_to_name(ret));
+        } else {
+            ESP_LOGD(TAG, "read_storage(%u, %s): not found — skipping", kind, key);
         }
         free(blob);
         return ESP_OK; // Not an error — entry may not yet exist on a fresh device.
@@ -119,6 +136,10 @@ esp_err_t split_config_sync_push(const uint8_t *peer_mac, split_seq_alloc_fn_t g
     ESP_LOGD(TAG, "pushing kind=%u key=%s blob_len=%u fragments=%u",
              kind, key, (unsigned)blob_len, total_fragments);
 
+    // Prepare for ACK from slave
+    ensure_tx_sem_init();
+    xSemaphoreTake(s_tx_ack_sem, 0); // Clear any stale ACK BEFORE sending fragments
+    
     uint8_t frame[SPLIT_CONFIG_SYNC_HDR_SIZE + SPLIT_CONFIG_SYNC_DATA_MAX];
 
     for (uint8_t idx = 0; idx < total_fragments; idx++) {
@@ -144,23 +165,79 @@ esp_err_t split_config_sync_push(const uint8_t *peer_mac, split_seq_alloc_fn_t g
     }
 
     free(blob);
+
+    
+    if (xSemaphoreTake(s_tx_ack_sem, pdMS_TO_TICKS(5000)) != pdTRUE) {
+        ESP_LOGW(TAG, "timeout waiting for ACK: kind=%u key=%s", kind, key);
+        return ESP_ERR_TIMEOUT;
+    }
+
+
     return ESP_OK;
 }
 
-esp_err_t split_config_sync_push_all(const uint8_t *peer_mac, split_seq_alloc_fn_t get_seq)
+
+esp_err_t split_config_sync_push_kind(const uint8_t *peer_mac, split_seq_alloc_fn_t get_seq,
+                                       cfgmod_kind_t kind)
 {
-    ESP_LOGI(TAG, "pushing %u config entries to slave", (unsigned)SPLIT_SYNC_ENTRY_COUNT);
+    esp_err_t last_ret = ESP_OK;
+
     for (size_t i = 0; i < SPLIT_SYNC_ENTRY_COUNT; i++) {
-        esp_err_t ret = split_config_sync_push(peer_mac, get_seq,
-                                                SPLIT_SYNC_ENTRIES[i].kind,
-                                                SPLIT_SYNC_ENTRIES[i].key);
-        if (ret != ESP_OK) {
-            ESP_LOGW(TAG, "push entry %u failed: %s", (unsigned)i, esp_err_to_name(ret));
-            // Continue — best-effort sync.
+        if (SPLIT_SYNC_ENTRIES[i].kind != kind) continue;
+
+        const char *key = SPLIT_SYNC_ENTRIES[i].key;
+        esp_err_t ret = split_config_sync_push(peer_mac, get_seq, kind, key);
+        if (ret != ESP_OK) last_ret = ret;
+
+        // Special handling for dynamic sub-keys (Macros, Custom Keys)
+        if (kind == CFGMOD_KIND_MACRO && strcmp(key, "mac_idx") == 0) {
+            cfg_macro_index_t midx = {0};
+            size_t midx_len = sizeof(midx);
+            if (cfgmod_read_storage(kind, key, &midx, &midx_len) == ESP_OK) {
+                for (uint16_t j = 0; j < 64; j++) {
+                    if (midx.active_mask & (1ULL << j)) {
+                        char sub_key[16];
+                        snprintf(sub_key, sizeof(sub_key), "mac_%u", j);
+                        split_config_sync_push(peer_mac, get_seq, kind, sub_key);
+                    }
+                }
+            }
+        } else if (kind == CFGMOD_KIND_CKEY && strcmp(key, "ck_idx") == 0) {
+            cfg_ckey_index_t cidx = {0};
+            size_t cidx_len = sizeof(cidx);
+            if (cfgmod_read_storage(kind, key, &cidx, &cidx_len) == ESP_OK) {
+                for (uint16_t j = 0; j < 64; j++) {
+                    if (cidx.mask[j / 8] & (1u << (j % 8))) {
+                        char sub_key[12];
+                        snprintf(sub_key, sizeof(sub_key), "ck_%u", j);
+                        split_config_sync_push(peer_mac, get_seq, kind, sub_key);
+                    }
+                }
+            }
         }
     }
+    return last_ret;
+}
+
+
+esp_err_t split_config_sync_push_all(const uint8_t *peer_mac, split_seq_alloc_fn_t get_seq)
+{
+    ESP_LOGI(TAG, "pushing main config kinds to slave");
+
+    // Use a bool[256] instead of a uint32_t bitmask: shifting by kind >= 32 is
+    // undefined behaviour in C, and cfgmod_kind_t is not bounded to < 32.
+    bool pushed[256] = {false};
+    for (size_t i = 0; i < SPLIT_SYNC_ENTRY_COUNT; i++) {
+        cfgmod_kind_t kind = SPLIT_SYNC_ENTRIES[i].kind;
+        if (pushed[(uint8_t)kind]) continue;
+
+        split_config_sync_push_kind(peer_mac, get_seq, kind);
+        pushed[(uint8_t)kind] = true;
+    }
+
     return ESP_OK;
 }
+
 
 void split_config_sync_on_ack(const uint8_t *payload, size_t len)
 {
@@ -179,29 +256,35 @@ void split_config_sync_on_ack(const uint8_t *payload, size_t len)
     } else {
         ESP_LOGW(TAG, "slave NAK'd kind=%u key=%s status=%u", ack->kind, key, ack->status);
     }
+
+    // Unblock the Master task waiting for this ACK
+    if (s_tx_ack_sem) {
+        xSemaphoreGive(s_tx_ack_sem);
+    }
 }
+
 
 /* =========================================================================
  * SLAVE — reassembly
  * ========================================================================= */
 
-// Maximum fragments we can track in the bitmap. 32 fragments × 225 B = 7.2 KB
-// which comfortably covers every current sync entry (layouts, bonds, etc).
-// If a larger blob ever needs to be synced, widen this to uint64_t or a byte array.
-#define SPLIT_CFG_MAX_FRAGMENTS 32
+// Maximum fragments we can track in the bitmap. Support up to 255 to match
+// the protocol's fragment_total field.
+#define SPLIT_CFG_MAX_FRAGMENTS 255
 
 typedef struct {
     bool      active;
     uint8_t   kind;
     char      key[SPLIT_CONFIG_SYNC_KEY_LEN + 1];
     uint8_t   total;
-    uint32_t  received;      // bitmask of received fragment indices (up to 32)
+    uint8_t   received_map[32]; // bitmask for 256 bits (up to 255 fragments)
     uint8_t  *buf;
     size_t    buf_len;       // allocated size
     size_t    data_len;      // total expected data length
     
     // Background deferral fields
     bool       write_pending;
+    uint64_t   session_id;   // Monotonic session counter to prevent race in process_deferred
     bool       reverse_sync_pending;
     uint8_t    reply_mac[6];
     TickType_t last_updated_at;
@@ -215,6 +298,13 @@ static portMUX_TYPE s_rx_mux = portMUX_INITIALIZER_UNLOCKED;
 void split_config_sync_reset(void)
 {
     portENTER_CRITICAL(&s_rx_mux);
+    if (s_rx.write_pending) {
+        // Buffer is owned by the background process_deferred task.
+        // DO NOT free it or zero out the state yet; process_deferred
+        // will call reset() again when it's done.
+        portEXIT_CRITICAL(&s_rx_mux);
+        return;
+    }
     if (s_rx.buf) {
         free(s_rx.buf);
         s_rx.buf = NULL;
@@ -222,6 +312,7 @@ void split_config_sync_reset(void)
     memset(&s_rx, 0, sizeof(s_rx));
     portEXIT_CRITICAL(&s_rx_mux);
 }
+
 
 esp_err_t split_config_sync_on_fragment(const uint8_t *src_mac,
                                          const uint8_t *payload, size_t len,
@@ -239,9 +330,8 @@ esp_err_t split_config_sync_on_fragment(const uint8_t *src_mac,
     memcpy(key, frag->key, SPLIT_CONFIG_SYNC_KEY_LEN);
     key[SPLIT_CONFIG_SYNC_KEY_LEN] = '\0';
 
-    if (frag->fragment_total == 0 || frag->fragment_total > SPLIT_CFG_MAX_FRAGMENTS) {
-        ESP_LOGW(TAG, "fragment total %u exceeds reassembly capacity %u",
-                 frag->fragment_total, SPLIT_CFG_MAX_FRAGMENTS);
+    if (frag->fragment_total == 0) {
+        ESP_LOGW(TAG, "invalid fragment total 0");
         return ESP_ERR_INVALID_SIZE;
     }
 
@@ -249,17 +339,27 @@ esp_err_t split_config_sync_on_fragment(const uint8_t *src_mac,
     if (!s_rx.active || s_rx.kind != frag->kind ||
         strncmp(s_rx.key, key, SPLIT_CONFIG_SYNC_KEY_LEN) != 0 ||
         s_rx.total != frag->fragment_total) {
+        
+        // INTERLOCK: If a background write is still pending for the previous blob,
+        // we cannot start a new reassembly because the s_rx state is occupied.
+        if (s_rx.write_pending) {
+            ESP_LOGW(TAG, "rx fragment kind=%u key=%s rejected: previous write still pending", frag->kind, key);
+            return ESP_ERR_INVALID_STATE;
+        }
+
         split_config_sync_reset();
-        s_rx.kind     = frag->kind;
-        s_rx.total    = frag->fragment_total;
-        s_rx.received = 0;
-        s_rx.active   = true;
+
+        s_rx.active     = true;
+        s_rx.kind       = frag->kind;
+        s_rx.total      = frag->fragment_total;
+        s_rx.session_id = esp_timer_get_time();
+        memset(s_rx.received_map, 0, sizeof(s_rx.received_map));
         memcpy(s_rx.key, key, sizeof(s_rx.key));
 
         s_rx.buf_len = (size_t)frag->fragment_total * SPLIT_CONFIG_SYNC_DATA_MAX;
         s_rx.buf     = heap_caps_malloc(s_rx.buf_len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         if (!s_rx.buf) {
-            s_rx.active = false;
+            split_config_sync_reset();
             return ESP_ERR_NO_MEM;
         }
         s_rx.data_len = 0;
@@ -278,8 +378,14 @@ esp_err_t split_config_sync_on_fragment(const uint8_t *src_mac,
         split_config_sync_reset();
         return ESP_ERR_INVALID_SIZE;
     }
-    memcpy(s_rx.buf + offset, payload + SPLIT_CONFIG_SYNC_HDR_SIZE, data_len);
-    s_rx.received |= (uint32_t)1u << frag->fragment_idx;
+
+    uint8_t byte_idx = frag->fragment_idx / 8;
+    uint8_t bit_idx  = frag->fragment_idx % 8;
+
+    if (!(s_rx.received_map[byte_idx] & (1 << bit_idx))) {
+        s_rx.received_map[byte_idx] |= (1 << bit_idx);
+        memcpy(s_rx.buf + offset, payload + SPLIT_CONFIG_SYNC_HDR_SIZE, data_len);
+    }
 
     // Track total data length from the last fragment.
     if (frag->fragment_idx == frag->fragment_total - 1) {
@@ -289,10 +395,16 @@ esp_err_t split_config_sync_on_fragment(const uint8_t *src_mac,
     ESP_LOGD(TAG, "rx fragment %u/%u kind=%u key=%s",
              frag->fragment_idx + 1, frag->fragment_total, frag->kind, key);
 
-    // Build the completion mask. Using 64-bit intermediate prevents UB when
-    // fragment_total == 32 (1u << 32 is UB on a 32-bit type).
-    uint32_t full_mask = (uint32_t)(((uint64_t)1u << frag->fragment_total) - 1u);
-    if ((s_rx.received & full_mask) != full_mask || s_rx.data_len == 0) {
+    // Check completion
+    bool complete = true;
+    for (uint16_t i = 0; i < s_rx.total; i++) {
+        if (!(s_rx.received_map[i / 8] & (1 << (i % 8)))) {
+            complete = false;
+            break;
+        }
+    }
+
+    if (!complete || s_rx.data_len == 0) {
         return ESP_OK; // Still waiting for more fragments.
     }
 
@@ -423,6 +535,7 @@ void split_config_sync_process_deferred(void)
     uint8_t   dst_mac[6];
     memcpy(dst_mac, s_rx.reply_mac, 6);
     bool      rev_sync = s_rx.reverse_sync_pending;
+    uint64_t  session_id = s_rx.session_id;
     
     // NULL out the buffer in state so reset doesn't double-free it while we work.
     s_rx.buf = NULL;
@@ -445,7 +558,7 @@ void split_config_sync_process_deferred(void)
         ESP_LOGW(TAG, "background: NVS write failed for kind=%u key=%s: %s", kind, key, esp_err_to_name(ret));
     }
 
-    // Send ACK back to master
+    // Send status ACK back to master
     split_config_sync_ack_payload_t ack = {
         .kind   = kind,
         .status = (ret == ESP_OK) ? 0 : 1,
@@ -454,6 +567,12 @@ void split_config_sync_process_deferred(void)
     split_transport_send(dst_mac, SPLIT_PROTO_SPLIT, SPLIT_MSG_CONFIG_SYNC_ACK,
                          split_session_next_seq(), (const uint8_t *)&ack, sizeof(ack));
 
+    // 2. Clear state ONLY IF the session ID hasn't changed.
+    portENTER_CRITICAL(&s_rx_mux);
+    if (s_rx.session_id == session_id) {
+        split_config_sync_reset();
+    }
+    portEXIT_CRITICAL(&s_rx_mux);
+
     free(buf);
-    split_config_sync_reset();
 }

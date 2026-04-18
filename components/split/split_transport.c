@@ -1,8 +1,10 @@
 #include "split_transport.h"
 #include "split_protocol.h"
 #include "split_crypto.h"
+#include "split_session.h"
 
 #include <string.h>
+
 
 #include "esp_log.h"
 #include "esp_mac.h"
@@ -32,7 +34,12 @@ static bool                    s_initialized   = false;
 static uint8_t                 s_session_key[SPLIT_CRYPTO_KEY_SIZE] = {0};
 static bool                    s_session_key_set                    = false;
 
+// Handshake key (usually paired key) used for recovery/negotiation
+static uint8_t                 s_handshake_key[SPLIT_CRYPTO_KEY_SIZE] = {0};
+static bool                    s_handshake_key_set                   = false;
+
 static TickType_t              s_last_tx_time                       = 0;
+
 
 
 /* =========================================================================
@@ -67,17 +74,46 @@ static void on_espnow_recv(const esp_now_recv_info_t *info,
         full_seq |= ((uint64_t)header.seq[i] << (i * 8));
     }
 
-    if (s_session_key_set) {
-        // header bytes are the AAD (authenticated, not encrypted).
-        esp_err_t crypt_ret = split_crypto_decrypt(s_session_key, full_seq,
-                                                   frame_buf, SPLIT_FRAME_HEADER_SIZE,
-                                                   payload, payload_len, mic);
+    // DISCOVERY and PAIRING messages are always plaintext (unencrypted) as they
+    // are used to bootstrap the session. We skip decryption for these types.
+    bool type_is_plaintext = (header.type == SPLIT_MSG_DISCOVERY || 
+                              header.type == SPLIT_MSG_PAIR_REQUEST || 
+                              header.type == SPLIT_MSG_PAIR_RESPONSE);
+
+    if (!type_is_plaintext) {
+        esp_err_t crypt_ret = ESP_FAIL;
+
+        // 1. Try primary session key if active (TSK)
+        if (s_session_key_set) {
+            crypt_ret = split_crypto_decrypt(s_session_key, full_seq,
+                                             frame_buf, SPLIT_FRAME_HEADER_SIZE,
+                                             payload, payload_len, mic);
+        }
+
+        // 2. Try handshake key if primary failed (or wasn't set) and message type allows it
+        if (crypt_ret != ESP_OK && s_handshake_key_set) {
+            bool type_allows_handshake = (header.type == SPLIT_MSG_ROLE_NEGOTIATE || 
+                                          header.type == SPLIT_MSG_DISCOVERY);
+            
+            if (type_allows_handshake) {
+                crypt_ret = split_crypto_decrypt(s_handshake_key, full_seq,
+                                                 frame_buf, SPLIT_FRAME_HEADER_SIZE,
+                                                 payload, payload_len, mic);
+            }
+        }
+
         if (crypt_ret != ESP_OK) {
-            ESP_LOGD(TAG, "decrypt/auth failed from " MACSTR " (seq=%llu) — dropped",
-                     MAC2STR(info->src_addr), (unsigned long long)full_seq);
+            // Only increment failure counts if we're not in the initial grace period.
+            if (!split_session_is_grace_period()) {
+                split_session_inc_auth_failure();
+            }
+            ESP_LOGD(TAG, "decrypt failed (type=%02X seq=%llu key_set=%d) from " MACSTR,
+                     header.type, (unsigned long long)full_seq, s_session_key_set, MAC2STR(info->src_addr));
             return;
         }
     }
+
+
 
     // Dispatch to registered protocol handler.
     // MIC has already been verified above (or the frame is legitimately plaintext);
@@ -260,6 +296,19 @@ void split_transport_set_session_key(const uint8_t *key)
     }
 }
 
+void split_transport_set_handshake_key(const uint8_t *key)
+{
+    if (key) {
+        memcpy(s_handshake_key, key, SPLIT_CRYPTO_KEY_SIZE);
+        s_handshake_key_set = true;
+        ESP_LOGD(TAG, "handshake key registered");
+    } else {
+        memset(s_handshake_key, 0, SPLIT_CRYPTO_KEY_SIZE);
+        s_handshake_key_set = false;
+    }
+}
+
+
 esp_err_t split_transport_send(const uint8_t *dst_mac,
                                uint8_t proto_id, uint8_t type, uint64_t seq,
                                const uint8_t *payload, size_t payload_len)
@@ -275,19 +324,37 @@ esp_err_t split_transport_send(const uint8_t *dst_mac,
         return ESP_ERR_INVALID_ARG;
     }
 
-    if (s_session_key_set) {
-        // Encrypt payload in-place; fill the MIC trailer that build_frame zeroed.
-        uint8_t *enc_payload = frame_buf + SPLIT_FRAME_HEADER_SIZE;
-        uint8_t *mic_out     = frame_buf + SPLIT_FRAME_HEADER_SIZE + payload_len;
-        esp_err_t crypt_ret  = split_crypto_encrypt(s_session_key, seq,
-                                                    frame_buf, SPLIT_FRAME_HEADER_SIZE,
-                                                    enc_payload, payload_len,
-                                                    mic_out);
-        if (crypt_ret != ESP_OK) {
-            ESP_LOGE(TAG, "encrypt failed: %s", esp_err_to_name(crypt_ret));
-            return crypt_ret;
+    if (s_session_key_set || s_handshake_key_set) {
+        // Negotiation and discovery always use the handshake key (paired key)
+        // to ensure we can always talk to a peer regardless of transient state.
+        bool use_handshake = (proto_id == SPLIT_PROTO_SPLIT && 
+                             (type == SPLIT_MSG_ROLE_NEGOTIATE || type == SPLIT_MSG_DISCOVERY));
+        
+        // DISCOVERY and PAIRING messages are sent as plaintext (unencrypted) during initial handshake.
+        bool type_is_plaintext = (type == SPLIT_MSG_DISCOVERY || 
+                                  type == SPLIT_MSG_PAIR_REQUEST || 
+                                  type == SPLIT_MSG_PAIR_RESPONSE);
+
+        if (type_is_plaintext) {
+            // Send as plaintext (unencrypted)
+        } else {
+            const uint8_t *key = (use_handshake && s_handshake_key_set) ? s_handshake_key : s_session_key;
+
+            // Encrypt payload in-place; fill the MIC trailer that build_frame zeroed.
+            uint8_t *enc_payload = frame_buf + SPLIT_FRAME_HEADER_SIZE;
+            uint8_t *mic_out     = frame_buf + SPLIT_FRAME_HEADER_SIZE + payload_len;
+            esp_err_t crypt_ret  = split_crypto_encrypt(key, seq,
+                                                        frame_buf, SPLIT_FRAME_HEADER_SIZE,
+                                                        enc_payload, payload_len,
+                                                        mic_out);
+            if (crypt_ret != ESP_OK) {
+                ESP_LOGE(TAG, "encrypt failed: %s (type=%02X)", esp_err_to_name(crypt_ret), type);
+                return crypt_ret;
+            }
         }
     }
+
+
 
     esp_err_t ret = esp_now_send(dst_mac, frame_buf, frame_len);
     if (ret == ESP_OK) {

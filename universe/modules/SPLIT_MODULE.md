@@ -30,23 +30,56 @@ Implemented in [split_role.c]; driven by [split_dispatch.c] on `ROLE_NEGOTIATE` 
 
 ### 2. Encrypted ESP-NOW Transport
 All traffic is secured using **AES-128-CCM** with anti-replay:
-- **Pairing**: unencrypted X25519 ECDH exchange derives a shared session key ([split_pair.c], [split_crypto.c]).
-- **MIC**: every packet carries a MIC authenticated by [split_transport.c] before dispatch.
+- **Pairing**: unencrypted X25519 ECDH exchange derives a long-term **Paired Key** stored in NVS ([split_pair.c], [split_crypto.c]).
+- **MIC**: every packet carries a 4-byte MIC authenticated by [split_transport.c] before dispatch.
 - **On-wire frame layout (packed, little-endian):**
  *
- *   `[magic:2][proto:1][type:1][seq:6][payload:0..236][mic:4]`
+ *   `[magic:2][proto:1][type:1][seq:6][payload:0..236][mic:4]`  (frame version 0x02)
  *
- *   Before encryption: header is authenticated but not encrypted (AAD).
- *   Payload + MIC are encrypted with AES-128-CCM.
+ *   The 10-byte header is the AAD (authenticated but not encrypted). Payload + MIC are AES-128-CCM encrypted.
 - **Nonce Security**: 48-bit sequence number stored in the header. Nonce reuse horizon is **~89,000 years** at 100 packets/sec.
-- **Anti-Replay**: 64-bit sequence window in [split_session.c] — strictly increasing sequences accepted, duplicates/older dropped.
+- **Anti-Replay**: 64-bit strictly-increasing window in [split_session.c]. Duplicates and replays are dropped.
+
+#### Key Hierarchy (TSK-first architecture)
+
+| Key | Slot | Lifetime | Purpose |
+|-----|------|----------|---------|
+| Paired Key | `s_handshake_key` | NVS-persisted | Encrypts `ROLE_NEGOTIATE` and `DISCOVERY`; fallback for cross-reboot reconnects |
+| Transient Session Key (TSK) | `s_session_key` | Per-session (in RAM) | Encrypts ALL other traffic after the first successful `ROLE_NEGOTIATE` |
+
+**TSK derivation** happens at the end of every successful `ROLE_NEGOTIATE` exchange:
+1. Each half advertises a random 32-bit salt in the `random_salt` field of `split_role_negotiate_payload_t`.
+2. Both sides compute `TSK = SHA-256(paired_key ∥ min(own_salt, peer_salt) ∥ max(own_salt, peer_salt))[0:16]`.
+3. The `min/max` sort guarantees both devices derive the **same key** regardless of who received whose message first.
+4. On activation: TX/RX sequence counters are reset to 0 and a 1500 ms **grace period** is started to absorb in-flight packets encrypted with the old key.
+
+**Session start-up sequence:**
+```
+Boot / pair complete
+  └─ session_key = NULL          (plaintext mode — no outbound encryption)
+     handshake_key = paired_key  (ROLE_NEGOTIATE encrypted with this)
+     ↓
+ROLE_NEGOTIATE exchange (encrypted with handshake key)
+  └─ TSK derived from salts
+     session_key = TSK           (all subsequent traffic encrypted with TSK)
+     handshake_key unchanged     (still used if peer reboots and needs fallback)
+```
+
+**Discovery / Pairing traffic** (`DISCOVERY`, `PAIR_REQUEST`, `PAIR_RESPONSE`) is always sent in plaintext to bootstrap the session when no shared key exists yet.
+
+**Dual-key decryption fallback**: if decryption with the primary TSK fails on a `ROLE_NEGOTIATE`, the transport retries with the handshake key. This lets a rebooted device (which has no TSK) re-enter a running session whose peer has a stale TSK.
+
+**DMA isolation**: all PSA Crypto operations (AES-CCM, SHA-256, ECDH) use a 512-byte static DMA workspace in global DRAM (`s_dma_work`, split into `DMA_IN`/`DMA_OUT` halves). Stack memory is never used as a PSA buffer, preventing DMA access faults on ESP32-S3. A DMA semaphore serialises concurrent callers.
 
 ### 3. Fragmentation Protocol
-ESP-NOW's ~236-byte payload limit means large transfers (the full config blob, macro DB, BLE bonds) are fragmented and reassembled by [split_config_sync.c]. Reassembly tracks received fragments in a **32-bit bitmap** → **max 32 fragments / ~7.2 KB per logical message**.
+ESP-NOW's ~236-byte payload limit means large transfers (the full config blob, macro DB, BLE bonds) are fragmented and reassembled by [split_config_sync.c]. Reassembly tracks received fragments in a **256-bit bitmap** (`uint8_t received_map[32]`) → **max 255 fragments / ~57 KB per logical message**.
 - **Memory**: Large reassembly and push buffers are allocated in **PSRAM** (`MALLOC_CAP_SPIRAM`) to preserve internal DRAM.
 - **Timeout**: Abandoned reassemblies time out after 2 seconds to free heap resources.
+- **Background write interlock**: once a complete blob is handed to the `split_task` background writer, a `write_pending` flag blocks any new reassembly for the same slot until the write and ACK complete. A monotonic `session_id` tag detects if a new transfer arrived mid-write.
+- **ACK semaphore**: Master waits up to 5 seconds per entry for a `CONFIG_SYNC_ACK` from Slave before declaring failure.
 
 ### 4. State-Machine Task
+
 One FreeRTOS task ([split_task.c]) drives the whole connection lifecycle at ~100 Hz:
 
 | State          | Tick behavior                                                                                 |
@@ -210,11 +243,23 @@ graph LR
 ## Recent Changes (2026-04)
 
 - **Clean-code refactor**: `splitmod.c` split from 1305 → 259 lines across 7 new modules (session, task, dispatch, bridge, bench, usb + keeps existing transport/pair/role/sync/config_sync/crypto/protocol). No functional changes.
-- **Config-sync capacity fix**: reassembly bitmap widened from `uint8_t` → `uint32_t`. Previously `1u << idx` with `idx ≥ 8` was UB and silently corrupted multi-fragment pushes once any payload exceeded 8 fragments (≈1.8 KB). New cap: 32 fragments / ≈7.2 KB; oversize messages are rejected at fragment-0 with `ESP_ERR_INVALID_SIZE`.
+- **Config-sync capacity fix**: reassembly bitmap widened from `uint8_t` → `uint8_t[32]` (256 bits). Previously `1u << idx` with `idx ≥ 8` was UB and silently corrupted multi-fragment pushes. New cap: 255 fragments / ≈57 KB. **Master now waits for a per-push ACK semaphore (5 s timeout)** before moving to the next entry.
+- **Macros & Custom Keys sync**: `split_config_sync_push_kind()` now recursively pushes all dynamic sub-keys (`mac_<n>`, `ck_<n>`) in addition to the index blobs, ensuring Slave receives complete Macro and Custom Key state.
 - **BLE/Bond sync guards**: config sync now enforces role-based ownership — Master ignores BLE config and bond data received from Slave, triggering corrective reverse syncs instead.
 - **BLE state handover**: `ble_hid_seed_handover_state()` is called when a half becomes Master to transfer BLE connection context from the former master, preventing spurious disconnects on the host side.
 - **Battery-adaptive scan rate**: slave-side heartbeat tick now reads battery level and adjusts `kb_manager_set_scan_divisor` to reduce power draw at low charge.
-- **USB priority bug fix**: `own_usb_connected` / `peer_usb_connected` were being collected and transmitted in `ROLE_NEGOTIATE` but never consulted in `split_role_decide()`. Priority 2 (USB) is now implemented — a half with a live USB host wins Master over BLE-only or disconnected peers.
+- **USB priority bug fix**: `own_usb_connected` / `peer_usb_connected` were being collected and transmitted in `ROLE_NEGOTIATE` but never consulted in `split_role_decide()`. Priority 2 (USB) is now implemented.
 - **Default connectivity mode changed to USB**: `cfg_ble.c` previously defaulted `ble_routing_enabled = true` on a fresh flash. Changed to `false` so a keyboard boots in USB mode and BLE must be explicitly enabled.
-- **Role preference removed**: the `proposed_role` / `preferred_role` system was broken — it was not antisymmetric, meaning both halves could resolve to the same role. The preference check has been removed from `split_role_decide()`. The wire field is retained (sent as 0) for compatibility. The `last_role` priority has also been rewritten with explicit mirror checks that guarantee both sides always resolve at the same priority level, making dual-same-role impossible by construction.
-- **Hardening phase (2026-04)**: CAT-1 security and robustness update. Sequence numbers widened to 48-bit for AES-CCM nonce uniqueness (89,000 year reuse horizon). Deployed background NVS writing to decouple slow flash I/O from the WiFi task. Moved reassembly and push buffers to PSRAM. Added 2s reassembly timeout.
+- **Role preference removed**: the `proposed_role` / `preferred_role` system was broken — it was not antisymmetric. The wire field is retained (sent as 0) for compatibility. The `last_role` priority has been rewritten with explicit mirror checks.
+- **Hardening phase (2026-04 / security)**: sequence numbers widened to 48-bit. Background NVS writing deployed. Reassembly and push buffers moved to PSRAM. 2 s reassembly timeout added.
+- **TSK (Transient Session Key) architecture (2026-04 / crypto hardening)**:
+  - Added `random_salt` field to `split_role_negotiate_payload_t` (wire version bumped to `0x02`).
+  - `split_crypto_derive_session_key()` API changed from `(nonce_a[], nonce_b[])` to `(uint32_t salt_own, uint32_t salt_peer)` with symmetric min/max sort so both sides always produce the same TSK.
+  - On boot and on disconnect, `session_key = NULL` (plaintext). The paired key lives only in the `handshake` slot and is used exclusively for `ROLE_NEGOTIATE` / recovery frames.
+  - `split_transport` gains a dual-key receive path: tries TSK first, falls back to handshake key for `ROLE_NEGOTIATE`, allowing cross-reboot reconnects without re-pairing.
+  - `split_session_set_local_salt()` is sticky for 10 seconds to prevent race conditions during rapid reconnects. `split_session_force_local_salt()` bypasses the guard — used only at pairing completion.
+  - Auth failure counter (`split_session_inc_auth_failure`) feeds a reactive recovery: `split_task` forces disconnect after 5 consecutive decryption failures instead of waiting for the link-stale timeout.
+  - A 1500 ms grace period post-TSK activation suppresses false auth-failure counts from in-flight packets encrypted with the old key.
+- **DMA isolation for PSA Crypto**: a 512-byte static workspace (`s_dma_work`) in global DRAM provides `DMA_IN`/`DMA_OUT` regions. No PSA operation ever uses stack memory, eliminating DMA access faults on ESP32-S3. A dedicated semaphore (`s_dma_sem`) serialises concurrent callers with a 500 ms timeout.
+- **Status module live refresh**: the manual status-request callback now re-reads live BLE bitmap data from the stack before composing the response, preventing stale data if an earlier event push was lost.
+- **Configurator 5 s heartbeat poll**: `App.tsx` now calls `fetchStatus()` every 5 seconds while connected so the widget self-corrects without user action.

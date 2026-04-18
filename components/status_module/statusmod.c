@@ -179,12 +179,25 @@ static void status_on_split_event(void *arg, esp_event_base_t base,
     send_status_push();
 }
 
+#include "blemod.h"
+
 /* Manual status request from configurator (USB callback) */
 static bool status_module_callback(uint8_t *data, uint16_t data_len) {
     ESP_LOGI(TAG, "Manual status request received");
+
+    // If we are the Master (or Standalone), refresh the live data from the stack
+    // before responding. This allows the heartbeat poll to self-correct if
+    // an earlier event push was lost.
+    if (splitmod_get_role() != SPLIT_ROLE_SLAVE) {
+        s_cache.connected_bitmap = ble_hid_get_connected_profiles_bitmap();
+        int pairing = ble_hid_get_pairing_profile();
+        s_cache.pairing_profile = (pairing < 0) ? 0xFF : (uint8_t)pairing;
+    }
+
     send_status_push();
     return true;
 }
+
 
 /* =========================================================================
  * Init

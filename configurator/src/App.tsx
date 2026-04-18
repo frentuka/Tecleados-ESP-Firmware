@@ -91,15 +91,19 @@ function App() {
     }
   }, [isConnected]);
 
-  // Trigger data fetch on connect
+  // Trigger data fetch on connect and maintain a 5s heartbeat poll for status
   useEffect(() => {
     if (isConnected) {
       fetchStatus();
       fetchMacroLimits();
       fetchCustomKeys();
       fetchMacros();
+
+      const interval = setInterval(fetchStatus, 5000);
+      return () => clearInterval(interval);
     }
   }, [isConnected, fetchStatus, fetchMacroLimits, fetchCustomKeys, fetchMacros]);
+
 
   // Raw packet logging (display only — ACKs and reassembly are handled by HIDService)
   const handleLogReceived = useCallback((data: Uint8Array) => {

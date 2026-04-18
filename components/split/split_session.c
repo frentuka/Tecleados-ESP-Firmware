@@ -39,10 +39,18 @@ static bool     s_peer_seq_valid = false;
 static TickType_t s_peer_last_seen = 0;
 static bool       s_link_stale     = false;
 static TickType_t s_connected_at   = 0;
+static TickType_t s_grace_until    = 0;
+static uint32_t   s_last_peer_salt = 0;
+
+static uint32_t   s_auth_failures  = 0;
+static uint32_t   s_local_salt     = 0;
+static TickType_t s_last_salt_gen  = 0;
+
 
 /* =========================================================================
  * Lifecycle
  * ========================================================================= */
+
 
 void split_session_init(void)
 {
@@ -97,6 +105,13 @@ uint64_t split_session_next_seq(void)
     return s;
 }
 
+void split_session_reset_tx_seq(void)
+{
+    portENTER_CRITICAL(&s_seq_mux);
+    s_tx_seq = 0;
+    portEXIT_CRITICAL(&s_seq_mux);
+}
+
 /* =========================================================================
  * Anti-replay — 16-bit sequence space with a 32768-wide forward window.
  *
@@ -139,6 +154,43 @@ bool split_session_is_link_stale(void)           { return s_link_stale; }
 
 void       split_session_mark_connected_now(void){ s_connected_at = xTaskGetTickCount(); }
 TickType_t split_session_connected_at(void)      { return s_connected_at; }
+
+void split_session_set_grace(uint32_t ms)  { s_grace_until = xTaskGetTickCount() + pdMS_TO_TICKS(ms); }
+bool split_session_is_grace_period(void)   { return (xTaskGetTickCount() < s_grace_until); }
+
+void     split_session_set_last_peer_salt(uint32_t salt) { s_last_peer_salt = salt; }
+uint32_t split_session_get_last_peer_salt(void)          { return s_last_peer_salt; }
+
+void     split_session_inc_auth_failure(void)   { s_auth_failures++; }
+
+uint32_t split_session_get_auth_failures(void)  { return s_auth_failures; }
+void     split_session_reset_auth_failures(void) { s_auth_failures = 0; }
+
+/* =========================================================================
+ * Transient session salts
+ * ========================================================================= */
+void split_session_set_local_salt(uint32_t salt)
+{
+    TickType_t now = xTaskGetTickCount();
+    // Salt Stickiness: Don't rotate salt more than once every 10 seconds to
+    // prevent handshake race conditions where one side switches while packets
+    // with the old salt are still in flight.
+    if (s_local_salt != 0 && (now - s_last_salt_gen) < pdMS_TO_TICKS(10000)) {
+        return;
+    }
+    s_local_salt    = salt;
+    s_last_salt_gen = now;
+}
+
+void split_session_force_local_salt(uint32_t salt)
+{
+    // Bypass the stickiness guard — used only at pairing completion where a
+    // fresh, authoritative salt is always required regardless of elapsed time.
+    s_local_salt    = salt;
+    s_last_salt_gen = xTaskGetTickCount();
+}
+
+uint32_t split_session_get_local_salt(void) { return s_local_salt; }
 
 /* =========================================================================
  * Stored key

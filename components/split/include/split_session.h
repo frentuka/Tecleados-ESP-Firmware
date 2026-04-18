@@ -40,6 +40,8 @@ void     split_session_set_latency_us(uint16_t v);
 
 /* ---- Sequence number (thread-safe) ------------------------------------- */
 uint64_t split_session_next_seq(void);
+void     split_session_reset_tx_seq(void);
+
 
 /* ---- Anti-replay window ------------------------------------------------ */
 /**
@@ -60,7 +62,41 @@ bool split_session_is_link_stale(void);
 void       split_session_mark_connected_now(void);
 TickType_t split_session_connected_at(void);
 
+/* ---- Session Stability (Grace periods & debounce) ---------------------- */
+void split_session_set_grace(uint32_t ms);
+bool split_session_is_grace_period(void);
+
+void     split_session_set_last_peer_salt(uint32_t salt);
+uint32_t split_session_get_last_peer_salt(void);
+
+/* ---- Transient session salts (for TSK derivation) ---------------------- */
+/**
+ * @brief Set the local salt used for TSK derivation, with a 10-second stickiness
+ *        guard to prevent race conditions during rapid reconnects.
+ *        Silently ignored if a salt was set within the last 10 seconds.
+ */
+void     split_session_set_local_salt(uint32_t salt);
+
+/**
+ * @brief Forcibly set the local salt, bypassing the stickiness guard.
+ *        Use ONLY at pairing completion, where a fresh authoritative salt is
+ *        always required regardless of elapsed time.
+ */
+void     split_session_force_local_salt(uint32_t salt);
+
+uint32_t split_session_get_local_salt(void);
+
+/* ---- Authentication Failures (Decryption Errors) ----------------------- */
+/**
+ * @brief Track subsequent decryption failures from the peer. 
+ *        A burst of failures (e.g., 5) indicates a broken session key.
+ */
+void    split_session_inc_auth_failure(void);
+uint32_t split_session_get_auth_failures(void);
+void    split_session_reset_auth_failures(void);
+
 /* ---- Long-term session key (derived during pairing, kept in NVS) ------- */
 /** @param key 16-byte AES-128 key, or NULL to zero the stored copy. */
 void           split_session_set_stored_key(const uint8_t *key);
 const uint8_t *split_session_stored_key(void);
+

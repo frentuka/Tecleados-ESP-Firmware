@@ -5,7 +5,9 @@
 
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "freertos/semphr.h"
+
 
 #include "psa/crypto.h"
 
@@ -15,8 +17,17 @@
  * SPLIT_ESP_NOW_MAX(250) - SPLIT_FRAME_OVERHEAD(10) = 240 bytes. */
 #define CRYPTO_BUF_MAX 244
 
-/* Single static DMA-capable bounce buffer protected by a binary semaphore. */
-static uint8_t           s_dma_buf[CRYPTO_BUF_MAX];
+/* Total DMA Workspace (512 bytes)
+ * Hardware engines (PSA/AES) on ESP32-S3 cannot access stack memory. 
+ * We use a dedicated, globally-addressable Dram region split into two halves 
+ * to ensure input and output NEVER overlap and NEVER touch the stack. */
+#define CRYPTO_DMA_WORK_SIZE  512
+static uint8_t           s_dma_work[CRYPTO_DMA_WORK_SIZE] __attribute__((aligned(4)));
+#define DMA_IN               (s_dma_work + 0)
+#define DMA_OUT              (s_dma_work + 256)
+
+static uint8_t s_dma_aad[32] __attribute__((aligned(4))); // DMA-safe AAD buffer (≥ SPLIT_FRAME_HEADER_SIZE = 10)
+
 static SemaphoreHandle_t s_dma_sem = NULL;
 static portMUX_TYPE      s_init_mux = portMUX_INITIALIZER_UNLOCKED;
 
@@ -51,17 +62,19 @@ static void ensure_dma_sem(void)
     portEXIT_CRITICAL(&s_init_mux);
 }
 
-// KDF: SHA-256(shared_secret || KDF_LABEL) → first 16 bytes become the session key.
+// KDF: SHA-256(shared_secret || KDF_LABEL) -> first 16 bytes become the session key.
 #define KDF_LABEL     "split_v1"
 #define KDF_LABEL_LEN (sizeof(KDF_LABEL) - 1)
 
 static void build_nonce(uint64_t seq, uint8_t nonce[SPLIT_CRYPTO_NONCE_SIZE])
 {
-    // Copy 48 bits of sequence (little-endian)
+    // NIST CCM requires a nonce of 7-13 bytes. We use 13 bytes.
+    // CRITICAL: Pre-zero the buffer to ensure bytes 6-12 are stable.
+    memset(nonce, 0, SPLIT_CRYPTO_NONCE_SIZE);
+
     for (int i = 0; i < 6; i++) {
         nonce[i] = (uint8_t)((seq >> (i * 8)) & 0xFF);
     }
-    memset(nonce + 6, 0, SPLIT_CRYPTO_NONCE_SIZE - 6);
 }
 
 /* =========================================================================
@@ -99,8 +112,18 @@ esp_err_t split_crypto_ecdh_get_public(split_crypto_ecdh_t handle,
     if (!handle || !out_pub) return ESP_ERR_INVALID_ARG;
     split_ecdh_context_t *ctx = (split_ecdh_context_t *)handle;
 
+    ensure_dma_sem();
+    if (xSemaphoreTake(s_dma_sem, pdMS_TO_TICKS(500)) != pdTRUE) return ESP_ERR_TIMEOUT;
+
     size_t out_len = 0;
-    psa_status_t status = psa_export_public_key(ctx->key_id, out_pub, SPLIT_CRYPTO_PUBKEY_SIZE, &out_len);
+    psa_status_t status = psa_export_public_key(ctx->key_id, DMA_OUT, SPLIT_CRYPTO_PUBKEY_SIZE, &out_len);
+    
+    if (status == PSA_SUCCESS && out_len == SPLIT_CRYPTO_PUBKEY_SIZE) {
+        memcpy(out_pub, DMA_OUT, SPLIT_CRYPTO_PUBKEY_SIZE);
+    }
+    
+    xSemaphoreGive(s_dma_sem);
+
     if (status != PSA_SUCCESS || out_len != SPLIT_CRYPTO_PUBKEY_SIZE) {
         ESP_LOGE(TAG, "psa_export_public_key: %d", (int)status);
         return ESP_FAIL;
@@ -116,37 +139,43 @@ esp_err_t split_crypto_ecdh_derive_key(split_crypto_ecdh_t handle,
     if (!handle || !peer_pub || !out_key) return ESP_ERR_INVALID_ARG;
     split_ecdh_context_t *ctx = (split_ecdh_context_t *)handle;
 
-    uint8_t secret[SPLIT_CRYPTO_PUBKEY_SIZE];
-    size_t  secret_len = 0;
+    ensure_dma_sem();
+    if (xSemaphoreTake(s_dma_sem, pdMS_TO_TICKS(500)) != pdTRUE) return ESP_ERR_TIMEOUT;
 
+    // Use DMA_IN for peer public key
+    memcpy(DMA_IN, peer_pub, SPLIT_CRYPTO_PUBKEY_SIZE);
+
+    size_t  secret_len = 0;
     psa_status_t status = psa_raw_key_agreement(PSA_ALG_ECDH, ctx->key_id,
-                                                peer_pub, SPLIT_CRYPTO_PUBKEY_SIZE,
-                                                secret, sizeof(secret), &secret_len);
+                                                DMA_IN, SPLIT_CRYPTO_PUBKEY_SIZE,
+                                                DMA_OUT, 32, &secret_len);
     if (status != PSA_SUCCESS) {
         ESP_LOGE(TAG, "psa_raw_key_agreement: %d", (int)status);
+        xSemaphoreGive(s_dma_sem);
         return ESP_FAIL;
     }
 
-    // KDF: SHA-256(secret || KDF_LABEL) → first 16 bytes become the AES-128 session key.
-    uint8_t kdf_input[SPLIT_CRYPTO_PUBKEY_SIZE + KDF_LABEL_LEN];
-    memcpy(kdf_input,                         secret,    SPLIT_CRYPTO_PUBKEY_SIZE);
-    memcpy(kdf_input + SPLIT_CRYPTO_PUBKEY_SIZE, KDF_LABEL, KDF_LABEL_LEN);
+    // Now build KDF input: SHA-256(secret || label)
+    // secret is in DMA_OUT[0..31]
+    memcpy(DMA_IN,                            DMA_OUT, SPLIT_CRYPTO_PUBKEY_SIZE);
+    memcpy(DMA_IN + SPLIT_CRYPTO_PUBKEY_SIZE, KDF_LABEL, KDF_LABEL_LEN);
 
-    uint8_t digest[32];
     size_t digest_len = 0;
-    status = psa_hash_compute(PSA_ALG_SHA_256, kdf_input, sizeof(kdf_input),
-                              digest, sizeof(digest), &digest_len);
+    status = psa_hash_compute(PSA_ALG_SHA_256, DMA_IN, SPLIT_CRYPTO_PUBKEY_SIZE + KDF_LABEL_LEN,
+                               DMA_OUT, 32, &digest_len);
 
-    // Zero sensitive material immediately.
-    memset(secret,    0, sizeof(secret));
-    memset(kdf_input, 0, sizeof(kdf_input));
+    if (status == PSA_SUCCESS) {
+        memcpy(out_key, DMA_OUT, SPLIT_CRYPTO_KEY_SIZE);
+    }
+
+    memset(s_dma_work, 0, CRYPTO_DMA_WORK_SIZE);
+    xSemaphoreGive(s_dma_sem);
 
     if (status != PSA_SUCCESS) {
-        ESP_LOGE(TAG, "psa_hash_compute: %d", (int)status);
+        ESP_LOGE(TAG, "ecdh_derive hash: %d", (int)status);
         return ESP_FAIL;
     }
 
-    memcpy(out_key, digest, SPLIT_CRYPTO_KEY_SIZE);
     return ESP_OK;
 }
 
@@ -175,7 +204,7 @@ esp_err_t split_crypto_encrypt(const uint8_t key[SPLIT_CRYPTO_KEY_SIZE],
     ensure_dma_sem();
     if (!s_dma_sem) return ESP_ERR_NO_MEM;
 
-    if (xSemaphoreTake(s_dma_sem, pdMS_TO_TICKS(50)) != pdTRUE) {
+    if (xSemaphoreTake(s_dma_sem, pdMS_TO_TICKS(500)) != pdTRUE) {
         ESP_LOGE(TAG, "encrypt: timeout");
         return ESP_ERR_TIMEOUT;
     }
@@ -197,13 +226,23 @@ esp_err_t split_crypto_encrypt(const uint8_t key[SPLIT_CRYPTO_KEY_SIZE],
     uint8_t nonce[SPLIT_CRYPTO_NONCE_SIZE];
     build_nonce(seq, nonce);
 
+    // Paranoia guard: if aad_len ever exceeds the DMA buffer the MIC computed
+    // by encrypt and decrypt will differ silently. Fail loudly instead.
+    assert(aad_len <= sizeof(s_dma_aad));
+    memset(s_dma_aad, 0, sizeof(s_dma_aad));
+    if (aad && aad_len > 0) {
+        memcpy(s_dma_aad, aad, aad_len);
+    }
+
     size_t out_len = 0;
-    // PSA AEAD appends the tag to the ciphertext. We use a bounce buffer.
+    if (len > 0) memcpy(DMA_IN, buf, len);
+
+    // Hardware DMA Isolation: No stack access.
     status = psa_aead_encrypt(key_id, PSA_ALG_AEAD_WITH_SHORTENED_TAG(PSA_ALG_CCM, SPLIT_CRYPTO_MIC_SIZE),
-                              nonce, SPLIT_CRYPTO_NONCE_SIZE,
-                              aad, aad_len,
-                              buf, len,
-                              s_dma_buf, sizeof(s_dma_buf), &out_len);
+                               nonce, SPLIT_CRYPTO_NONCE_SIZE,
+                               s_dma_aad, aad_len,
+                               DMA_IN, len,
+                               DMA_OUT, 256, &out_len);
 
     psa_destroy_key(key_id);
 
@@ -213,11 +252,10 @@ esp_err_t split_crypto_encrypt(const uint8_t key[SPLIT_CRYPTO_KEY_SIZE],
         return ESP_FAIL;
     }
 
-    // s_dma_buf contains [ciphertext (len bytes) | tag (4 bytes)]
-    if (len > 0) memcpy(buf, s_dma_buf, len);
-    memcpy(out_mic, s_dma_buf + len, SPLIT_CRYPTO_MIC_SIZE);
-    memset(s_dma_buf, 0, out_len);
-
+    if (len > 0) memcpy(buf, DMA_OUT, len);
+    memcpy(out_mic, DMA_OUT + len, SPLIT_CRYPTO_MIC_SIZE);
+    
+    memset(s_dma_work, 0, CRYPTO_DMA_WORK_SIZE);
     xSemaphoreGive(s_dma_sem);
     return ESP_OK;
 }
@@ -233,7 +271,7 @@ esp_err_t split_crypto_decrypt(const uint8_t key[SPLIT_CRYPTO_KEY_SIZE],
 
     ensure_psa_init();
     ensure_dma_sem();
-    if (xSemaphoreTake(s_dma_sem, pdMS_TO_TICKS(50)) != pdTRUE) return ESP_ERR_TIMEOUT;
+    if (xSemaphoreTake(s_dma_sem, pdMS_TO_TICKS(500)) != pdTRUE) return ESP_ERR_TIMEOUT;
 
     psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
     psa_set_key_usage_flags(&attributes, PSA_KEY_USAGE_DECRYPT);
@@ -251,23 +289,38 @@ esp_err_t split_crypto_decrypt(const uint8_t key[SPLIT_CRYPTO_KEY_SIZE],
     uint8_t nonce[SPLIT_CRYPTO_NONCE_SIZE];
     build_nonce(seq, nonce);
 
-    // Prepare combined buffer [ciphertext | tag] for PSA
-    if (len > 0) memcpy(s_dma_buf, buf, len);
-    memcpy(s_dma_buf + len, mic, SPLIT_CRYPTO_MIC_SIZE);
+    // Paranoia guard: same constraint as the encrypt path.
+    assert(aad_len <= sizeof(s_dma_aad));
+    memset(s_dma_aad, 0, sizeof(s_dma_aad));
+    if (aad && aad_len > 0) {
+        memcpy(s_dma_aad, aad, aad_len);
+    }
+
+    // Prepare combined [ciphertext | tag] in DMA_IN
+    if (len > 0) memcpy(DMA_IN, buf, len);
+    memcpy(DMA_IN + len, mic, SPLIT_CRYPTO_MIC_SIZE);
+
 
     size_t out_len = 0;
+    // Decrypt directly into DMA_OUT (DMA_OUT must NOT be stack memory)
     status = psa_aead_decrypt(key_id, PSA_ALG_AEAD_WITH_SHORTENED_TAG(PSA_ALG_CCM, SPLIT_CRYPTO_MIC_SIZE),
-                              nonce, SPLIT_CRYPTO_NONCE_SIZE,
-                              aad, aad_len,
-                              s_dma_buf, len + SPLIT_CRYPTO_MIC_SIZE,
-                              buf, len, &out_len);
+                               nonce, SPLIT_CRYPTO_NONCE_SIZE,
+                               s_dma_aad, aad_len,
+                               DMA_IN, len + SPLIT_CRYPTO_MIC_SIZE,
+                               DMA_OUT, 256, &out_len);
 
     psa_destroy_key(key_id);
-    memset(s_dma_buf, 0, len + SPLIT_CRYPTO_MIC_SIZE);
+    
+    if (status == PSA_SUCCESS) {
+        if (len > 0) memcpy(buf, DMA_OUT, len);
+    }
+
+    memset(s_dma_work, 0, CRYPTO_DMA_WORK_SIZE);
     xSemaphoreGive(s_dma_sem);
 
     if (status != PSA_SUCCESS) {
-        ESP_LOGW(TAG, "psa_aead_decrypt: %d", (int)status);
+        ESP_LOGD(TAG, "psa_aead_decrypt: %d (key=%02X.. nonce=%02X..)",
+                 (int)status, key[0], nonce[0]);
         return ESP_ERR_INVALID_CRC;
     }
 
@@ -275,27 +328,38 @@ esp_err_t split_crypto_decrypt(const uint8_t key[SPLIT_CRYPTO_KEY_SIZE],
 }
 
 esp_err_t split_crypto_derive_session_key(const uint8_t stored_key[SPLIT_CRYPTO_KEY_SIZE],
-                                           const uint8_t nonce_a[SPLIT_CRYPTO_KEY_SIZE],
-                                           const uint8_t nonce_b[SPLIT_CRYPTO_KEY_SIZE],
+                                           uint32_t salt_own, uint32_t salt_peer,
                                            uint8_t out_key[SPLIT_CRYPTO_KEY_SIZE])
 {
-    if (!stored_key || !nonce_a || !nonce_b || !out_key) return ESP_ERR_INVALID_ARG;
+    if (!stored_key || !out_key) return ESP_ERR_INVALID_ARG;
     ensure_psa_init();
+    
+    ensure_dma_sem();
+    if (xSemaphoreTake(s_dma_sem, pdMS_TO_TICKS(500)) != pdTRUE) return ESP_ERR_TIMEOUT;
 
-    uint8_t kdf_input[SPLIT_CRYPTO_KEY_SIZE * 2];
-    memcpy(kdf_input, stored_key, SPLIT_CRYPTO_KEY_SIZE);
-    for (int i = 0; i < SPLIT_CRYPTO_KEY_SIZE; i++) {
-        kdf_input[SPLIT_CRYPTO_KEY_SIZE + i] = nonce_a[i] ^ nonce_b[i];
+    uint32_t s1 = (salt_own < salt_peer) ? salt_own  : salt_peer;
+    uint32_t s2 = (salt_own < salt_peer) ? salt_peer : salt_own;
+
+    // kdf_input: stored_key(16) || s1(4) || s2(4) = 24 bytes
+    memcpy(DMA_IN, stored_key, SPLIT_CRYPTO_KEY_SIZE);
+    memcpy(DMA_IN + SPLIT_CRYPTO_KEY_SIZE,     &s1, 4);
+    memcpy(DMA_IN + SPLIT_CRYPTO_KEY_SIZE + 4, &s2, 4);
+
+    size_t digest_len = 0;
+    psa_status_t status = psa_hash_compute(PSA_ALG_SHA_256, DMA_IN, SPLIT_CRYPTO_KEY_SIZE + 8,
+                                           DMA_OUT, 32, &digest_len);
+    
+    if (status == PSA_SUCCESS) {
+        memcpy(out_key, DMA_OUT, SPLIT_CRYPTO_KEY_SIZE);
     }
 
-    uint8_t digest[32];
-    size_t digest_len = 0;
-    psa_status_t status = psa_hash_compute(PSA_ALG_SHA_256, kdf_input, sizeof(kdf_input),
-                                           digest, sizeof(digest), &digest_len);
-    memset(kdf_input, 0, sizeof(kdf_input));
+    memset(s_dma_work, 0, CRYPTO_DMA_WORK_SIZE);
+    xSemaphoreGive(s_dma_sem);
 
-    if (status != PSA_SUCCESS) return ESP_FAIL;
+    if (status != PSA_SUCCESS) {
+        ESP_LOGE(TAG, "session key KDF failed: %d", (int)status);
+        return ESP_FAIL;
+    }
 
-    memcpy(out_key, digest, SPLIT_CRYPTO_KEY_SIZE);
     return ESP_OK;
 }

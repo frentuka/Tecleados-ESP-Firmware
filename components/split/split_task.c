@@ -9,6 +9,7 @@
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "esp_event.h"
+#include "esp_random.h"
 #if CONFIG_PM_ENABLE
 #include "esp_pm.h"
 #endif
@@ -47,7 +48,7 @@
 #define SPLIT_ROLE_NEG_MS           500   // Retransmit ROLE_NEGOTIATE at this rate
 #define SPLIT_RECONNECT_MS_MIN      500   // Initial reconnect backoff
 #define SPLIT_RECONNECT_MS_MAX     5000   // Maximum reconnect backoff
-#define SPLIT_CONFIG_SYNC_SETTLE_MS 300   // Post-connect delay before config sync
+#define SPLIT_CONFIG_SYNC_SETTLE_MS 1000  // Post-connect delay before config sync
 
 /* =========================================================================
  * Task-local timing and deferred-work flags.
@@ -97,6 +98,13 @@ static inline void pm_apply_active(void) {}
 
 void split_task_send_role_negotiate(void)
 {
+    TickType_t now = xTaskGetTickCount();
+    // Safety throttle: never send negotiation packets faster than 500ms,
+    // even if triggered by the reception handler. This prevents spam loops.
+    if ((now - s_last_role_neg_tx) < pdMS_TO_TICKS(500)) {
+        return;
+    }
+
     split_role_negotiate_payload_t rp = {
         .proposed_role = 0,  // Field kept for wire compatibility; no longer used in role decision.
         .usb_connected    = (uint8_t)(tud_mounted() ? 1 : 0),
@@ -106,12 +114,13 @@ void split_task_send_role_negotiate(void)
         .last_role        = (uint8_t)split_role_load_last(),
     };
     memcpy(rp.device_id, split_session_own_mac(), 6);
+    rp.random_salt = split_session_get_local_salt();
 
     split_transport_send(split_session_peer_mac(), SPLIT_PROTO_SPLIT,
                          SPLIT_MSG_ROLE_NEGOTIATE, split_session_next_seq(),
                          (const uint8_t *)&rp, sizeof(rp));
 
-    s_last_role_neg_tx = xTaskGetTickCount();
+    s_last_role_neg_tx = now;
 }
 
 /* =========================================================================
@@ -126,6 +135,12 @@ void split_task_handle_disconnect(const char *reason)
     split_session_set_role(SPLIT_ROLE_NONE);
     split_session_set_link_stale(false);
     split_session_reset_rx_seq();
+    split_session_reset_tx_seq();
+    split_session_reset_auth_failures();
+
+
+    // Clear transport session; only the handshake fallback will work until TSK activation.
+    split_transport_set_session_key(NULL);
 
     s_reconnect_interval = SPLIT_RECONNECT_MS_MIN;
     s_last_reconnect_at  = xTaskGetTickCount();
@@ -139,6 +154,7 @@ void split_task_handle_disconnect(const char *reason)
     esp_event_post(SPLIT_EVENTS, SPLIT_EVENT_DISCONNECTED,
                    &reason_byte, sizeof(reason_byte), 0);
 }
+
 
 /* =========================================================================
  * Public state-machine helpers
@@ -245,15 +261,10 @@ static void drain_deferred_config_sync(TickType_t now)
                 continue;
             }
 
-            // Find all entries for this kind
-            for (size_t entry_idx = 0; entry_idx < SPLIT_SYNC_ENTRY_COUNT; entry_idx++) {
-                if (SPLIT_SYNC_ENTRIES[entry_idx].kind == (cfgmod_kind_t)i) {
-                    split_config_sync_push(peer_mac, split_session_next_seq,
-                                            SPLIT_SYNC_ENTRIES[entry_idx].kind,
-                                            SPLIT_SYNC_ENTRIES[entry_idx].key);
-                }
-            }
+            // Push all entries for this kind (including recursive sub-keys for macros)
+            split_config_sync_push_kind(peer_mac, split_session_next_seq, (cfgmod_kind_t)i);
         }
+
     }
 
     if (s_reverse_ble_sync) {
@@ -275,7 +286,15 @@ static void tick_connected(TickType_t now)
         return;
     }
 
+    // Reactive recovery: If we receive too many decryption failures, the session key
+    // is definitely mismatched. Force a reset now instead of waiting for timeout.
+    if (split_session_get_auth_failures() > 5) {
+        split_task_handle_disconnect("too many decryption failures");
+        return;
+    }
+
     if (since_hb >= pdMS_TO_TICKS(SPLIT_STALE_MS) && !split_session_is_link_stale()) {
+
         split_session_set_link_stale(true);
         ESP_LOGW(TAG, "link stale — no heartbeat for >%u ms", SPLIT_STALE_MS);
         esp_event_post(SPLIT_EVENTS, SPLIT_EVENT_STALE, NULL, 0, 0);
@@ -299,10 +318,15 @@ static void tick_disconnected(TickType_t now)
     if (split_pair_is_paired()) {
         ESP_LOGI(TAG, "reconnect attempt (backoff=%lu ms)",
                  (unsigned long)s_reconnect_interval);
-        // Reset transport to stored key before sending ROLE_NEGOTIATE so both
-        // sides are on a shared key before role negotiation begins.
+        // Reset transport to stored key before sending ROLE_NEGOTIATE.
+        // The salt will be rotated by the dispatch logic upon receiving a peer response
+        // or by the first negotiation trigered below if it's the first attempt.
         split_transport_set_session_key(split_session_stored_key());
+        if (split_session_get_local_salt() == 0) {
+            split_session_set_local_salt(esp_random());
+        }
         split_session_set_state(SPLIT_STATE_CONNECTING);
+
         split_task_trigger_immediate_role_neg();
     }
     s_last_reconnect_at = now;
@@ -346,6 +370,17 @@ static void split_task_main(void *arg)
 esp_err_t split_task_start(void)
 {
     if (s_task_handle) return ESP_OK;
+
+    // Register the stored paired key as our handshake fallback key.
+    // This allows ROLE_NEGOTIATE to work even across reboots with stale sessions.
+    split_transport_set_handshake_key(split_session_stored_key());
+    
+    // Start in plaintext mode; only the handshake fallback will work for negotiation.
+    split_transport_set_session_key(NULL);
+    split_session_reset_auth_failures();
+    split_session_reset_rx_seq();
+    split_session_reset_tx_seq();
+
 
     BaseType_t ret = xTaskCreateWithCaps(
         split_task_main, "split", 4096, NULL, 5, &s_task_handle,

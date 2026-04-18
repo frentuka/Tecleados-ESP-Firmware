@@ -74,6 +74,17 @@ esp_err_t split_transport_deinit(void);
  */
 void split_transport_set_session_key(const uint8_t *key);
 
+/**
+ * @brief Set the secondary "Handshake Key" used for recovery and negotiation.
+ *
+ * This key (usually the permanent paired key) is used as a fallback for
+ * ROLE_NEGOTIATE messages if decryption with the primary session key fails.
+ * This allows a rebooted device to re-enter a session with a peer that
+ * is still using a transient transient key.
+ */
+void split_transport_set_handshake_key(const uint8_t *key);
+
+
 /* =========================================================================
  * Protocol Registration
  * ========================================================================= */

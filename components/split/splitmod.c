@@ -5,8 +5,10 @@
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_event.h"
+#include "esp_random.h"
 
 #include "event_bus.h"
+
 #include "kb_system_action.h"
 #include "kb_layout.h"
 #include "kb_manager.h"
@@ -34,6 +36,10 @@
 
 static bool is_syncable_config(cfgmod_kind_t kind, const char *key)
 {
+    // Specific check for dynamic sub-keys and main indicators (Macros and Custom Keys)
+    if (kind == CFGMOD_KIND_MACRO && (strncmp(key, "mac_", 4) == 0 || strcmp(key, "macros") == 0)) return true;
+    if (kind == CFGMOD_KIND_CKEY  && (strncmp(key, "ck_", 3) == 0  || strcmp(key, "ckeys") == 0)) return true;
+
     for (size_t i = 0; i < SPLIT_SYNC_ENTRY_COUNT; i++) {
         if (SPLIT_SYNC_ENTRIES[i].kind == kind &&
             strncmp(SPLIT_SYNC_ENTRIES[i].key, key, CFGMOD_MAX_KEY_LEN) == 0) {
@@ -42,6 +48,7 @@ static bool is_syncable_config(cfgmod_kind_t kind, const char *key)
     }
     return false;
 }
+
 
 static void on_config_updated(void *arg, esp_event_base_t base,
                                int32_t event_id, void *event_data)
@@ -120,10 +127,18 @@ esp_err_t splitmod_init(void)
         split_session_set_peer_mac(pd.peer_mac);
         split_session_set_stored_key(pd.shared_key);
         split_transport_add_peer(pd.peer_mac, pd.channel);
-        split_transport_set_session_key(pd.shared_key);
+        
+        // Use Paired key ONLY for handshakes/discovery until TSK is activated
+        split_transport_set_session_key(NULL);
+        split_transport_set_handshake_key(pd.shared_key);
+
+        split_session_set_local_salt(esp_random());
+
         split_session_set_state(SPLIT_STATE_CONNECTING);
+
         ESP_LOGI(TAG, "paired — reconnecting to " MACSTR, MAC2STR(pd.peer_mac));
     } else {
+
         split_session_set_state(SPLIT_STATE_IDLE);
         ESP_LOGI(TAG, "no pairing data — idle");
     }

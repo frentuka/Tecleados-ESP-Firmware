@@ -6,6 +6,7 @@
 #include "esp_mac.h"
 #include "esp_timer.h"
 #include "esp_event.h"
+#include "esp_random.h"
 
 #include "event_bus.h"
 #include "kb_manager.h"
@@ -52,9 +53,27 @@ static void on_pairing_complete(void)
 
     split_session_set_peer_mac(pd.peer_mac);
     split_session_set_stored_key(pd.shared_key);
-    split_transport_set_session_key(pd.shared_key);
+
+    // TSK-first architecture: the paired key lives only in the handshake slot.
+    // The active session key starts NULL and is replaced by a derived TSK during
+    // the first successful ROLE_NEGOTIATE exchange. Setting it directly here would
+    // cause a key mismatch immediately after the TSK is activated by both sides.
+    split_transport_set_session_key(NULL);
+    split_transport_set_handshake_key(pd.shared_key);
+
+    // Hard-reset sequence numbers and auth failures for the fresh session.
+    split_session_reset_tx_seq();
+    split_session_reset_rx_seq();
+    split_session_reset_auth_failures();
+
+    // Force a new salt regardless of the stickiness guard — this is a brand-new
+    // pairing, so the old salt (if any) must not carry over.
+    split_session_force_local_salt(esp_random());
 
     split_session_set_state(SPLIT_STATE_CONNECTING);
+
+    // Save the new pairing data to NVS immediately.
+    split_pair_save();
 
     split_peer_info_t info = {.role = (uint8_t)split_session_get_role()};
     memcpy(info.mac, pd.peer_mac, 6);
@@ -63,21 +82,48 @@ static void on_pairing_complete(void)
     split_task_send_role_negotiate();
 }
 
+
 /* =========================================================================
  * Message-specific handlers
  * ========================================================================= */
 
-static void handle_role_negotiate_msg(const uint8_t *src_mac,
-                                       const uint8_t *payload, size_t len)
+static void on_role_negotiate(const uint8_t *src_mac, const uint8_t *payload, size_t len);
+
+static void handle_role_negotiate_msg(const uint8_t *src_mac, const uint8_t *payload, size_t len)
 {
-    split_state_t state = split_session_get_state();
-    if (state == SPLIT_STATE_CONNECTED) {
-        // Peer re-sent ROLE_NEGOTIATE (missed our transition); re-confirm.
+    const split_role_negotiate_payload_t *p = (const split_role_negotiate_payload_t *)payload;
+
+    if (split_session_get_state() == SPLIT_STATE_CONNECTED) {
+        if (p->random_salt == split_session_get_last_peer_salt()) {
+             on_role_negotiate(src_mac, payload, len);
+             return;
+        }
+
+        // Peer re-sent ROLE_NEGOTIATE with NEW salt; they likely rebooted.
+        ESP_LOGI(TAG, "peer reset detected — restarting session");
+        split_task_handle_disconnect("remote re-negotiation");
+        split_session_set_state(SPLIT_STATE_CONNECTING);
+    }
+
+    on_role_negotiate(src_mac, payload, len);
+}
+
+static void on_role_negotiate(const uint8_t *src_mac, const uint8_t *payload, size_t len)
+{
+    const split_role_negotiate_payload_t *p = (const split_role_negotiate_payload_t *)payload;
+
+    if (split_session_get_state() == SPLIT_STATE_CONNECTED && p->random_salt == split_session_get_last_peer_salt()) {
+        // Salt matched: link already active but peer missed our switch or sequences drifted.
+        // RESET sequences to 0 to allow recovery from MIC failures.
+        split_session_reset_tx_seq();
+        split_session_reset_rx_seq();
+        split_session_reset_auth_failures();
+        
+        // Respond to ensure the peer (which might have missed our previous response) sees our salt.
+        // Now safe because send_role_negotiate is throttled to 500ms.
         split_task_send_role_negotiate();
         return;
     }
-
-    if (state != SPLIT_STATE_CONNECTING) return;
 
     split_role_t decided = SPLIT_ROLE_NONE;
     esp_err_t ret = split_role_on_negotiate(src_mac, payload, len,
@@ -87,7 +133,26 @@ static void handle_role_negotiate_msg(const uint8_t *src_mac,
                                              cfg_ble_get_state()->has_unsynced_updates,
                                              split_role_load_last(),
                                              &decided);
+    
     if (ret != ESP_OK || decided == SPLIT_ROLE_NONE) return;
+
+    // TSK activation: Derive key from local and peer salts
+    uint8_t tsk[SPLIT_CRYPTO_KEY_SIZE];
+    if (split_crypto_derive_session_key(split_session_stored_key(),
+                                        split_session_get_local_salt(),
+                                        p->random_salt, tsk) == ESP_OK) {
+        
+        split_transport_set_session_key(tsk);
+        split_session_reset_tx_seq();
+        split_session_reset_rx_seq();
+        split_session_reset_auth_failures();
+        split_session_set_last_peer_salt(p->random_salt);
+        split_session_set_grace(1500);
+
+        ESP_LOGI(TAG, "TSK activated (Local Salt: 0x%08lX, Peer Salt: 0x%08lX)",
+                 (unsigned long)split_session_get_local_salt(),
+                 (unsigned long)p->random_salt);
+    }
 
     split_session_set_role(decided);
     split_role_save_last(decided);
@@ -95,6 +160,10 @@ static void handle_role_negotiate_msg(const uint8_t *src_mac,
     split_session_mark_peer_seen();
     split_session_mark_connected_now();
     split_task_reset_reconnect_backoff();
+    
+    // Respond to ensure the peer sees our salt and can also activate TSK.
+    // Throttled to 500ms in split_task.c
+    split_task_send_role_negotiate();
 
     split_peer_info_t info = {.role = (uint8_t)decided};
     memcpy(info.mac, split_session_peer_mac(), 6);
@@ -105,10 +174,7 @@ static void handle_role_negotiate_msg(const uint8_t *src_mac,
 
     split_bridge_apply_routing_for_role(decided);
     if (decided == SPLIT_ROLE_MASTER) {
-        // Negotiation handover: If the peer was connected to devices, seed them
-        const split_role_negotiate_payload_t *p = (const split_role_negotiate_payload_t *)payload;
         ble_hid_seed_handover_state(p->ble_connected_bitmap, p->selected_profile);
-
         split_task_request_config_sync_initial();
         split_bridge_send_ble_status_to_slave();
     }
@@ -231,14 +297,24 @@ static bool gate_incoming_frame(const uint8_t *src_mac, uint8_t type, uint64_t s
                            type == SPLIT_MSG_PAIR_RESPONSE);
 
     if (!is_pairing_msg) {
-        if (!split_session_check_rx_seq(seq)) {
-            ESP_LOGD(TAG, "dropped replay seq=%llu", (unsigned long long)seq);
-            return false;
+        if (type == SPLIT_MSG_ROLE_NEGOTIATE) {
+            // Negotiation packets are allowed to reset the sequence space. This is 
+            // safe because they MUST be authenticated via the handshake key (MIC check) 
+            // in split_transport before we even reach here.
+            split_session_reset_rx_seq();
+            split_session_check_rx_seq(seq);
+        } else {
+            if (!split_session_check_rx_seq(seq)) {
+                ESP_LOGD(TAG, "dropped replay seq=%llu", (unsigned long long)seq);
+                return false;
+            }
         }
+
         if (memcmp(src_mac, split_session_peer_mac(), 6) == 0) {
             split_session_mark_peer_seen();
         }
     }
+
 
     if (split_session_is_link_stale() &&
         split_session_get_state() == SPLIT_STATE_CONNECTED &&

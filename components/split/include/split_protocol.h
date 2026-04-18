@@ -9,11 +9,10 @@
  * ========================================================================= */
 
 #define SPLIT_FRAME_MAGIC        0x4B53   // "KS" (Keyboard Split)
-#define SPLIT_FRAME_VERSION      0x01
+#define SPLIT_FRAME_VERSION      0x02
 
 #define SPLIT_PROTO_SPLIT        0x01     // Split keyboard protocol
 #define SPLIT_PROTO_DONGLE       0x02     // Dongle protocol (future)
-
 #define SPLIT_FRAME_HEADER_SIZE  10       // magic(2) + proto(1) + type(1) + seq(6)
 #define SPLIT_FRAME_MIC_SIZE     4        // AES-128-CCM truncated auth tag
 #define SPLIT_FRAME_OVERHEAD     (SPLIT_FRAME_HEADER_SIZE + SPLIT_FRAME_MIC_SIZE)
@@ -120,6 +119,7 @@ typedef struct __attribute__((packed)) split_role_negotiate_payload {
     int8_t   selected_profile;   // NEW: Currently selected BLE profile (0-8, or -1)
     uint8_t  has_unsynced_ble;   // 1 if sender has a new BLE bond not yet synced to peer
     uint8_t  last_role;          // Last persisted role (split_role_t); SPLIT_ROLE_NONE if unknown
+    uint32_t random_salt;        // PER-SESSION SALT for transient session key derivation
 } split_role_negotiate_payload_t;
 
 /** SPLIT_MSG_KEY_STATE_FULL — complete matrix snapshot. */
