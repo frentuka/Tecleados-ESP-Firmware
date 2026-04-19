@@ -21,6 +21,7 @@
   - [RGB Module](#rgb-module)
   - [Button Module](#button-module)
   - [Status Module](#status-module)
+  - [Split Module](#split-module)
 - [Key Action System](#key-action-system)
 - [Layer System](#layer-system)
 - [Macro Engine](#macro-engine)
@@ -46,6 +47,7 @@ The firmware is designed around a modular component architecture using ESP-IDF. 
 - **USB HID** — Boot-compatible 6KRO + full N-Key Rollover (NKRO) via TinyUSB
 - **Bluetooth LE** — HOGP-compliant HID peripheral; up to **9 independent pairing profiles**
 - **Simultaneous USB + BLE** — Both transports active at once, with routing priority control
+- **Split Keyboard** — Dedicated module for dual-half synchronized communication via ESP-NOW, with dynamic role negotiation and AES-CCM encryption
 - **N-Key Rollover** — 32-byte virtual bitmap tracking all 256 HID keycodes simultaneously
 - **4 Layers** — Base, FN1, FN2, FN3 (FN1+FN2 simultaneously), with transparent key fall-through
 - **64 Macros** — Up to 256 events per macro, 8 execution modes (once, repeat, burst, toggle, etc.)
@@ -100,34 +102,44 @@ The firmware is a collection of independent ESP-IDF components that are wired to
 ```
 main/
  └─ main.c
-              event_bus_init()  →  event_bus ──── ESP default event loop ──────────────────────┐
-              button_init()     →  button_module                                                │
-              cfg_init()        →  config_module ── publishes CONFIG_EVENTS ───────────────────>│
-              rgb_init()        →  rgb_module    ── subscribes to KB_EVENT_LED_STATE ──────────<│
-              usb_init()        →  usb_module                                                   │
-              ble_hid_init()    →  ble_module    ── publishes BLE_EVENTS ──────────────────────>│
+              event_bus_init()  →  event_bus ──── ESP default event loop ────────────────────────┐
+              button_init()     →  button_module                                                 │
+              cfg_init()        →  config_module ── publishes CONFIG_EVENTS ────────────────────>│
+              rgb_init()        →  rgb_module    ── subscribes to KB_EVENT_LED_STATE ───────────<│
+              usb_init()        →  usb_module                                                    │
+              ble_hid_init()    →  ble_module    ── publishes BLE_EVENTS ───────────────────────>│
               ble_controller_init()              ── subscribes to KB_EVENT_SYSTEM_ACTION ───────<│
               status_module_init()               ── subscribes to BLE_EVENTS, CONFIG_EVENTS ────<│
-              kb_manager_start() →  keyboard     ── publishes KB_EVENTS ───────────────────────>│
-
-  keyboard/ ──────────────────────────────────────────────────────────────────────────────────┐ │
-  │  kb_manager       Matrix scan task (1200 Hz), debounce, dispatch                          │ │
-  │  kb_macro         Virtual NKRO bitmap, action router, macro executor                      │ │
-  │  kb_system_action Tap/Hold engine → publishes KB_EVENT_SYSTEM_ACTION                      │ │
+              splitmod_init()                    ── subscribes to CONFIG_EVENTS ────────────────<│
+              kb_manager_start() →  keyboard     ── publishes KB_EVENTS ────────────────────────>│
+                                                                                                 │
+  split/ ──────────────────────────────────────────────────────────────────────────────────────┐ │
+  │  split_session    Session state (role, MACs, sequence counters, keys)                      │ │
+  │  split_task       Main state-machine task (pairing, connecting, connected)                 │ │
+  │  split_dispatch   Inbound routing, sequence validation                                     │ │
+  │  split_sync       Matrix state proxying                                                    │ │
+  │  split_config_syn Fragmented NVS replication                                               │ │
+  └────────────────────────────────────────────────────────────────────────────────────────────┘ │
+                                                                                                 │
+  keyboard/ ───────────────────────────────────────────────────────────────────────────────────┐ │
+  │  kb_manager       Matrix scan task (1200 Hz), debounce, dispatch                           │ │
+  │  kb_macro         Virtual NKRO bitmap, action router, macro executor                       │ │
+  │  kb_system_action Tap/Hold engine → publishes KB_EVENT_SYSTEM_ACTION                       │ │
   │  kb_custom_key    PressRelease + MultiAction → subscribes to KB_EVENT_SYSTEM_ACTION        │ │
-  │  kb_layout        Keymap lookup (PSRAM + DRAM caches)                                     │ │
+  │  kb_layout        Keymap lookup (PSRAM + DRAM caches)                                      │ │
   │  kb_report        USB/BLE HID report routing (direct call, transport selection)            │ │
   │  kb_state         LED state tracker → publishes KB_EVENT_LED_STATE                         │ │
   │  kb_matrix        GPIO matrix driver + ISR                                                 │ │
   └────────────────────────────────────────────────────────────────────────────────────────────┘ │
-                                                                                                  │
-  event_bus/ ◄──────────────────────────────────────────────────────────────────────────────────┘
+                                                                                                 │
+  event_bus/ ◄───────────────────────────────────────────────────────────────────────────────────┘
      Thin wrapper around esp_event_loop_create_default()
      Owns: KB_EVENTS, BLE_EVENTS, CONFIG_EVENTS definitions
 
   usb_module/ ─── Interface 0: Keyboard HID │ Interface 1: Comm channel (config protocol)
   ble_module/ ─── HOGP peripheral, 9 pairing profiles, NimBLE, bond keys in NVS
   config_module/ ─ NVS storage, cJSON serialization, USB wire protocol
+  split/ ──────── ESP-NOW peer-to-peer link, dynamic role negotiation, config sync
 ```
 
 **Event Domains:**
@@ -135,7 +147,7 @@ main/
 | Base | Published by | Events |
 |------|-------------|--------|
 | `KB_EVENTS` | `kb_system_action`, `kb_state` | `KB_EVENT_SYSTEM_ACTION`, `KB_EVENT_LED_STATE` |
-| `BLE_EVENTS` | `blemod` | `ROUTING_CHANGED`, `PROFILE_CONNECTED`, `PROFILE_DISCONNECTED`, `PAIRING_STARTED`, `PAIRING_COMPLETE`, `PAIRING_FAILED`, `PAIRING_TIMEOUT` |
+| `BLE_EVENTS` | `blemod` | `ROUTING_CHANGED`, `PROFILE_CONNECTED`, `PROFILE_DISCONNECTED`, `PAIRING_STARTED`, `PAIRING_COMPLETE`, |`PAIRING_FAILED`, `PAIRING_TIMEOUT` |
 | `CONFIG_EVENTS` | `cfgmod` | `CONFIG_EVENT_KIND_UPDATED` |
 
 **Initialization Order (`main.c`):**
@@ -148,7 +160,8 @@ main/
 6. `ble_hid_init()` — NimBLE stack, GATT services, security config, advertising
 7. `ble_controller_init()` — Subscribes to `KB_EVENT_SYSTEM_ACTION` to route BLE profile operations
 8. `status_module_init()` — Subscribes to `BLE_EVENTS` and `CONFIG_EVENTS`; seeds initial state from config
-9. `kb_manager_start()` — Starts matrix scanning task; `kb_custom_key_init()` subscribes to `KB_EVENT_SYSTEM_ACTION` and `CONFIG_EVENT_KIND_UPDATED`
+9. `splitmod_init()` — ESP-NOW peer-to-peer link, dynamic role negotiation, config sync fragmenter; subscribes to `CONFIG_EVENT_KIND_UPDATED`
+10. `kb_manager_start()` — Starts matrix scanning task; `kb_custom_key_init()` subscribes to `KB_EVENT_SYSTEM_ACTION` and `CONFIG_EVENT_KIND_UPDATED`
 
 ---
 
@@ -490,6 +503,22 @@ Publishes device status information (connection state, active profiles, etc.) th
 
 ---
 
+### Split Module
+
+**Location:** `components/split/`
+
+The Split Module turns two independent ESP32 halves into a single, cohesive keyboard using low-latency ESP-NOW peer-to-peer communication over 2.4 GHz.
+
+**Key Features:**
+
+- **Dynamic Role Negotiation:** Automatically resolves Master vs Slave roles on connect based on current USB/BLE states and historical connections. No hardcoded left/right.
+- **AES-CCM Encryption:** All traffic is encrypted and authenticated (AES-128-CCM) using a Transient Session Key (TSK) derived via X25519 ECDH + HKDF. Anti-replay is guaranteed by cross-reboot sequence epochs.
+- **State Proxying:** Transparently proxies the slave's matrix state, battery level, and BLE commands to the master.
+- **Config Sync:** A 256-bit fragmented payload reassembler automatically mirrors configuration (keymaps, macros, settings) between halves.
+
+
+---
+
 ## Key Action System
 
 Every key in every layer stores a **16-bit action code**. The range of the code determines how `kb_macro_process_action()` handles it:
@@ -714,108 +743,6 @@ For the full specification including failure recovery, CRC details, and system c
 
 ---
 
-## Testing
-
-The firmware includes a comprehensive host-based unit test suite that compiles and runs on your development machine — no ESP32 hardware or ESP-IDF toolchain required.
-
-**Location:** `test/` — See [`test/TEST.md`](test/TEST.md) for full documentation.
-
-### Test Architecture
-
-- **Production code linked directly** — 9 modules (`event_bus.c`, `kb_state.c`, `usb_crc.c`, `kb_report.c`, `kb_system_action.c`, `kb_layout.c`, `cfg_layouts.c`, `usb_callbacks_rx.c`, `statusmod.c`) are compiled from real source via `#include` in `main.c`, tested against mocks at the ESP-IDF boundary
-- **Shim header interception** — `test/include/` contains shim headers (e.g., `esp_log.h`, `freertos/FreeRTOS.h`) that redirect to mocks when production code `#include`s them; include path ordering ensures shims are found first
-- **Custom test framework** (`test/include/test_harness.h`) — zero-dependency C test harness with self-registering `TEST_CASE` macros, per-suite `TEST_SETUP`/`TEST_TEARDOWN`, assertion helpers, test filtering (`-k`), JUnit XML output (`--junit`), and a console runner
-- **Mock layer** (`test/include/mocks/`) — lightweight replacements for ESP-IDF APIs (NVS, esp_event, FreeRTOS, TinyUSB, BLE) with controllable state (timer, semaphore force-fail, queue force-full/empty)
-- **Single-translation-unit build** — `main.c` `#include`s production `.c` files and all test `.c` files, avoiding linker complexity
-- **Cross-platform** — works with MSVC (Windows), GCC, and Clang
-
-### Test Modules
-
-Tests are organized into three categories. Every test exercises real production code — there are no re-implementations or constants-only tests.
-
-**`keyboard/`** — Keyboard subsystem (4 files)
-
-| Test File | Component | Tests | What's Covered |
-|-----------|-----------|-------|----------------|
-| `test_kb_state.c` | `kb_state.c` | 8 | LED state tracking, event posting on change |
-| `test_kb_report.c` | `kb_report.c` | 15 | NKRO→6KRO conversion, USB/BLE routing priority |
-| `test_kb_layout.c` | `cfg_layouts.c` + `kb_layout.c` | 19 | Factory defaults, transparent fallthrough, DRAM swap cache, NVS-injected layers |
-| `test_kb_system_action.c` | `kb_system_action.c` | 12 | Tap/hold state machine, timing, concurrent trackers |
-
-**`usb/`** — USB communication (2 files)
-
-| Test File | Component | Tests | What's Covered |
-|-----------|-----------|-------|----------------|
-| `test_usb_crc.c` | `usb_crc.c` | 11 | CRC-8 round-trip, corruption detection, every-byte-flip coverage |
-| `test_usb_rx.c` | `usb_callbacks_rx.c` | 12 | Blast-mode RX, bitmap tracking, packet ordering, commit, duplicate rejection |
-
-**`system/`** — System-level (2 files)
-
-| Test File | Component | Tests | What's Covered |
-|-----------|-----------|-------|----------------|
-| `test_event_bus.c` | `event_bus.c` | 10 | Event post/retrieve, handler registration, payload struct sizing |
-| `test_status_module.c` | `statusmod.c` | 15 | BLE event-driven state cache, profile connect/disconnect bitmap, pairing lifecycle, routing mode, USB callback |
-
-**Total: 102 tests, 256 assertions across 8 test modules.**
-
-### Running Tests
-
-**Option A — MSVC (Windows, recommended):**
-
-```bash
-cd test
-_build.bat
-test_runner.exe
-```
-
-Or manually (open a Developer Command Prompt or run `vcvarsall.bat x64` first):
-
-```bash
-cd test
-cl /nologo /W3 /std:c17 /Fe:test_runner.exe /Iinclude ^
-  /I../../components/keyboard/include ^
-  /I../../components/event_bus/include ^
-  /I../../components/config_module/include ^
-  /I../../components/ble_module/include ^
-  main.c
-test_runner.exe
-```
-
-**Option B — GCC / Clang (Linux, macOS, MinGW):**
-
-```bash
-cd test
-gcc -std=c99 -Wall -Wextra -o test_runner \
-  -Iinclude \
-  -I../../components/keyboard/include \
-  -I../../components/event_bus/include \
-  -I../../components/config_module/include \
-  -I../../components/ble_module/include \
-  main.c -lm
-./test_runner
-```
-
-**Test filtering and JUnit output:**
-
-```bash
-test_runner -k usb_crc          # Run only tests matching "usb_crc"
-test_runner -k hold             # Run only tests with "hold" in the name
-test_runner --junit             # Write test_results.xml (JUnit format)
-test_runner -k kb_state --junit # Combine both
-```
-
-### Mock Layer
-
-| Mock Header | Replaces | Key Capabilities |
-|-------------|----------|------------------|
-| `mock_esp.h` | `esp_err.h`, `esp_log.h`, `esp_timer.h` | Error codes, no-op logging, controllable timer (`mock_timer_set`/`advance`) |
-| `mock_freertos.h` | FreeRTOS | Semaphore tracking (force-fail, taken state), queue simulation (force-full/empty), tick control, task stubs |
-| `mock_esp_event.h` | `esp_event` | Records posted events, handler registration, find/count/dispatch helpers |
-| `mock_nvs.h` | `nvs_flash` | In-memory NVS with 256 entries, inject/reset for test setup |
-| `mock_tinyusb.h` | TinyUSB, BLE stubs | Captures HID reports, USB/BLE routing state control |
-
----
-
 ## Roadmap
 
 - [x] USB HID keyboard (6KRO + NKRO)
@@ -826,10 +753,10 @@ test_runner -k kb_state --junit # Combine both
 - [x] Tap/hold gesture recognition engine
 - [x] Persistent NVS storage with binary/JSON dual-path
 - [x] React web configurator over WebHID
+- [x] Split keyboard support (host/slave communication)
 - [x] Blast+Reconcile multi-packet USB protocol with CRC-8
 - [x] BLE multi-profile with static random address rotation
 - [ ] Battery level reporting (BAS characteristic currently hardcoded)
 - [ ] 2.4 GHz wireless via ESP-NOW dongle
-- [ ] Split keyboard support (host/slave communication)
 - [ ] QMK firmware compatibility layer
 - [ ] OLED display support
