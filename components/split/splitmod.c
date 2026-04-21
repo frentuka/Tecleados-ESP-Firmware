@@ -277,4 +277,5 @@ split_status_t splitmod_get_status(void)
 
 bool         splitmod_is_enabled(void)   { return split_session_get_state() != SPLIT_STATE_DISABLED; }
 bool         splitmod_is_connected(void) { return split_session_get_state() == SPLIT_STATE_CONNECTED; }
+bool         splitmod_is_link_stale(void) { return split_session_is_link_stale(); }
 split_role_t splitmod_get_role(void)     { return split_session_get_role(); }

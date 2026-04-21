@@ -102,6 +102,11 @@ bool splitmod_is_enabled(void);
 bool splitmod_is_connected(void);
 
 /**
+ * @brief Check if the split link is currently stale (no heartbeat for >1.5s).
+ */
+bool splitmod_is_link_stale(void);
+
+/**
  * @brief Get the current role of this device.
  */
 split_role_t splitmod_get_role(void);

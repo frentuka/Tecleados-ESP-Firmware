@@ -27,11 +27,12 @@ static volatile RGBColor s_color = {0,0,0};
 
 // When true, the split state owns the LED and caps-lock events are ignored
 static volatile bool s_split_override = false;
+static uint8_t s_last_kb_led_state = 0;
 
 static led_strip_handle_t s_strip = NULL;
 
 // Worker
-typedef enum { CMD_SET_ON, CMD_SET_COLOR } cmd_type_t;
+typedef enum { CMD_SET_ON, CMD_SET_COLOR, CMD_SYNC } cmd_type_t;
 typedef struct {
     cmd_type_t type;
     union {
@@ -42,6 +43,8 @@ typedef struct {
 
 static QueueHandle_t s_q = NULL;
 static TaskHandle_t  s_worker = NULL;
+
+static inline void rgb_post(const rgb_cmd_t *cmd);
 
 static void apply_color_locked(void)
 {
@@ -55,12 +58,50 @@ static void apply_color_locked(void)
     (void)led_strip_refresh(s_strip);
 }
 
+static void rgb_sync_to_system_state(void)
+{
+    split_status_t status = splitmod_get_status();
+    
+    // Logic: Decide what the LED SHOULD be
+    bool target_on = false;
+    RGBColor target_color = {0,0,0};
+    bool target_override = false;
+
+    if (status.state == SPLIT_STATE_PAIRING) {
+        target_override = true;
+        target_color = (RGBColor){0, 0, 40}; // Solid blue
+        target_on = true;
+    } else if (status.state == SPLIT_STATE_CONNECTED) {
+        // Master/Slave bridge: check for stale link
+        if (splitmod_is_link_stale()) {
+             target_override = true;
+             target_color = (RGBColor){20, 10, 0}; // Dim yellow
+             target_on = true;
+        } else {
+             target_override = false;
+             target_on = (s_last_kb_led_state & KB_LED_BIT_CAPS_LOCK) != 0;
+             target_color = (RGBColor){25, 0, 0}; // Red for caps
+        }
+    } else if (status.state == SPLIT_STATE_DISCONNECTED) {
+        target_override = true;
+        target_color = (RGBColor){15, 0, 0}; // Dim red
+        target_on = true;
+    }
+
+    // Force assertion
+    s_split_override = target_override;
+    s_color = target_color;
+    s_on = target_on;
+    apply_color_locked();
+}
+
 // RGB Worker task
 static void rgb_worker_task(void *arg)
 {
     rgb_cmd_t cmd;
     for (;;) {
-        if (xQueueReceive(s_q, &cmd, portMAX_DELAY)) {
+        // Wait up to 2 seconds for a command. If timeout, refresh state anyway.
+        if (xQueueReceive(s_q, &cmd, pdMS_TO_TICKS(2000))) {
             switch (cmd.type) {
                 case CMD_SET_ON:
                     s_on = cmd.u.on;
@@ -70,77 +111,48 @@ static void rgb_worker_task(void *arg)
                     s_color = cmd.u.color;
                     if (s_on) apply_color_locked();
                     break;
+                case CMD_SYNC:
+                    rgb_sync_to_system_state();
+                    break;
             }
+        } else {
+            // Periodic refresh to prevent drift or stuck LEDs
+            rgb_sync_to_system_state();
         }
     }
 }
 
 static void rgb_led_state_handler(void *arg, esp_event_base_t base,
                                   int32_t event_id, void *data) {
-    if (s_split_override) return;  // split state owns the LED
-    uint8_t led = *(uint8_t *)data;
-    if (led & KB_LED_BIT_CAPS_LOCK) {
-        rgb_set_color((RGBColor){25, 0, 0});
-        rgb_set(true);
-    } else {
-        rgb_set(false);
-    }
+    s_last_kb_led_state = *(uint8_t *)data;
+    rgb_cmd_t cmd = {.type = CMD_SYNC};
+    rgb_post(&cmd);
 }
 
 static void rgb_split_event_handler(void *arg, esp_event_base_t base,
                                      int32_t event_id, void *data) {
+    // Immediate response to event by triggering a sync
+    rgb_cmd_t cmd = {.type = CMD_SYNC};
+    
+    // For some events, we might want to set the transient state immediately 
+    // to avoid the 10ms task latency if desired, but CMD_SYNC is very fast.
+    
+    // Explicit overrides for events to ensure they take effect immediately
     switch ((split_event_id_t)event_id) {
-
-    case SPLIT_EVENT_PAIR_STARTED:
-        // Solid blue while in pairing mode
-        s_split_override = true;
-        rgb_set_color((RGBColor){0, 0, 40});
-        rgb_set(true);
-        break;
-
-    case SPLIT_EVENT_PAIR_COMPLETE:
-        // Brief green confirmation — will be overridden by CONNECTED soon
-        s_split_override = true;
-        rgb_set_color((RGBColor){0, 40, 0});
-        rgb_set(true);
-        break;
-
-    case SPLIT_EVENT_PAIR_FAILED:
-        // Red on failure
-        s_split_override = true;
-        rgb_set_color((RGBColor){40, 0, 0});
-        rgb_set(true);
-        break;
-
-    case SPLIT_EVENT_CONNECTED:
-        // Clear override — caps-lock handler resumes
-        s_split_override = false;
-        rgb_set(false);
-        break;
-
-    case SPLIT_EVENT_DISCONNECTED:
-        // Dim red to indicate lost connection
-        s_split_override = true;
-        rgb_set_color((RGBColor){15, 0, 0});
-        rgb_set(true);
-        break;
-
-    case SPLIT_EVENT_STALE:
-        // Dim yellow to indicate stale link
-        s_split_override = true;
-        rgb_set_color((RGBColor){20, 10, 0});
-        rgb_set(true);
-        break;
-
-    case SPLIT_EVENT_STALE_RECOVERED:
-        // Clear override — link is healthy again
-        s_split_override = false;
-        rgb_set(false);
-        break;
-
-    default:
-        break;
+        case SPLIT_EVENT_CONNECTED:
+        case SPLIT_EVENT_STALE_RECOVERED:
+            s_split_override = false;
+            break;
+        case SPLIT_EVENT_DISCONNECTED:
+        case SPLIT_EVENT_STALE:
+        case SPLIT_EVENT_PAIR_STARTED:
+            s_split_override = true;
+            break;
+        default:
+            break;
     }
+
+    rgb_post(&cmd);
 }
 
 int rgb_init(gpio_num_t data_gpio)
