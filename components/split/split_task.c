@@ -61,6 +61,7 @@
 
 static TickType_t s_last_discovery_tx = 0;
 static TickType_t s_last_role_neg_tx  = 0;
+static TickType_t s_last_hb_tx        = 0;
 static TickType_t s_last_reconnect_at = 0;
 static uint32_t   s_reconnect_interval = SPLIT_RECONNECT_MS_MIN;
 static TickType_t s_pairing_deadline  = 0;
@@ -228,7 +229,22 @@ static void tick_connecting(TickType_t now)
 
 static void tick_heartbeat(TickType_t now)
 {
-    if ((now - split_transport_get_last_tx_time()) < pdMS_TO_TICKS(SPLIT_HEARTBEAT_MS)) return;
+    // HEARTBEAT OPTIMIZATION: 
+    // We only suppress the heartbeat if the link is confirmed BIDIRECTIONAL.
+    // 1. We recently SENT something (so the peer knows we are alive).
+    // 2. We recently RECEIVED something (so we know the peer is alive).
+    // If both are true, a heartbeat is redundant and can be suppressed.
+    bool talked = (now - split_transport_get_last_tx_time()) < pdMS_TO_TICKS(SPLIT_HEARTBEAT_MS);
+    bool heard  = (now - split_session_peer_last_seen())    < pdMS_TO_TICKS(SPLIT_HEARTBEAT_MS);
+
+    if (talked && heard) {
+        return;
+    }
+
+    // Safety throttle: even if one direction is silent, don't spam heartbeats
+    // faster than the defined interval.
+    if ((now - s_last_hb_tx) < pdMS_TO_TICKS(SPLIT_HEARTBEAT_MS)) return;
+    s_last_hb_tx = now;
 
     uint8_t bat_pct = battery_get_level_pct();
     if (bat_pct != 0xFF) {
