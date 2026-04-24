@@ -14,12 +14,16 @@ import { getFlagsString } from './utils/packetUtils';
 import type { DeviceStatus, LogMessage } from './types/device';
 import './index.css';
 
+import { LayoutIcon, MacrosIcon, CustomKeysIcon, SplitIcon, IdentityIcon } from './components/SidebarIcons';
+
 // Re-export types for backward compatibility — consumers can import from './App'
 export type { Macro, MacroElement, MacroAction } from './types/macros';
 export type { CustomKey } from './types/customKeys';
 
+type ActiveSection = 'layout' | 'macros' | 'customKeys' | 'split' | 'identity';
 
 function App() {
+  const [activeSection, setActiveSection] = useState<ActiveSection>('layout');
   const [isConnected, setIsConnected] = useState(false);
   const [deviceStatus, setDeviceStatus] = useState<DeviceStatus | null>(null);
   const [isDeveloperMode, setIsDeveloperMode] = useState<boolean>(() => {
@@ -221,66 +225,128 @@ function App() {
       </header>
 
       {isConnected && (
-        <>
-          <div className="glass-panel">
-            <KeyboardLayoutEditor
-              isConnected={isConnected}
-              isDeveloperMode={isDeveloperMode}
-              macros={macros}
-              customKeys={customKeys}
-              onLog={addLog}
-            />
-          </div>
+        <div className="app-layout">
+          <nav className="app-sidebar">
+            <div className="sidebar-header">
+              <span className="sidebar-title">Configurator</span>
+            </div>
+            <div className="sidebar-nav">
+              <button 
+                className={`sidebar-item ${activeSection === 'layout' ? 'active' : ''}`}
+                onClick={() => setActiveSection('layout')}
+              >
+                <LayoutIcon /> Layout
+              </button>
+              <button 
+                className={`sidebar-item ${activeSection === 'macros' ? 'active' : ''}`}
+                onClick={() => setActiveSection('macros')}
+              >
+                <MacrosIcon /> Macros
+              </button>
+              <button 
+                className={`sidebar-item ${activeSection === 'customKeys' ? 'active' : ''}`}
+                onClick={() => setActiveSection('customKeys')}
+              >
+                <CustomKeysIcon /> Custom Keys
+              </button>
+              <button 
+                className={`sidebar-item ${activeSection === 'split' ? 'active' : ''}`}
+                onClick={() => setActiveSection('split')}
+              >
+                <SplitIcon /> Split
+              </button>
+              {isDeveloperMode && (
+                <button 
+                  className={`sidebar-item ${activeSection === 'identity' ? 'active' : ''}`}
+                  onClick={() => setActiveSection('identity')}
+                >
+                  <IdentityIcon /> Identity
+                </button>
+              )}
+            </div>
+          </nav>
+          
+          <div className="app-main-content">
+            <div className={`section-container ${activeSection === 'layout' ? 'active' : ''}`}>
+              {activeSection === 'layout' && (
+                <div className="glass-panel">
+                  <KeyboardLayoutEditor
+                    isConnected={isConnected}
+                    isDeveloperMode={isDeveloperMode}
+                    macros={macros}
+                    customKeys={customKeys}
+                    onLog={addLog}
+                  />
+                </div>
+              )}
+            </div>
 
-          <div className="glass-panel">
-            <MacrosDashboard
-              macros={macros}
-              macroLimits={macroLimits}
-              isDeveloperMode={isDeveloperMode}
-              onSaveMacro={handleSaveMacro}
-              onDeleteMacro={handleDeleteMacro}
-              onReload={fetchMacros}
-              onFetchSingleMacro={fetchSingleMacro}
-            />
-          </div>
+            <div className={`section-container ${activeSection === 'macros' ? 'active' : ''}`}>
+              {activeSection === 'macros' && (
+                <div className="glass-panel">
+                  <MacrosDashboard
+                    macros={macros}
+                    macroLimits={macroLimits}
+                    isDeveloperMode={isDeveloperMode}
+                    onSaveMacro={handleSaveMacro}
+                    onDeleteMacro={handleDeleteMacro}
+                    onReload={fetchMacros}
+                    onFetchSingleMacro={fetchSingleMacro}
+                  />
+                </div>
+              )}
+            </div>
 
-          <div className="glass-panel">
-            <CustomKeysDashboard
-              customKeys={customKeys}
-              macros={macros}
-              isDeveloperMode={isDeveloperMode}
-              onSave={handleSaveCustomKey}
-              onDelete={handleDeleteCustomKey}
-              onReload={fetchCustomKeys}
-            />
-          </div>
+            <div className={`section-container ${activeSection === 'customKeys' ? 'active' : ''}`}>
+              {activeSection === 'customKeys' && (
+                <div className="glass-panel">
+                  <CustomKeysDashboard
+                    customKeys={customKeys}
+                    macros={macros}
+                    isDeveloperMode={isDeveloperMode}
+                    onSave={handleSaveCustomKey}
+                    onDelete={handleDeleteCustomKey}
+                    onReload={fetchCustomKeys}
+                  />
+                </div>
+              )}
+            </div>
 
-          <div className="glass-panel">
-            <SplitDashboard
-              isConnected={isConnected}
-              deviceStatus={deviceStatus}
-              onLog={addLog}
-            />
-          </div>
+            <div className={`section-container ${activeSection === 'split' ? 'active' : ''}`}>
+              {activeSection === 'split' && (
+                <div className="glass-panel">
+                  <SplitDashboard
+                    isConnected={isConnected}
+                    deviceStatus={deviceStatus}
+                    onLog={addLog}
+                  />
+                </div>
+              )}
+            </div>
 
-          {isDeveloperMode && (
-            <>
-              <div className="glass-panel">
-                <DeviceIdentityDashboard
+            {isDeveloperMode && (
+              <>
+                <div className={`section-container ${activeSection === 'identity' ? 'active' : ''}`}>
+                  {activeSection === 'identity' && (
+                    <div className="glass-panel">
+                      <DeviceIdentityDashboard
+                        isConnected={isConnected}
+                        onLog={addLog}
+                      />
+                    </div>
+                  )}
+                </div>
+
+                <DevControlsPanel
                   isConnected={isConnected}
-                  onLog={addLog}
+                  logs={logs}
+                  onClearLogs={() => setLogs([])}
+                  onAddLog={addLog}
                 />
-              </div>
-
-              <DevControlsPanel
-                isConnected={isConnected}
-                logs={logs}
-                onClearLogs={() => setLogs([])}
-                onAddLog={addLog}
-              />
-            </>
-          )}
-        </>
+              </>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );
