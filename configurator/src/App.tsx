@@ -66,6 +66,40 @@ function App() {
     localStorage.setItem('isDeveloperMode', isDeveloperMode.toString());
   }, [isDeveloperMode]);
 
+  // Konami Code for Developer Mode
+  useEffect(() => {
+    const konamiCode = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'b', 'a'];
+    let konamiIndex = 0;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore keydowns if user is typing in an input field
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      const key = e.key;
+      // Allow lowercase 'b' and 'a' to match
+      const isMatch = key === konamiCode[konamiIndex] || key.toLowerCase() === konamiCode[konamiIndex];
+      
+      if (isMatch) {
+        konamiIndex++;
+        if (konamiIndex === konamiCode.length) {
+          setIsDeveloperMode(prev => !prev);
+          konamiIndex = 0;
+        }
+      } else {
+        konamiIndex = 0;
+        // Check if the current key is the start of the sequence
+        if (key === konamiCode[0]) {
+          konamiIndex = 1;
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   // Subscribe to HIDService connection state (auto-reconnect, disconnect detection)
   useEffect(() => {
     const handler = (connected: boolean) => {
@@ -158,114 +192,93 @@ function App() {
     <div className="app-container">
       <header className="main-header">
         <div className="header-left">
-          {!isConnected ? (
-            <button className="btn btn-success header-btn" onClick={handleConnect}>
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-              </svg>
-              Connect
-            </button>
-          ) : (
-            <button className="btn btn-danger header-btn" onClick={handleDisconnect}>
-              Disconnect
-            </button>
-          )}
+          <div className="header-brand">
+            <div className="brand-logo">TC</div>
+            <span className="brand-title">Configurator</span>
+          </div>
         </div>
 
         <div className="header-center">
-          <StatusWidget
-            isConnected={isConnected}
-            transportMode={deviceStatus?.mode ?? 0}
-            selectedProfile={deviceStatus?.profile ?? 0}
-            pairingProfile={deviceStatus?.pairing ?? -1}
-            connectedBitmap={deviceStatus?.bitmap ?? 0}
-            splitState={deviceStatus?.split_state ?? 0}
-            splitRole={deviceStatus?.split_role ?? 0}
-            onOfflineClick={handleConnect}
-            onBleToggleRouting={() => hidService.bleToggleRouting()}
-            onBleConnect={p => hidService.bleConnect(p)}
-            onBleToggleConn={p => hidService.bleToggleConn(p)}
-            onBlePair={p => hidService.blePair(p)}
-          />
+          <div className={`center-container ${isConnected ? 'connected' : 'disconnected'}`}>
+            <button 
+              className={`btn-connection ${isConnected ? 'btn-disconnect' : 'btn-connect'}`}
+              onClick={isConnected ? handleDisconnect : handleConnect}
+              title={isConnected ? 'Disconnect' : 'Connect'}
+            >
+              {isConnected ? (
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                  <polyline points="16 17 21 12 16 7"></polyline>
+                  <line x1="21" y1="12" x2="9" y2="12"></line>
+                </svg>
+              ) : (
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path>
+                  <polyline points="10 17 15 12 10 7"></polyline>
+                  <line x1="15" y1="12" x2="3" y2="12"></line>
+                </svg>
+              )}
+            </button>
+            <nav className={`header-nav ${isConnected ? 'visible' : 'hidden'}`}>
+              <button 
+                className={`header-nav-item ${activeSection === 'layout' ? 'active' : ''}`}
+                onClick={() => setActiveSection('layout')}
+              >
+                <LayoutIcon /> <span className="nav-label">Layout</span>
+              </button>
+              <button 
+                className={`header-nav-item ${activeSection === 'macros' ? 'active' : ''}`}
+                onClick={() => setActiveSection('macros')}
+              >
+                <MacrosIcon /> <span className="nav-label">Macros</span>
+              </button>
+              <button 
+                className={`header-nav-item ${activeSection === 'customKeys' ? 'active' : ''}`}
+                onClick={() => setActiveSection('customKeys')}
+              >
+                <CustomKeysIcon /> <span className="nav-label">Custom Keys</span>
+              </button>
+              <button 
+                className={`header-nav-item ${activeSection === 'split' ? 'active' : ''}`}
+                onClick={() => setActiveSection('split')}
+              >
+                <SplitIcon /> <span className="nav-label">Split</span>
+              </button>
+              {isDeveloperMode && (
+                <button 
+                  className={`header-nav-item ${activeSection === 'identity' ? 'active' : ''}`}
+                  onClick={() => setActiveSection('identity')}
+                >
+                  <IdentityIcon /> <span className="nav-label">Identity</span>
+                </button>
+              )}
+            </nav>
+          </div>
         </div>
 
         <div className="header-right">
-          <div
-            className="header-dev-toggle"
-            onClick={() => setIsDeveloperMode(!isDeveloperMode)}
-            title="Enable developer options"
-          >
-            <span style={{ fontSize: '0.75rem', fontWeight: 600, color: isDeveloperMode ? 'var(--accent-color)' : 'var(--text-secondary)' }}>
-              DEV MODE
-            </span>
-            <div
-              style={{
-                width: '32px',
-                height: '16px',
-                background: isDeveloperMode ? 'var(--accent-color)' : '#333',
-                borderRadius: '16px',
-                position: 'relative',
-                transition: 'all 0.2s',
-              }}
-            >
-              <div style={{
-                width: '10px',
-                height: '10px',
-                background: '#fff',
-                borderRadius: '50%',
-                position: 'absolute',
-                top: '3px',
-                left: isDeveloperMode ? '19px' : '3px',
-                transition: 'all 0.2s',
-              }} />
-            </div>
+          <div className={`status-wrapper ${isConnected ? 'visible' : 'hidden'}`}>
+            <StatusWidget
+              isConnected={isConnected}
+              transportMode={deviceStatus?.mode ?? 0}
+              selectedProfile={deviceStatus?.profile ?? 0}
+              pairingProfile={deviceStatus?.pairing ?? -1}
+              connectedBitmap={deviceStatus?.bitmap ?? 0}
+              splitState={deviceStatus?.split_state ?? 0}
+              splitRole={deviceStatus?.split_role ?? 0}
+              onOfflineClick={handleConnect}
+              onBleToggleRouting={() => hidService.bleToggleRouting()}
+              onBleConnect={p => hidService.bleConnect(p)}
+              onBleToggleConn={p => hidService.bleToggleConn(p)}
+              onBlePair={p => hidService.blePair(p)}
+            />
           </div>
         </div>
+
       </header>
 
       {isConnected && (
         <div className="app-layout">
-          <nav className="app-sidebar">
-            <div className="sidebar-header">
-              <span className="sidebar-title">Configurator</span>
-            </div>
-            <div className="sidebar-nav">
-              <button 
-                className={`sidebar-item ${activeSection === 'layout' ? 'active' : ''}`}
-                onClick={() => setActiveSection('layout')}
-              >
-                <LayoutIcon /> Layout
-              </button>
-              <button 
-                className={`sidebar-item ${activeSection === 'macros' ? 'active' : ''}`}
-                onClick={() => setActiveSection('macros')}
-              >
-                <MacrosIcon /> Macros
-              </button>
-              <button 
-                className={`sidebar-item ${activeSection === 'customKeys' ? 'active' : ''}`}
-                onClick={() => setActiveSection('customKeys')}
-              >
-                <CustomKeysIcon /> Custom Keys
-              </button>
-              <button 
-                className={`sidebar-item ${activeSection === 'split' ? 'active' : ''}`}
-                onClick={() => setActiveSection('split')}
-              >
-                <SplitIcon /> Split
-              </button>
-              {isDeveloperMode && (
-                <button 
-                  className={`sidebar-item ${activeSection === 'identity' ? 'active' : ''}`}
-                  onClick={() => setActiveSection('identity')}
-                >
-                  <IdentityIcon /> Identity
-                </button>
-              )}
-            </div>
-          </nav>
-          
           <div className="app-main-content">
             <div className={`section-container ${activeSection === 'layout' ? 'active' : ''}`}>
               {activeSection === 'layout' && (
