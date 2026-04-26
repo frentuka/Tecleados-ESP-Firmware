@@ -279,3 +279,22 @@ bool         splitmod_is_enabled(void)   { return split_session_get_state() != S
 bool         splitmod_is_connected(void) { return split_session_get_state() == SPLIT_STATE_CONNECTED; }
 bool         splitmod_is_link_stale(void) { return split_session_is_link_stale(); }
 split_role_t splitmod_get_role(void)     { return split_session_get_role(); }
+
+/* =========================================================================
+ * Testing
+ * ========================================================================= */
+
+esp_err_t splitmod_send_test_beep(void)
+{
+    // 1. Trigger local beep via event bus
+    esp_event_post(SPLIT_EVENTS, SPLIT_EVENT_TEST_BEEP, NULL, 0, 0);
+
+    // 2. Send command to peer if connected
+    if (split_session_get_state() == SPLIT_STATE_CONNECTED) {
+        return split_transport_send(split_session_peer_mac(), SPLIT_PROTO_SPLIT,
+                                    SPLIT_MSG_TEST_BEEP, split_session_next_seq(),
+                                    NULL, 0);
+    }
+    
+    return ESP_ERR_INVALID_STATE;
+}

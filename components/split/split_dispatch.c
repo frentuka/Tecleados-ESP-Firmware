@@ -455,6 +455,12 @@ void split_dispatch_on_message(const uint8_t *src_mac,
         }
         break;
 
+    case SPLIT_MSG_TEST_BEEP:
+        if (split_session_get_state() == SPLIT_STATE_CONNECTED) {
+            esp_event_post(SPLIT_EVENTS, SPLIT_EVENT_TEST_BEEP, NULL, 0, 0);
+        }
+        break;
+
     /* ---- BLE proxy ---- */
     case SPLIT_MSG_BLE_CMD:
         if (split_session_get_state() == SPLIT_STATE_CONNECTED &&

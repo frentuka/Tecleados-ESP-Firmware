@@ -32,7 +32,7 @@ static uint8_t s_last_kb_led_state = 0;
 static led_strip_handle_t s_strip = NULL;
 
 // Worker
-typedef enum { CMD_SET_ON, CMD_SET_COLOR, CMD_SYNC } cmd_type_t;
+typedef enum { CMD_SET_ON, CMD_SET_COLOR, CMD_SYNC, CMD_TEST_BEEP } cmd_type_t;
 typedef struct {
     cmd_type_t type;
     union {
@@ -114,6 +114,14 @@ static void rgb_worker_task(void *arg)
                 case CMD_SYNC:
                     rgb_sync_to_system_state();
                     break;
+                case CMD_TEST_BEEP:
+                    s_split_override = true;
+                    s_color = (RGBColor){0, 40, 0}; // Green for perfect connection test
+                    s_on = true;
+                    apply_color_locked();
+                    vTaskDelay(pdMS_TO_TICKS(150));
+                    rgb_sync_to_system_state();
+                    break;
             }
         } else {
             // Periodic refresh to prevent drift or stuck LEDs
@@ -147,6 +155,9 @@ static void rgb_split_event_handler(void *arg, esp_event_base_t base,
         case SPLIT_EVENT_STALE:
         case SPLIT_EVENT_PAIR_STARTED:
             s_split_override = true;
+            break;
+        case SPLIT_EVENT_TEST_BEEP:
+            cmd.type = CMD_TEST_BEEP;
             break;
         default:
             break;

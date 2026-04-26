@@ -110,3 +110,8 @@ bool splitmod_is_link_stale(void);
  * @brief Get the current role of this device.
  */
 split_role_t splitmod_get_role(void);
+
+/**
+ * @brief Send a test beep command to the peer, and also execute it locally.
+ */
+esp_err_t splitmod_send_test_beep(void);

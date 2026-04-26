@@ -53,6 +53,7 @@ typedef enum split_msg_type : uint8_t {
     // Diagnostics (0x5_)
     SPLIT_MSG_PING            = 0x50,  // RTT benchmark probe  (Master → Slave)
     SPLIT_MSG_PONG            = 0x51,  // RTT benchmark reply  (Slave  → Master)
+    SPLIT_MSG_TEST_BEEP       = 0x52,  // Trigger RGB beep on both devices
 
     // BLE proxy (0x6_)
     SPLIT_MSG_BLE_CMD         = 0x60,  // Slave → Master: forward a BLE command from USB

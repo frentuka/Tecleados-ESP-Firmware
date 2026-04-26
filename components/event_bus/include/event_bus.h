@@ -57,6 +57,7 @@ typedef enum {
     SPLIT_EVENT_STALE,                // payload: none — no message from peer for >500 ms
     SPLIT_EVENT_STALE_RECOVERED,      // payload: none — peer traffic resumed after stale
     SPLIT_EVENT_BLE_STATUS_UPDATED,   // payload: split_ble_status_t — master BLE state pushed to slave
+    SPLIT_EVENT_TEST_BEEP,            // payload: none — trigger visual connection test beep
 } split_event_id_t;
 
 /* =========================================================================
