@@ -140,7 +140,7 @@ h3 {
 
 .brand-title {
   font-size: 1.1rem;
-  font-weight: 700;
+  font-weight: 1000;
   color: var(--text-primary);
   letter-spacing: -0.02em;
 }
@@ -183,13 +183,14 @@ h3 {
 .header-nav-item {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0.5rem 1rem;
+  gap: .4rem;
+  padding: 0.5rem 1.2rem;
   background: transparent;
   border: none;
   color: var(--text-secondary);
-  font-size: 0.85rem;
+  font-size: .85rem;
   font-weight: 600;
+  line-height: 1;
   border-radius: 26px;
   cursor: pointer;
   transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
@@ -216,6 +217,12 @@ h3 {
 
 .header-nav-item.active svg {
   opacity: 1;
+}
+
+.nav-label {
+  display: flex;
+  align-items: center;
+  padding-top: .1rem;
 }
 
 @media (max-width: 900px) {
@@ -548,11 +555,12 @@ h3 {
 
 .layout-editor {
   margin-bottom: 2rem;
-  text-align: center; /* allows inline-flex toolbar to center via margin:auto */
+  text-align: center;
+  /* allows inline-flex toolbar to center via margin:auto */
 }
 
 /* Reset inherited text-align for all direct children except the toolbar */
-.layout-editor > *:not(.layout-toolbar) {
+.layout-editor>*:not(.layout-toolbar) {
   text-align: left;
 }
 
@@ -639,8 +647,17 @@ h3 {
 }
 
 @keyframes pulse-dot {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.7; transform: scale(0.8); }
+
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.7;
+    transform: scale(0.8);
+  }
 }
 
 .layout-tab-pill-changed {
