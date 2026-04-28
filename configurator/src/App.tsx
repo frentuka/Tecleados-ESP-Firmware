@@ -14,13 +14,13 @@ import { getFlagsString } from './utils/packetUtils';
 import type { DeviceStatus, LogMessage } from './types/device';
 import './index.css';
 
-import { LayoutIcon, MacrosIcon, CustomKeysIcon, SplitIcon, IdentityIcon } from './components/SidebarIcons';
+import { LayoutIcon, MacrosIcon, SplitIcon, IdentityIcon } from './components/SidebarIcons';
 
 // Re-export types for backward compatibility — consumers can import from './App'
 export type { Macro, MacroElement, MacroAction } from './types/macros';
 export type { CustomKey } from './types/customKeys';
 
-type ActiveSection = 'layout' | 'macros' | 'customKeys' | 'split' | 'identity';
+type ActiveSection = 'layout' | 'macrosCkeys' | 'split' | 'identity';
 
 function App() {
   const [activeSection, setActiveSection] = useState<ActiveSection>('layout');
@@ -227,16 +227,10 @@ function App() {
                 <LayoutIcon /> <span className="nav-label">Layout</span>
               </button>
               <button 
-                className={`header-nav-item ${activeSection === 'macros' ? 'active' : ''}`}
-                onClick={() => setActiveSection('macros')}
+                className={`header-nav-item ${activeSection === 'macrosCkeys' ? 'active' : ''}`}
+                onClick={() => setActiveSection('macrosCkeys')}
               >
-                <MacrosIcon /> <span className="nav-label">Macros</span>
-              </button>
-              <button 
-                className={`header-nav-item ${activeSection === 'customKeys' ? 'active' : ''}`}
-                onClick={() => setActiveSection('customKeys')}
-              >
-                <CustomKeysIcon /> <span className="nav-label">Custom Keys</span>
+                <MacrosIcon /> <span className="nav-label">Macros & CKs</span>
               </button>
               <button 
                 className={`header-nav-item ${activeSection === 'split' ? 'active' : ''}`}
@@ -282,58 +276,50 @@ function App() {
           <div className="app-main-content">
             <div className={`section-container ${activeSection === 'layout' ? 'active' : ''}`}>
               {activeSection === 'layout' && (
-                <div className="glass-panel">
-                  <KeyboardLayoutEditor
-                    isConnected={isConnected}
-                    isDeveloperMode={isDeveloperMode}
-                    macros={macros}
-                    customKeys={customKeys}
-                    onLog={addLog}
-                  />
-                </div>
+                <KeyboardLayoutEditor
+                  isConnected={isConnected}
+                  isDeveloperMode={isDeveloperMode}
+                  macros={macros}
+                  customKeys={customKeys}
+                  onLog={addLog}
+                />
               )}
             </div>
 
-            <div className={`section-container ${activeSection === 'macros' ? 'active' : ''}`}>
-              {activeSection === 'macros' && (
-                <div className="glass-panel">
-                  <MacrosDashboard
-                    macros={macros}
-                    macroLimits={macroLimits}
-                    isDeveloperMode={isDeveloperMode}
-                    onSaveMacro={handleSaveMacro}
-                    onDeleteMacro={handleDeleteMacro}
-                    onReload={fetchMacros}
-                    onFetchSingleMacro={fetchSingleMacro}
-                  />
-                </div>
-              )}
-            </div>
-
-            <div className={`section-container ${activeSection === 'customKeys' ? 'active' : ''}`}>
-              {activeSection === 'customKeys' && (
-                <div className="glass-panel">
-                  <CustomKeysDashboard
-                    customKeys={customKeys}
-                    macros={macros}
-                    isDeveloperMode={isDeveloperMode}
-                    onSave={handleSaveCustomKey}
-                    onDelete={handleDeleteCustomKey}
-                    onReload={fetchCustomKeys}
-                  />
+            <div className={`section-container ${activeSection === 'macrosCkeys' ? 'active' : ''}`}>
+              {activeSection === 'macrosCkeys' && (
+                <div className="macros-ckeys-split-view">
+                  <div className="list-column">
+                    <MacrosDashboard
+                      macros={macros}
+                      macroLimits={macroLimits}
+                      isDeveloperMode={isDeveloperMode}
+                      onSaveMacro={handleSaveMacro}
+                      onDeleteMacro={handleDeleteMacro}
+                      onReload={fetchMacros}
+                      onFetchSingleMacro={fetchSingleMacro}
+                    />
+                  </div>
+                  <div className="list-column">
+                    <CustomKeysDashboard
+                      customKeys={customKeys}
+                      macros={macros}
+                      isDeveloperMode={isDeveloperMode}
+                      onSave={handleSaveCustomKey}
+                      onDelete={handleDeleteCustomKey}
+                    />
+                  </div>
                 </div>
               )}
             </div>
 
             <div className={`section-container ${activeSection === 'split' ? 'active' : ''}`}>
               {activeSection === 'split' && (
-                <div className="glass-panel">
-                  <SplitDashboard
-                    isConnected={isConnected}
-                    deviceStatus={deviceStatus}
-                    onLog={addLog}
-                  />
-                </div>
+                <SplitDashboard
+                  isConnected={isConnected}
+                  deviceStatus={deviceStatus}
+                  onLog={addLog}
+                />
               )}
             </div>
 
@@ -341,12 +327,10 @@ function App() {
               <>
                 <div className={`section-container ${activeSection === 'identity' ? 'active' : ''}`}>
                   {activeSection === 'identity' && (
-                    <div className="glass-panel">
-                      <DeviceIdentityDashboard
-                        isConnected={isConnected}
-                        onLog={addLog}
-                      />
-                    </div>
+                    <DeviceIdentityDashboard
+                      isConnected={isConnected}
+                      onLog={addLog}
+                    />
                   )}
                 </div>
 

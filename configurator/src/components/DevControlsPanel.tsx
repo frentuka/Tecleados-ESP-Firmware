@@ -172,7 +172,7 @@ export default function DevControlsPanel({ isConnected, logs, onClearLogs, onAdd
     };
 
     return (
-        <div className="dashboard glass-panel">
+        <div className="dashboard">
             <div className="controls-panel">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
                     <h3 style={{ margin: 0 }}>Controls</h3>

@@ -502,15 +502,59 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
 
     return (
         <div className="layout-editor" onMouseDown={(e) => { if (e.target === e.currentTarget) setSelectedKeys(new Set()); }}>
-            <div
-                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}
-                onMouseDown={(e) => e.stopPropagation()}
-            >
-                <h2 className="section-title">Keyboard Layout</h2>
+            {/* ── Unified Layout Toolbar: Layer tabs + Add + Options menu ── */}
+            <div className="layout-toolbar" onMouseDown={(e) => e.stopPropagation()}>
+                {/* Left: Layer tabs */}
+                <div className="layout-tabs-group">
+                    {LAYER_NAMES.map((name, i) => (
+                        <button
+                            key={i}
+                            className={`layout-tab-pill ${activeLayer === i ? 'layout-tab-pill-active' : ''} ${hasChanges[i] ? 'layout-tab-pill-changed' : ''} ${i === 0 ? 'layout-tab-pill-base' : ''}`}
+                            onClick={() => { setActiveLayer(i); setSelectedKeys(new Set()); }}
+                            title={name}
+                        >
+                            <span className="layout-tab-pill-name">{name}</span>
+                            {hasChanges[i] && (
+                                <span className="layout-tab-change-dot" title="Unsaved changes" />
+                            )}
+                            {/* Trash icon — floats above tab on hover, no inline space */}
+                            {i !== 0 && (
+                                <span
+                                    className="layout-tab-delete-btn"
+                                    title="Delete layout (coming soon)"
+                                    onClick={(e) => e.stopPropagation() /* future: delete layout */}
+                                >
+                                    <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor">
+                                        <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+                                    </svg>
+                                </span>
+                            )}
+                        </button>
+                    ))}
+
+                    {/* Add new layout button */}
+                    <button
+                        className="layout-tab-add-btn"
+                        title="Add new layout (coming soon)"
+                        onClick={() => { /* future: add new layout */ }}
+                    >
+                        <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+                            <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
+                        </svg>
+                    </button>
+                </div>
+
+                {/* Right: Options menu */}
                 <div className="menu-container" ref={menuRef}>
-                    <button className="btn-icon" onClick={() => setIsMenuOpen(!isMenuOpen)} title="Options">
-                        <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
-                            <path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z" />
+                    <button
+                        className={`layout-menu-btn ${isMenuOpen ? 'layout-menu-btn-open' : ''}`}
+                        onClick={() => setIsMenuOpen(!isMenuOpen)}
+                        title="Layout options"
+                    >
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                            <circle cx="5" cy="12" r="2" />
+                            <circle cx="12" cy="12" r="2" />
+                            <circle cx="19" cy="12" r="2" />
                         </svg>
                     </button>
                     {isMenuOpen && (
@@ -528,10 +572,10 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                         }
                                     }}
                                 >
-                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                                    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
                                         <path d="M21 2H3c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-9 15H7v-2h5v2zm4-4H7v-2h9v2zm0-4H7V7h9v2z" />
                                     </svg>
-                                    {isKeyTestMode ? 'Exit Key Test Mode' : 'Enter Key Test Mode'}
+                                    {isKeyTestMode ? 'Exit Key Test Mode' : 'Key Test Mode'}
                                 </button>
                             )}
                             {isDeveloperMode && (
@@ -542,33 +586,34 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                         setIsMenuOpen(false);
                                     }}
                                 >
-                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                                    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
                                         <path d="M3 3v18h18V3H3zm16 16H5V5h14v14zM7 7h2v2H7V7zm0 4h2v2H7v-2zm0 4h2v2H7v-2zm4-8h2v2h-2V7zm0 4h2v2h-2v-2zm0 4h2v2h-2v-2zm4-8h2v2h-2V7zm0 4h2v2h-2v-2zm0 4h2v2h-2v-2z" />
                                     </svg>
-                                    {isRowColEditMode ? 'Exit Row/Col Edit' : 'Row/Col Edit Mode'}
+                                    {isRowColEditMode ? 'Exit Row/Col Edit' : 'Row/Col Edit'}
                                 </button>
                             )}
+                            {isDeveloperMode && <div className="dropdown-divider" />}
                             <button className="dropdown-item" onClick={() => { fetchLayer(activeLayer); setIsMenuOpen(false); }}>
-                                <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
                                     <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
                                 </svg>
-                                Refresh
+                                Refresh layer
                             </button>
                             <button className="dropdown-item" onClick={() => { exportLayout(); setIsMenuOpen(false); }}>
-                                <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
                                     <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
                                 </svg>
-                                Export full layout
+                                Export layout
                             </button>
                             <button className="dropdown-item" onClick={() => { handleImportClick(); setIsMenuOpen(false); }}>
-                                <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
                                     <path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z" />
                                 </svg>
-                                Import full layout
+                                Import layout
                             </button>
                             {isDeveloperMode && (
                                 <button className="dropdown-item" onClick={() => { setShowKleImport(true); setKleError(null); setIsMenuOpen(false); }}>
-                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                                    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
                                         <path d="M20 5H4c-1.1 0-1.99.9-1.99 2L2 17c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm-9 3h2v2h-2V8zm0 3h2v2h-2v-2zM8 8h2v2H8V8zm0 3h2v2H8v-2zM5 8h2v2H5V8zm0 3h2v2H5v-2zm9 7H8v-2h6v2zm0-5h2v2h-2v-2zm0-3h2v2h-2V8zm3 3h2v2h-2v-2zm0-3h2v2h-2V8z" />
                                     </svg>
                                     Import physical layout
@@ -588,7 +633,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                 });
                                 setIsMenuOpen(false);
                             }}>
-                                <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
                                     <path d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z" />
                                 </svg>
                                 Restore defaults
@@ -666,25 +711,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                 </div>
             )}
 
-            {/* Layer tabs */}
-            <div className="layer-tabs" onMouseDown={(e) => e.stopPropagation()}>
-                {LAYER_NAMES.map((name, i) => (
-                    <button
-                        key={i}
-                        className={`layer-tab ${activeLayer === i ? 'layer-tab-active' : ''} ${hasChanges[i] ? 'layer-tab-changed' : ''}`}
-                        onClick={() => { setActiveLayer(i); setSelectedKeys(new Set()); }}
-                    >
-                        {name}
-                        {hasChanges[i] && (
-                            <span className="change-indicator" title="Unsaved changes">
-                                <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor">
-                                    <path d="M15 9H9v6h6V9zm-2 4h-2v-2h2v2zm8-2V9h-2V7c0-1.1-.9-2-2-2h-2V3h-2v2h-2V3H9v2H7c-1.1 0-2 .9-2 2v2H3v2h2v2H3v2h2v2c0 1.1.9 2 2 2h2v2h2v-2h2v2h2v-2h2c1.1 0 2-.9 2-2v-2h2v-2h-2v-2h2zm-4 6H7V7h10v10z" />
-                                </svg>
-                            </span>
-                        )}
-                    </button>
-                ))}
-            </div>
+            {/* Legacy layer tabs div removed — tabs now live in layout-toolbar above */}
 
             {/* Physical layout status */}
             {physLayoutStatus === 'error' && (
@@ -1260,7 +1287,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                     })()}
 
                     {/* Action buttons */}
-                    <div className="layout-actions" onMouseDown={(e) => e.stopPropagation()}>
+                    <div className="layout-actions" onMouseDown={(e) => e.stopPropagation()} style={{ display: 'flex', justifyContent: 'center', marginTop: '1rem' }}>
                         <input
                             type="file"
                             ref={fileInputRef}
@@ -1270,7 +1297,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                         />
 
                         {/* Universal Apply button */}
-                        <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem' }}>
+                        <div style={{ display: 'flex', gap: '0.5rem' }}>
                             {hasPhysLayoutChanges && (
                                 <button
                                     className="btn btn-success btn-apply-active"
@@ -1298,17 +1325,19 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                     Save Layout
                                 </button>
                             )}
-                            <button
-                                className={`btn ${hasChanges.some(c => c) ? 'btn-success btn-apply-active' : 'btn-apply-idle'}`}
-                                disabled={!hasChanges.some(c => c) || isSaving}
-                                onClick={saveAllModifiedLayers}
-                                title="Apply all pending changes to device"
-                            >
-                                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-                                    <path d="M15 9H9v6h6V9zm-2 4h-2v-2h2v2zm8-2V9h-2V7c0-1.1-.9-2-2-2h-2V3h-2v2h-2V3H9v2H7c-1.1 0-2 .9-2 2v2H3v2h2v2H3v2h2v2c0 1.1.9 2 2 2h2v2h2v-2h2v2h2v-2h2c1.1 0 2-.9 2-2v-2h2v-2h-2v-2h2zm-4 6H7V7h10v10z" />
-                                </svg>
-                                {isSaving ? 'Applying...' : 'Apply'}
-                            </button>
+                            {hasChanges.some(c => c) && (
+                                <button
+                                    className={`btn btn-success btn-apply-active`}
+                                    disabled={isSaving}
+                                    onClick={saveAllModifiedLayers}
+                                    title="Apply all pending changes to device"
+                                >
+                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                                        <path d="M15 9H9v6h6V9zm-2 4h-2v-2h2v2zm8-2V9h-2V7c0-1.1-.9-2-2-2h-2V3h-2v2h-2V3H9v2H7c-1.1 0-2 .9-2 2v2H3v2h2v2H3v2h2v2c0 1.1.9 2 2 2h2v2h2v-2h2v2h2v-2h2c1.1 0 2-.9 2-2v-2h2v-2h-2v-2h2zm-4 6H7V7h10v10z" />
+                                    </svg>
+                                    {isSaving ? 'Applying...' : 'Apply'}
+                                </button>
+                            )}
                         </div>
                     </div>
                 </>

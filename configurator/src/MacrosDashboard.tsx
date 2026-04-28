@@ -177,11 +177,10 @@ export default function MacrosDashboard({
     };
 
     return (
-        <div className="macros-dashboard">
-            <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept=".json" onChange={handleImport} />
-            <div className="macros-header">
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginBottom: '0.5rem' }}>
-                    <h2 className="section-title">Macros Editor</h2>
+        <div className="macros-dashboard" style={{ height: '100%' }}>
+
+            <div className="ckey-dashboard-header" style={{ position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center', marginBottom: '0', flexShrink: 0, minHeight: '42px' }}>
+                <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, display: 'flex', alignItems: 'center' }}>
                     <div className="menu-container" ref={menuRef}>
                         <button className="btn-icon" onClick={() => setIsMenuOpen(!isMenuOpen)} title="Options">
                             <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
@@ -197,18 +196,22 @@ export default function MacrosDashboard({
                         )}
                     </div>
                 </div>
-                <button className="btn" onClick={handleCreate} disabled={isAtMacroLimit} title={isAtMacroLimit ? `Maximum macros reached (${macroLimits!.maxMacros})` : undefined}>
-                    Create Macro
-                </button>
+
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                    <span className="ckey-count-badge">{macros.length} / {macroLimits?.maxMacros || '?'}</span>
+                    <button className="btn btn-success" onClick={handleCreate} disabled={isAtMacroLimit} title={isAtMacroLimit ? `Maximum macros reached (${macroLimits!.maxMacros})` : undefined}>
+                        + New
+                    </button>
+                </div>
             </div>
 
-            <div className="macros-list">
+            <div className="ckey-list-full list-scroll-area">
                 {macros.length === 0 && !isCreating ? (
                     <div className="empty-state">No macros defined yet.</div>
                 ) : (
-                    <div className="macro-cards-grid">
+                    <div className="macro-cards-list">
                         {sortedMacros.map(m => (
-                            <div key={m.id} className={`macro-card glass-panel ${busyMacroIds.has(m.id) ? 'macro-card-busy' : ''}`} onClick={() => !busyMacroIds.has(m.id) && handleEdit(m)}>
+                            <div key={m.id} className={`macro-card ${busyMacroIds.has(m.id) ? 'macro-card-busy' : ''}`} onClick={() => !busyMacroIds.has(m.id) && handleEdit(m)}>
                                 {busyMacroIds.has(m.id) && (
                                     <div className="macro-card-loading-overlay">
                                         <div className="macro-card-spinner" />
@@ -223,11 +226,13 @@ export default function MacrosDashboard({
                                 >
                                     <span className="macro-mode-badge-icon">{getModeBadge(m.execMode ?? 0)}</span>
                                 </button>
-                                <div className="macro-card-header">
-                                    <h4>{m.name || `Macro #${m.id}`}</h4>
-                                </div>
-                                <div className="macro-card-body">
-                                    {m.elements && <MacroPreview m={m} macros={macros} />}
+                                <div className="macro-card-content-wrapper">
+                                    <div className="macro-card-header">
+                                        <h4>{m.name || `Macro #${m.id}`}</h4>
+                                    </div>
+                                    <div className="macro-card-body">
+                                        {m.elements && <MacroPreview m={m} macros={macros} />}
+                                    </div>
                                 </div>
                                 <div className="macro-card-actions" onClick={e => e.stopPropagation()}>
                                     <div style={{ flex: 1, display: 'flex', alignItems: 'center' }}>
@@ -248,13 +253,15 @@ export default function MacrosDashboard({
                             </div>
                         ))}
                         {isCreating && (
-                            <div className="macro-card glass-panel macro-card-busy">
+                            <div className="macro-card macro-card-busy">
                                 <div className="macro-card-loading-overlay">
                                     <div className="macro-card-spinner" />
                                     <span>Creating...</span>
                                 </div>
-                                <div className="macro-card-header"><h4 style={{ opacity: 0.3 }}>New Macro</h4></div>
-                                <div className="macro-card-body" />
+                                <div className="macro-card-content-wrapper">
+                                    <div className="macro-card-header"><h4 style={{ opacity: 0.3 }}>New Macro</h4></div>
+                                    <div className="macro-card-body" />
+                                </div>
                             </div>
                         )}
                     </div>
@@ -321,6 +328,7 @@ export default function MacrosDashboard({
                     isImporting={isImporting}
                 />
             )}
+            <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept=".json" onChange={handleImport} />
         </div>
     );
 }

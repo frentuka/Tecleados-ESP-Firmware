@@ -273,6 +273,7 @@ h3 {
   background: var(--success-color);
   color: white;
 }
+
 .btn-connect:hover {
   background: #3fb950;
   transform: scale(1.08);
@@ -284,6 +285,7 @@ h3 {
   border: 1px solid rgba(248, 81, 73, 0.3);
   color: var(--danger-color);
 }
+
 .btn-disconnect:hover {
   background: rgba(248, 81, 73, 0.2);
   border-color: rgba(248, 81, 73, 0.5);
@@ -379,6 +381,7 @@ h3 {
     opacity: 0;
     transform: translateY(10px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -545,6 +548,12 @@ h3 {
 
 .layout-editor {
   margin-bottom: 2rem;
+  text-align: center; /* allows inline-flex toolbar to center via margin:auto */
+}
+
+/* Reset inherited text-align for all direct children except the toolbar */
+.layout-editor > *:not(.layout-toolbar) {
+  text-align: left;
 }
 
 .layout-editor h2,
@@ -557,7 +566,178 @@ h3 {
   margin: 0;
 }
 
-/* Layer tabs */
+/* ── Unified Layout Toolbar ── */
+.layout-toolbar {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 1.25rem auto 1.25rem;
+  padding: 0.375rem 0.5rem;
+  background: rgba(13, 17, 23, 0.6);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  /* Establish stacking context above the keyboard grid */
+  position: relative;
+  z-index: 500;
+}
+
+/* Left group: pill tabs + add button */
+.layout-tabs-group {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+/* Pill-style layer tab */
+.layout-tab-pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.9rem;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: color 0.2s, background 0.2s, border-color 0.2s, transform 0.15s;
+}
+
+.layout-tab-pill:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.layout-tab-pill-active {
+  color: var(--accent-color);
+  background: rgba(88, 166, 255, 0.12);
+  border-color: rgba(88, 166, 255, 0.3);
+  box-shadow: 0 0 12px rgba(88, 166, 255, 0.1);
+}
+
+.layout-tab-pill-active:hover {
+  background: rgba(88, 166, 255, 0.18);
+  border-color: rgba(88, 166, 255, 0.5);
+  transform: translateY(-1px);
+}
+
+/* Unsaved-changes dot */
+.layout-tab-change-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--success-color);
+  flex-shrink: 0;
+  box-shadow: 0 0 6px var(--success-color);
+  animation: pulse-dot 2s infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(0.8); }
+}
+
+.layout-tab-pill-changed {
+  /* Subtle green tint when there are unsaved changes */
+}
+
+/* Delete trash icon — absolutely positioned above tab, no inline flow */
+.layout-tab-delete-btn {
+  position: absolute;
+  top: -20px;
+  left: 50%;
+  transform: translateX(-50%) scale(0.7);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: rgba(22, 27, 34, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--text-secondary);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s, transform 0.18s, box-shadow 0.18s, color 0.18s, border-color 0.18s, background 0.18s;
+  z-index: 20;
+  backdrop-filter: blur(4px);
+}
+
+.layout-tab-pill:hover .layout-tab-delete-btn {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(-50%) scale(1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.layout-tab-delete-btn:hover {
+  color: var(--danger-color) !important;
+  background: rgba(248, 81, 73, 0.15) !important;
+  border-color: rgba(248, 81, 73, 0.5) !important;
+  box-shadow: 0 4px 16px rgba(248, 81, 73, 0.3) !important;
+}
+
+/* "+" add new layout button */
+.layout-tab-add-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  border: 1px dashed rgba(255, 255, 255, 0.2);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 0.2s, border-color 0.2s, background 0.2s, transform 0.15s;
+  flex-shrink: 0;
+  margin-left: 0.15rem;
+}
+
+.layout-tab-add-btn:hover {
+  color: var(--accent-color);
+  border-color: rgba(88, 166, 255, 0.5);
+  background: rgba(88, 166, 255, 0.08);
+  transform: scale(1.1) rotate(90deg);
+}
+
+/* Horizontal ellipsis menu button — inline flex item, sits after the + button */
+.layout-menu-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-left: 0.25rem;
+  transition: color 0.2s, background 0.2s, border-color 0.2s, transform 0.15s;
+}
+
+.layout-menu-btn:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: translateY(-1px);
+}
+
+.layout-menu-btn-open {
+  color: var(--accent-color) !important;
+  background: rgba(88, 166, 255, 0.1) !important;
+  border-color: rgba(88, 166, 255, 0.3) !important;
+}
+
+/* Legacy layer-tabs kept for any other potential use */
 .layer-tabs {
   display: flex;
   gap: 0.5rem;
@@ -726,6 +906,7 @@ h3 {
     transform: translateY(-20px);
     opacity: 0;
   }
+
   to {
     transform: translateY(0);
     opacity: 1;
@@ -1021,6 +1202,7 @@ h3 {
 .menu-container {
   position: relative;
   display: inline-block;
+  z-index: 1000;
 }
 
 .btn-icon {
@@ -1063,7 +1245,7 @@ h3 {
   border-radius: 12px;
   min-width: 220px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
-  z-index: 100;
+  z-index: 1001;
   padding: 0.5rem;
   animation: slideInDown 0.2s ease-out;
 }
@@ -1129,61 +1311,83 @@ h3 {
    MACROS DASHBOARD & EDITOR
    ═══════════════════════════════════════════════ */
 
-.macros-header {
+
+
+/* Split View Layout */
+.macros-ckeys-split-view {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2rem;
+  height: calc(100vh - 120px);
+}
+
+.list-column {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  height: 100%;
+  min-height: 0;
+  background: rgba(13, 17, 23, 0.4);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  padding: 1.5rem;
+}
+
+.list-scroll-area {
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 0.5rem;
+  margin-top: 0;
+}
+
+.macro-cards-list {
+  display: flex;
+  flex-direction: column;
   gap: 0.75rem;
-  margin-bottom: 1.5rem;
-}
-
-.macros-list {
-  margin-top: 0.5rem;
-}
-
-.macro-cards-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 1.25rem;
 }
 
 .macro-card {
-  position: relative;
-  padding: 1rem 1.15rem;
-  background: rgba(22, 27, 34, 0.5);
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: center;
+  background: rgba(22, 27, 34, 0.6);
   border: 1px solid var(--border-color);
-  transition: all 0.2s;
-  border-radius: 12px;
-  min-height: 170px;
-  max-height: 170px;
+  border-radius: 10px;
+  padding: 1rem 1.15rem !important;
+  min-height: 80px;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
   overflow: hidden;
+  gap: 1rem;
 }
 
 .macro-card:hover {
-  border-color: var(--accent-color);
-  transform: translateY(-2px);
-  background: rgba(88, 166, 255, 0.05);
+  background: rgba(22, 27, 34, 0.9);
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: translateX(4px);
+}
+
+.macro-card-content-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  flex: 1;
+  min-width: 0;
 }
 
 .macro-card-header {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  margin-bottom: 0.6rem;
-  flex-shrink: 0;
-  padding-right: 2.5rem;
 }
 
 .macro-card-header h4 {
   margin: 0;
   font-size: 1rem;
-  color: var(--text-primary);
-  flex: 1;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  color: var(--text-primary);
 }
 
 .macro-id {
@@ -1197,9 +1401,13 @@ h3 {
 
 /* ── Preview sequence ── */
 .macro-card-body {
-  flex: 1;
-  min-height: 0;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
   overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .macro-preview-sequence {
@@ -1302,8 +1510,8 @@ village .preview-sleep-icon {
 /* ── Card footer ── */
 .macro-card-actions {
   display: flex;
+  align-items: center;
   gap: 0.5rem;
-  margin-top: auto;
   flex-shrink: 0;
 }
 
@@ -1988,7 +2196,7 @@ village .preview-sleep-icon {
   justify-content: center;
   gap: 4px;
   min-width: 44px;
-  height: 22px;
+  height: 24px;
   padding: 0 6px;
   border-radius: 6px;
   background: rgba(163, 113, 247, 0.12);
@@ -1999,6 +2207,21 @@ village .preview-sleep-icon {
   font-weight: 800;
   transition: all 0.2s;
   box-sizing: border-box;
+}
+
+/* Custom Key Badge Themes */
+.badge-pr .macro-mode-badge-icon {
+  background: rgba(88, 166, 255, 0.12);
+  border-color: rgba(88, 166, 255, 0.3);
+  color: #58a6ff;
+  /* Azure Blue */
+}
+
+.badge-ma .macro-mode-badge-icon {
+  background: rgba(241, 196, 15, 0.12);
+  border-color: rgba(241, 196, 15, 0.3);
+  color: #f1c40f;
+  /* Gold/Amber */
 }
 
 .m-sym {
@@ -2196,12 +2419,8 @@ village .preview-sleep-icon {
 }
 
 
-/* Move badge to top-right corner */
+/* Move badge to start of row */
 .macro-mode-badge-corner {
-  position: absolute;
-  top: 0.75rem;
-  right: 0.75rem;
-  z-index: 2;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2210,6 +2429,8 @@ village .preview-sleep-icon {
   padding: 0;
   cursor: pointer;
   transition: all 0.2s;
+  flex-shrink: 0;
+  align-self: stretch;
 }
 
 .macro-mode-badge-corner:hover .macro-mode-badge-icon {
@@ -2219,11 +2440,8 @@ village .preview-sleep-icon {
   box-shadow: 0 4px 15px rgba(163, 113, 247, 0.25);
 }
 
-/* Macro ID in bottom-left corner (Developer Mode) */
+/* Macro ID (Developer Mode) */
 .macro-id-dev {
-  position: absolute;
-  bottom: 0.6rem;
-  left: 0.8rem;
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
   font-size: 0.65rem;
   font-weight: 600;
@@ -2686,6 +2904,7 @@ village .preview-sleep-icon {
    CUSTOM KEYS DASHBOARD
    ═══════════════════════════════════════════════ */
 
+.macros-dashboard,
 .ckey-dashboard {
   display: flex;
   flex-direction: column;
@@ -2709,7 +2928,7 @@ village .preview-sleep-icon {
 }
 
 .ckey-list-full {
-  margin-top: 0.5rem;
+  margin-top: 0 !important;
 }
 
 /* ── Custom Key Card ── */
@@ -2741,15 +2960,6 @@ village .preview-sleep-icon {
   box-shadow: 0 0 15px rgba(88, 166, 255, 0.1), inset 0 0 10px rgba(88, 166, 255, 0.05);
 }
 
-village .ckey-card-header {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.6rem;
-  flex-shrink: 0;
-  padding-right: 2.5rem;
-}
-
 .ckey-card-title-row {
   display: flex;
   justify-content: space-between;
@@ -2764,35 +2974,6 @@ village .ckey-card-header {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.ckey-card-badge {
-  position: absolute;
-  top: 0.75rem;
-  right: 0.75rem;
-  z-index: 2;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 6px;
-  height: 22px;
-  min-width: 44px;
-  border-radius: 6px;
-  font-size: 0.85rem;
-  font-weight: 800;
-  box-sizing: border-box;
-}
-
-.badge-pr {
-  background: rgba(88, 166, 255, 0.12);
-  border: 1px solid rgba(88, 166, 255, 0.3);
-  color: #58a6ff;
-}
-
-.badge-ma {
-  background: rgba(104, 211, 145, 0.12);
-  border: 1px solid rgba(104, 211, 145, 0.3);
-  color: #68d391;
 }
 
 .ckey-id {
@@ -3056,7 +3237,7 @@ village .ckey-card-header {
   max-width: 120px;
   opacity: 1;
   transition: max-width 0.25s cubic-bezier(0.4, 0, 0.2, 1),
-              opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .ckey-duration-anim.collapsed {
@@ -3182,44 +3363,44 @@ village .ckey-card-header {
 
 /* Custom Key Wait Toggle */
 .ckey-wait-toggle {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 32px;
-    height: 32px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 6px;
-    color: var(--text-secondary);
-    cursor: pointer;
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-    padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  padding: 0;
 }
 
 .ckey-wait-toggle:hover {
-    background: rgba(255, 255, 255, 0.1);
-    border-color: rgba(255, 255, 255, 0.2);
-    color: var(--text-primary);
-    transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: var(--text-primary);
+  transform: translateY(-1px);
 }
 
 .ckey-wait-toggle.active {
-    background: rgba(46, 160, 67, 0.15);
-    border-color: rgba(46, 160, 67, 0.5);
-    color: #4CAF50;
-    box-shadow: 0 0 10px rgba(76, 175, 80, 0.1);
+  background: rgba(46, 160, 67, 0.15);
+  border-color: rgba(46, 160, 67, 0.5);
+  color: #4CAF50;
+  box-shadow: 0 0 10px rgba(76, 175, 80, 0.1);
 }
 
 .ckey-wait-toggle.active:hover {
-    background: rgba(46, 160, 67, 0.25);
-    border-color: rgba(46, 160, 67, 0.7);
-    box-shadow: 0 0 15px rgba(76, 175, 80, 0.2);
+  background: rgba(46, 160, 67, 0.25);
+  border-color: rgba(46, 160, 67, 0.7);
+  box-shadow: 0 0 15px rgba(76, 175, 80, 0.2);
 }
 
 .ckey-wait-toggle svg {
-    transition: transform 0.2s;
+  transition: transform 0.2s;
 }
 
 .ckey-wait-toggle:active svg {
-    transform: scale(0.9);
-}
+  transform: scale(0.9);
+}
