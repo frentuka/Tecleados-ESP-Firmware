@@ -274,57 +274,59 @@ function App() {
       {isConnected && (
         <div className="app-layout">
           <div className="app-main-content">
-            <div className={`section-container ${activeSection === 'layout' ? 'active' : ''}`}>
-              {activeSection === 'layout' && (
-                <KeyboardLayoutEditor
-                  isConnected={isConnected}
-                  isDeveloperMode={isDeveloperMode}
-                  macros={macros}
-                  customKeys={customKeys}
-                  onLog={addLog}
-                />
-              )}
-            </div>
+            <div className="app-sections-area">
+              <div className={`section-container ${activeSection === 'layout' ? 'active' : ''}`}>
+                {activeSection === 'layout' && (
+                  <KeyboardLayoutEditor
+                    isConnected={isConnected}
+                    isDeveloperMode={isDeveloperMode}
+                    macros={macros}
+                    customKeys={customKeys}
+                    onLog={addLog}
+                  />
+                )}
+              </div>
 
-            <div className={`section-container ${activeSection === 'macrosCkeys' ? 'active' : ''}`}>
-              {activeSection === 'macrosCkeys' && (
-                <div className="macros-ckeys-split-view">
-                  <div className="list-column">
-                    <MacrosDashboard
-                      macros={macros}
-                      macroLimits={macroLimits}
-                      isDeveloperMode={isDeveloperMode}
-                      onSaveMacro={handleSaveMacro}
-                      onDeleteMacro={handleDeleteMacro}
-                      onReload={fetchMacros}
-                      onFetchSingleMacro={fetchSingleMacro}
-                    />
+              <div className={`section-container ${activeSection === 'macrosCkeys' ? 'active' : ''}`}>
+                {activeSection === 'macrosCkeys' && (
+                  <div className="macros-ckeys-split-view">
+                    <div className="list-column">
+                      <MacrosDashboard
+                        macros={macros}
+                        macroLimits={macroLimits}
+                        isDeveloperMode={isDeveloperMode}
+                        onSaveMacro={handleSaveMacro}
+                        onDeleteMacro={handleDeleteMacro}
+                        onReload={fetchMacros}
+                        onFetchSingleMacro={fetchSingleMacro}
+                      />
+                    </div>
+                    <div className="list-column">
+                      <CustomKeysDashboard
+                        customKeys={customKeys}
+                        macros={macros}
+                        isDeveloperMode={isDeveloperMode}
+                        onSave={handleSaveCustomKey}
+                        onDelete={handleDeleteCustomKey}
+                        onReload={fetchCustomKeys}
+                      />
+                    </div>
                   </div>
-                  <div className="list-column">
-                    <CustomKeysDashboard
-                      customKeys={customKeys}
-                      macros={macros}
-                      isDeveloperMode={isDeveloperMode}
-                      onSave={handleSaveCustomKey}
-                      onDelete={handleDeleteCustomKey}
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
+                )}
+              </div>
 
-            <div className={`section-container ${activeSection === 'split' ? 'active' : ''}`}>
-              {activeSection === 'split' && (
-                <SplitDashboard
-                  isConnected={isConnected}
-                  deviceStatus={deviceStatus}
-                  onLog={addLog}
-                />
-              )}
-            </div>
+              <div className={`section-container ${activeSection === 'split' ? 'active' : ''}`}>
+                {activeSection === 'split' && (
+                  <SplitDashboard
+                    isConnected={isConnected}
+                    deviceStatus={deviceStatus}
+                    isDeveloperMode={isDeveloperMode}
+                    onLog={addLog}
+                  />
+                )}
+              </div>
 
-            {isDeveloperMode && (
-              <>
+              {isDeveloperMode && (
                 <div className={`section-container ${activeSection === 'identity' ? 'active' : ''}`}>
                   {activeSection === 'identity' && (
                     <DeviceIdentityDashboard
@@ -333,14 +335,16 @@ function App() {
                     />
                   )}
                 </div>
+              )}
+            </div>
 
-                <DevControlsPanel
-                  isConnected={isConnected}
-                  logs={logs}
-                  onClearLogs={() => setLogs([])}
-                  onAddLog={addLog}
-                />
-              </>
+            {isDeveloperMode && (
+              <DevControlsPanel
+                isConnected={isConnected}
+                logs={logs}
+                onClearLogs={() => setLogs([])}
+                onAddLog={addLog}
+              />
             )}
           </div>
         </div>

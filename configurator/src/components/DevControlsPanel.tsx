@@ -33,6 +33,13 @@ export default function DevControlsPanel({ isConnected, logs, onClearLogs, onAdd
 
     const logsEndRef = useRef<HTMLDivElement>(null);
 
+    // Auto-scroll logs to bottom
+    useEffect(() => {
+        if (logsEndRef.current) {
+            logsEndRef.current.scrollIntoView({ behavior: 'smooth' });
+        }
+    }, [logs]);
+
     const fetchConfigData = useCallback(async (module: number, key: number) => {
         if (!isConnected || !controlsEnabled || module !== MODULE_CONFIG) {
             setConfigData(null);
@@ -118,50 +125,44 @@ export default function DevControlsPanel({ isConnected, logs, onClearLogs, onAdd
 
     const renderConfigForm = () => {
         if (isFetchingConfig) {
-            return <div style={{ color: 'var(--text-secondary)', padding: '1rem 0' }}>Fetching configuration...</div>;
+            return (
+                <div className="devctrl-status-text">
+                    <div className="macro-card-spinner" style={{ width: 16, height: 16, borderWidth: 2 }} />
+                    Fetching configuration…
+                </div>
+            );
         }
 
         if (!configData || Object.keys(configData).length === 0) {
-            return <div style={{ color: 'var(--text-secondary)', padding: '1rem 0' }}>No configuration data retrieved.</div>;
+            return <div className="devctrl-status-text">No configuration data retrieved.</div>;
         }
 
         return (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '1rem', padding: '1rem', background: 'var(--bg-color)', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
-                <h4 style={{ marginBottom: '0.5rem', marginTop: 0 }}>Configuration Form</h4>
+            <div className="devctrl-config-form">
+                <div className="devctrl-config-form-title">Configuration Form</div>
                 {Object.entries(configData).map(([key, value]) => {
                     const isBoolean = typeof value === 'boolean';
                     const isNumber = typeof value === 'number';
 
                     return (
-                        <div key={key} style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                            <label style={{ width: '120px', fontSize: '0.9rem', fontWeight: 500 }}>
-                                {key}
-                            </label>
+                        <div key={key} className="devctrl-config-row">
+                            <label className="devctrl-config-key">{key}</label>
                             {isBoolean ? (
                                 <input
                                     type="checkbox"
                                     checked={value as boolean}
-                                    onChange={(e) => {
-                                        setConfigData({ ...configData, [key]: e.target.checked });
-                                    }}
-                                    style={{ width: '20px', height: '20px' }}
+                                    onChange={(e) => setConfigData({ ...configData, [key]: e.target.checked })}
+                                    className="devctrl-checkbox"
                                 />
                             ) : (
                                 <input
-                                    type={isNumber ? "number" : "text"}
+                                    type={isNumber ? 'number' : 'text'}
                                     value={value as string | number}
                                     onChange={(e) => {
                                         const newValue = isNumber ? Number(e.target.value) : e.target.value;
                                         setConfigData({ ...configData, [key]: newValue });
                                     }}
-                                    style={{
-                                        flex: 1,
-                                        padding: '0.5rem',
-                                        borderRadius: '4px',
-                                        border: '1px solid var(--border-color)',
-                                        background: 'var(--bg-color)',
-                                        color: 'var(--text-primary)',
-                                    }}
+                                    className="devctrl-text-input"
                                 />
                             )}
                         </div>
@@ -172,52 +173,46 @@ export default function DevControlsPanel({ isConnected, logs, onClearLogs, onAdd
     };
 
     return (
-        <div className="dashboard">
-            <div className="controls-panel">
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                    <h3 style={{ margin: 0 }}>Controls</h3>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', cursor: 'pointer', userSelect: 'none' }}>
-                        <span style={{ fontSize: '0.8rem', fontWeight: 600, color: controlsEnabled ? 'var(--accent-color)' : 'var(--text-secondary)' }}>
+        <div className="devctrl-page">
+          <div className="devctrl-inner">
+
+            {/* ── Controls Panel ── */}
+            <div className="devctrl-panel-section">
+                <div className="devctrl-panel-header">
+                    <div className="devctrl-panel-title-row">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.6 }}>
+                            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+                            <line x1="8" y1="21" x2="16" y2="21"/>
+                            <line x1="12" y1="17" x2="12" y2="21"/>
+                        </svg>
+                        <span className="devctrl-panel-title">Controls</span>
+                    </div>
+                    <label className="devctrl-toggle-label">
+                        <span className={`devctrl-toggle-text ${controlsEnabled ? 'enabled' : ''}`}>
                             {controlsEnabled ? 'ENABLED' : 'DISABLED'}
                         </span>
                         <div
+                            className={`devctrl-toggle ${controlsEnabled ? 'active' : ''}`}
                             onClick={() => setControlsEnabled(!controlsEnabled)}
-                            style={{
-                                width: '40px',
-                                height: '20px',
-                                background: controlsEnabled ? 'var(--accent-color)' : '#333',
-                                borderRadius: '20px',
-                                position: 'relative',
-                                transition: 'all 0.2s',
-                            }}
                         >
-                            <div style={{
-                                width: '14px',
-                                height: '14px',
-                                background: '#fff',
-                                borderRadius: '50%',
-                                position: 'absolute',
-                                top: '3px',
-                                left: controlsEnabled ? '23px' : '3px',
-                                transition: 'all 0.2s',
-                            }} />
+                            <div className="devctrl-toggle-thumb" />
                         </div>
                     </label>
                 </div>
 
                 {controlsEnabled ? (
-                    <>
-                        <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
+                    <div className="devctrl-controls-body">
+                        <p className="devctrl-hint-text">
                             Send a COMM HID report dynamically utilizing CRC-8 packet structure.
                         </p>
 
-                        <div style={{ marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                            <div>
-                                <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.9rem' }}>Target Module:</label>
+                        <div className="devctrl-form-fields">
+                            <div className="devctrl-field">
+                                <label className="devctrl-field-label">Target Module</label>
                                 <select
                                     value={selectedModule}
                                     onChange={(e) => setSelectedModule(Number(e.target.value))}
-                                    style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', background: 'var(--bg-color)', color: 'var(--text-primary)', border: '1px solid var(--border-color)' }}
+                                    className="devctrl-select"
                                 >
                                     <option value={MODULE_CONFIG}>Config Module</option>
                                     <option value={MODULE_SYSTEM}>System Module</option>
@@ -226,70 +221,88 @@ export default function DevControlsPanel({ isConnected, logs, onClearLogs, onAdd
 
                             {selectedModule === MODULE_CONFIG && (
                                 <>
-                                    <div style={{ display: 'flex', gap: '0.5rem' }}>
-                                        <div style={{ flex: 1 }}>
-                                            <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.9rem' }}>Key ID:</label>
-                                            <select
-                                                value={selectedKey}
-                                                onChange={(e) => setSelectedKey(Number(e.target.value))}
-                                                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', background: 'var(--bg-color)', color: 'var(--text-primary)', border: '1px solid var(--border-color)' }}
-                                            >
-                                                <option value={CFG_KEY_TEST}>TEST</option>
-                                                <option value={CFG_KEY_HELLO}>HELLO</option>
-                                                <option value={CFG_KEY_PHYSICAL_LAYOUT}>Physical Layout</option>
-                                                <option value={CFG_KEY_LAYER_0}>Layer 0 (Base)</option>
-                                                <option value={CFG_KEY_LAYER_1}>Layer 1 (FN1)</option>
-                                                <option value={CFG_KEY_LAYER_2}>Layer 2 (FN2)</option>
-                                                <option value={CFG_KEY_LAYER_3}>Layer 3 (FN3)</option>
-                                            </select>
-                                        </div>
+                                    <div className="devctrl-field">
+                                        <label className="devctrl-field-label">Key ID</label>
+                                        <select
+                                            value={selectedKey}
+                                            onChange={(e) => setSelectedKey(Number(e.target.value))}
+                                            className="devctrl-select"
+                                        >
+                                            <option value={CFG_KEY_TEST}>TEST</option>
+                                            <option value={CFG_KEY_HELLO}>HELLO</option>
+                                            <option value={CFG_KEY_PHYSICAL_LAYOUT}>Physical Layout</option>
+                                            <option value={CFG_KEY_LAYER_0}>Layer 0 (Base)</option>
+                                            <option value={CFG_KEY_LAYER_1}>Layer 1 (FN1)</option>
+                                            <option value={CFG_KEY_LAYER_2}>Layer 2 (FN2)</option>
+                                            <option value={CFG_KEY_LAYER_3}>Layer 3 (FN3)</option>
+                                        </select>
                                     </div>
 
-                                    {/* Render the dynamic configuration form */}
                                     {renderConfigForm()}
                                 </>
                             )}
 
-                            <button className="btn" onClick={handleSendCustomPayload} disabled={isFetchingConfig || !configData} style={{ width: '100%', marginTop: '0.5rem' }}>
-                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <line x1="22" y1="2" x2="11" y2="13"></line>
-                                    <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                            <button
+                                className="btn btn-sm"
+                                onClick={handleSendCustomPayload}
+                                disabled={isFetchingConfig || !configData}
+                                style={{ marginTop: '0.25rem' }}
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <line x1="22" y1="2" x2="11" y2="13"/>
+                                    <polygon points="22 2 15 22 11 13 2 9 22 2"/>
                                 </svg>
                                 Save Payload
                             </button>
                         </div>
 
-                        <div style={{ marginTop: '2rem', borderTop: '1px solid var(--border-color)', paddingTop: '1.5rem' }}>
-                            <button
-                                className="btn btn-danger"
-                                onClick={onClearLogs}
-                                style={{ width: '100%', padding: '0.5rem' }}
-                            >
+                        <div className="devctrl-danger-row">
+                            <button className="btn btn-danger btn-sm" onClick={onClearLogs}>
                                 Clear Logs
                             </button>
                         </div>
-                    </>
+                    </div>
                 ) : (
-                    <div style={{ padding: '2rem 1rem', textAlign: 'center', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', border: '1px dashed var(--border-color)', marginTop: '1rem' }}>
-                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', lineHeight: '1.5' }}>
-                            Manual controls are locked.<br />Enable to send configuration or system commands.
+                    <div className="devctrl-locked-state">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.3 }}>
+                            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                        </svg>
+                        <p className="devctrl-locked-text">
+                            Manual controls are locked.<br/>Enable to send configuration or system commands.
                         </p>
                     </div>
                 )}
             </div>
 
-            <div>
-                <h3>Device Logs</h3>
-                <div className="log-container">
+            {/* ── Device Logs ── */}
+            <div className="devctrl-logs-section">
+
+                <div className="devctrl-logs-header">
+                    <div className="devctrl-panel-title-row">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.6 }}>
+                            <line x1="8" y1="6" x2="21" y2="6"/>
+                            <line x1="8" y1="12" x2="21" y2="12"/>
+                            <line x1="8" y1="18" x2="21" y2="18"/>
+                            <line x1="3" y1="6" x2="3.01" y2="6"/>
+                            <line x1="3" y1="12" x2="3.01" y2="12"/>
+                            <line x1="3" y1="18" x2="3.01" y2="18"/>
+                        </svg>
+                        <span className="devctrl-panel-title">Device Logs</span>
+                    </div>
+                    <span className="devctrl-log-count">{logs.length} entries</span>
+                </div>
+
+                <div className="devctrl-log-container">
                     {logs.length === 0 ? (
-                        <div style={{ color: 'var(--text-secondary)', textAlign: 'center', marginTop: '2rem' }}>
-                            No logs received yet. Click the trigger button to request data.
+                        <div className="devctrl-log-empty">
+                            No logs received yet.
                         </div>
                     ) : (
                         logs.map((log) => (
-                            <div key={log.id} className="log-entry">
-                                <span className="timestamp">{log.timestamp.toLocaleTimeString()}</span>
-                                <span style={{ color: log.text.includes('Sent [') ? 'var(--accent-color)' : 'inherit' }}>
+                            <div key={log.id} className="devctrl-log-entry">
+                                <span className="devctrl-log-timestamp">{log.timestamp.toLocaleTimeString()}</span>
+                                <span className={log.text.includes('Sent [') ? 'devctrl-log-sent' : ''}>
                                     {log.text}
                                 </span>
                             </div>
@@ -298,6 +311,8 @@ export default function DevControlsPanel({ isConnected, logs, onClearLogs, onAdd
                     <div ref={logsEndRef} />
                 </div>
             </div>
+
+          </div>
         </div>
     );
 }

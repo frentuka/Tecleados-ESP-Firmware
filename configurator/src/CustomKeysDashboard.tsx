@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import type { CustomKey, CustomKeyPR, CustomKeyMA } from './types/customKeys';
 import type { Macro } from './types/macros';
 import SearchableKeyModal from './components/SearchableKeyModal';
 import { getKeyName, CKEY_BASE } from './KeyDefinitions';
 import { getCustomKeyBadge } from './components/MacroIcons';
+import { saveJsonFile } from './utils/fileUtils';
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -14,6 +15,7 @@ interface CustomKeysDashboardProps {
     isDeveloperMode: boolean;
     onSave:   (ckey: CustomKey) => Promise<void>;
     onDelete: (id: number) => Promise<void>;
+    onReload?: () => void;
 }
 
 // ── Default values ─────────────────────────────────────────────────────────────
@@ -467,10 +469,56 @@ function CKeyEditorModal({ ckey, macros, isSaving, error, onSave, onDelete, onCl
 
 const CKEY_MAX = 120;
 
-export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMode, onSave, onDelete }: CustomKeysDashboardProps) {
+export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMode, onSave, onDelete, onReload }: CustomKeysDashboardProps) {
     const [selected, setSelected] = useState<CustomKey | null>(null);
     const [isSaving, setIsSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [isMenuOpen, setIsMenuOpen] = useState(false);
+    
+    const menuRef = useRef<HTMLDivElement>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
+    useEffect(() => {
+        function handleClickOutside(event: MouseEvent) {
+            if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+                setIsMenuOpen(false);
+            }
+        }
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
+    const handleExport = async () => {
+        try {
+            const dataStr = JSON.stringify(customKeys, null, 2);
+            await saveJsonFile(dataStr, 'custom_keys_export.json');
+        } catch (err) {
+            alert("Failed to export custom keys.");
+        }
+        setIsMenuOpen(false);
+    };
+
+    const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+            try {
+                const importedData = JSON.parse(e.target?.result as string);
+                const parsedKeys = Array.isArray(importedData) ? importedData : [importedData];
+                
+                for (const ck of parsedKeys) {
+                    await onSave(ck);
+                }
+            } catch (error) {
+                alert("Failed to import custom keys.");
+            }
+        };
+        reader.readAsText(file);
+        event.target.value = '';
+        setIsMenuOpen(false);
+    };
 
     const handleNew = () => {
         let firstAvailable = -1;
@@ -521,6 +569,26 @@ export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMod
     return (
         <div className="ckey-dashboard" style={{ height: '100%' }}>
             <div className="ckey-dashboard-header" style={{ position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center', marginBottom: '0', flexShrink: 0, minHeight: '42px' }}>
+                {/* Title — pinned left */}
+                <span className="board-title">Custom Keys</span>
+
+                <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, display: 'flex', alignItems: 'center' }}>
+                    <div className="menu-container" ref={menuRef}>
+                        <button className="btn-icon" onClick={() => setIsMenuOpen(!isMenuOpen)} title="Options">
+                            <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
+                                <path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z" />
+                            </svg>
+                        </button>
+                        {isMenuOpen && (
+                            <div className="dropdown-menu">
+                                <button className="dropdown-item" onClick={handleExport}>Export Custom Keys</button>
+                                <button className="dropdown-item" onClick={() => { fileInputRef.current?.click(); setIsMenuOpen(false); }}>Import Custom Keys</button>
+                                <button className="dropdown-item" onClick={() => { onReload?.(); setIsMenuOpen(false); }}>Refresh</button>
+                            </div>
+                        )}
+                    </div>
+                </div>
+
                 <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                     <span className="ckey-count-badge">{customKeys.length} / {CKEY_MAX}</span>
                     <button className="btn btn-success" onClick={handleNew} disabled={customKeys.length >= CKEY_MAX}>+ New</button>
@@ -558,6 +626,7 @@ export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMod
                     onClose={() => setSelected(null)}
                 />
             )}
+            <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept=".json" onChange={handleImport} />
         </div>
     );
 }

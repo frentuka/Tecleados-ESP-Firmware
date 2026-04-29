@@ -180,6 +180,9 @@ export default function MacrosDashboard({
         <div className="macros-dashboard" style={{ height: '100%' }}>
 
             <div className="ckey-dashboard-header" style={{ position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center', marginBottom: '0', flexShrink: 0, minHeight: '42px' }}>
+                {/* Title — pinned left */}
+                <span className="board-title">Macros</span>
+
                 <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, display: 'flex', alignItems: 'center' }}>
                     <div className="menu-container" ref={menuRef}>
                         <button className="btn-icon" onClick={() => setIsMenuOpen(!isMenuOpen)} title="Options">

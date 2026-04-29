@@ -37,11 +37,11 @@ function roleLabel(r: number): string {
 
 function stateColor(s: number): string {
     switch (s) {
-        case SPLIT_STATE_CONNECTED:    return '#2ecc71';
+        case SPLIT_STATE_CONNECTED:    return 'var(--success-color)';
         case SPLIT_STATE_PAIRING:
         case SPLIT_STATE_CONNECTING:   return '#f39c12';
-        case SPLIT_STATE_DISCONNECTED: return '#e74c3c';
-        default:                       return 'rgba(255,255,255,0.4)';
+        case SPLIT_STATE_DISCONNECTED: return 'var(--danger-color)';
+        default:                       return 'rgba(255,255,255,0.3)';
     }
 }
 
@@ -51,7 +51,9 @@ const MATRIX_ROWS = 6;
 const MATRIX_COLS = 18;
 
 function MatrixVisualiser({ bitmap }: { bitmap: Uint8Array | null }) {
-    if (!bitmap) return <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12 }}>No data</div>;
+    if (!bitmap) return (
+        <div className="split-matrix-empty">No data yet</div>
+    );
 
     const cells: React.ReactNode[] = [];
     for (let row = 0; row < MATRIX_ROWS; row++) {
@@ -64,21 +66,14 @@ function MatrixVisualiser({ bitmap }: { bitmap: Uint8Array | null }) {
                 <div
                     key={`${row}-${col}`}
                     title={`R${row} C${col}`}
-                    style={{
-                        width: 18,
-                        height: 18,
-                        borderRadius: 3,
-                        background: pressed ? '#2ecc71' : 'rgba(255,255,255,0.08)',
-                        border: '1px solid rgba(255,255,255,0.12)',
-                        transition: 'background 0.1s',
-                    }}
+                    className={`split-matrix-cell ${pressed ? 'pressed' : ''}`}
                 />
             );
         }
     }
 
     return (
-        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${MATRIX_COLS}, 18px)`, gap: 3 }}>
+        <div className="split-matrix-grid">
             {cells}
         </div>
     );
@@ -89,13 +84,13 @@ function MatrixVisualiser({ bitmap }: { bitmap: Uint8Array | null }) {
 interface SplitDashboardProps {
     isConnected: boolean;
     deviceStatus: DeviceStatus | null;
+    isDeveloperMode: boolean;
     onLog: (text: string) => void;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-const SplitDashboard: React.FC<SplitDashboardProps> = ({ isConnected, deviceStatus, onLog }) => {
-    const [isExpanded, setIsExpanded] = useState(true);
+const SplitDashboard: React.FC<SplitDashboardProps> = ({ isConnected, deviceStatus, isDeveloperMode, onLog }) => {
     const [pairingTimeout, setPairingTimeout] = useState(30);
     const [testModeActive, setTestModeActive] = useState(false);
     const [remoteMatrix, setRemoteMatrix] = useState<Uint8Array | null>(null);
@@ -176,161 +171,146 @@ const SplitDashboard: React.FC<SplitDashboardProps> = ({ isConnected, deviceStat
 
     // ── Render ────────────────────────────────────────────────────────────
 
-    const statusDot = (
-        <span style={{
-            display: 'inline-block',
-            width: 8,
-            height: 8,
-            borderRadius: '50%',
-            background: stateColor(splitState),
-            boxShadow: `0 0 6px ${stateColor(splitState)}`,
-            animation: isPairing ? 'split-pulse 1.2s infinite ease-in-out' : 'none',
-        }} />
-    );
+    const stateCol = stateColor(splitState);
 
     return (
-        <div style={{ 
-            background: 'rgba(25, 25, 25, 0.4)',
-            border: '1px solid rgba(255, 255, 255, 0.05)',
-            borderRadius: 10,
-            overflow: 'hidden',
-            marginBottom: 16
-        }}>
-            {/* Header */}
-            <div
-                style={{ 
-                    cursor: 'pointer', 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    justifyContent: 'space-between',
-                    padding: '16px 20px',
-                    background: isExpanded ? 'rgba(255, 255, 255, 0.02)' : 'transparent',
-                    borderBottom: isExpanded ? '1px solid rgba(255, 255, 255, 0.05)' : 'none',
-                    transition: 'background 0.2s'
-                }}
-                onClick={() => setIsExpanded(!isExpanded)}
-            >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.7 }}>
-                        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
-                        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+        <div className="split-page">
+
+            {/* ── Status Banner ── */}
+            <div className="split-status-banner">
+                <div className="split-status-left">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.6 }}>
+                        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
                     </svg>
-                    <span style={{ fontWeight: 600, fontSize: 15, letterSpacing: 0.3 }}>Split Keyboard</span>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, opacity: 0.8 }}>
-                        {statusDot}
-                        <span style={{ fontSize: 12 }}>{stateLabel(splitState)}</span>
-                        {splitRole !== SPLIT_ROLE_NONE && <span style={{ fontSize: 12, opacity: 0.5 }}>· {roleLabel(splitRole)}</span>}
+                    <span className="split-status-title">Split Keyboard</span>
+                    <div className="split-status-state">
+                        <span
+                            className="split-status-dot"
+                            style={{
+                                background: stateCol,
+                                boxShadow: `0 0 8px ${stateCol}`,
+                                animation: isPairing ? 'split-pulse 1.2s infinite ease-in-out' : 'none',
+                            }}
+                        />
+                        <span className="split-status-label">{stateLabel(splitState)}</span>
+                        {splitRole !== SPLIT_ROLE_NONE && (
+                            <span className="split-role-badge">{roleLabel(splitRole)}</span>
+                        )}
                     </div>
                 </div>
-                <span style={{ opacity: 0.5, fontSize: 14 }}>{isExpanded ? '▲' : '▼'}</span>
             </div>
 
-            {isExpanded && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 20, padding: 20 }}>
+            {/* ── Controls grid ── */}
+            <div className="split-controls-grid">
 
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16 }}>
-                        
-                        {/* Commands Section */}
-                        <div style={{
-                            background: 'rgba(0, 0, 0, 0.2)',
-                            borderRadius: 8,
-                            padding: 16,
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: 16
-                        }}>
-                            <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1, color: '#aaa' }}>
-                                Split Actions
-                            </div>
-                            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                                {isConnectedS ? (
-                                    <>
-                                        <button className="btn btn-primary btn-sm" onClick={handleRoleSwap} disabled={!isConnected}>
-                                            🔄 Switch Roles
-                                        </button>
-                                        {splitRole === SPLIT_ROLE_MASTER && (
-                                            <button className="btn btn-secondary btn-sm" onClick={handleRunBenchmark} disabled={!isConnected}>
-                                                🏎 Benchmark {benchStatus ? `(${benchStatus})` : ''}
-                                            </button>
-                                        )}
-                                    </>
-                                ) : (
-                                    <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)' }}>No actions available (unpaired/idle)</span>
+                {/* Pairing Controls */}
+                <div className="split-section">
+                    <div className="split-section-label">Pairing</div>
+                    <div className="split-section-content">
+                        {!isPairing ? (
+                            <div className="split-action-row">
+                                <button className="btn btn-success btn-sm" onClick={handleStartPairing} disabled={!isConnected}>
+                                    Start Pairing
+                                </button>
+                                {isConnectedS && (
+                                    <button className="btn btn-danger btn-sm" onClick={handleUnpair} disabled={!isConnected}>
+                                        Unpair
+                                    </button>
                                 )}
+                                <label className="split-timeout-label">
+                                    Timeout
+                                    <input
+                                        id="split-pairing-timeout"
+                                        type="number"
+                                        min={5} max={120} step={5}
+                                        value={pairingTimeout}
+                                        onChange={e => setPairingTimeout(Number(e.target.value))}
+                                        className="split-timeout-input"
+                                    />
+                                    <span style={{ fontSize: 11, opacity: 0.5 }}>s</span>
+                                </label>
                             </div>
-                        </div>
+                        ) : (
+                            <div className="split-action-row">
+                                <div className="split-pairing-indicator">
+                                    <span className="split-pairing-dot" />
+                                    Pairing in progress…
+                                </div>
+                                <button className="btn btn-secondary btn-sm" onClick={handleCancelPairing} disabled={!isConnected}>
+                                    Cancel
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                </div>
 
-                        {/* Pairing Section */}
-                        <div style={{
-                            background: 'rgba(0, 0, 0, 0.2)',
-                            borderRadius: 8,
-                            padding: 16,
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: 16
-                        }}>
-                            <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1, color: '#aaa' }}>
-                                Pairing Controls
-                            </div>
-                            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                                {!isPairing ? (
-                                    <>
-                                        <button className="btn btn-success btn-sm" onClick={handleStartPairing} disabled={!isConnected}>
-                                            Start Pairing
-                                        </button>
-                                        {isConnectedS && (
-                                            <button className="btn btn-danger btn-sm" onClick={handleUnpair} disabled={!isConnected}>
-                                                Unpair
-                                            </button>
-                                        )}
-                                        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, opacity: 0.7 }}>
-                                            Timeout
-                                            <input
-                                                type="number"
-                                                min={5} max={120} step={5}
-                                                value={pairingTimeout}
-                                                onChange={e => setPairingTimeout(Number(e.target.value))}
-                                                style={{ width: 52, background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 4, color: '#fff', padding: '2px 6px', fontSize: 12 }}
-                                            />
-                                            s
-                                        </label>
-                                    </>
-                                ) : (
-                                    <button className="btn btn-secondary btn-sm" onClick={handleCancelPairing} disabled={!isConnected}>
-                                        Cancel Pairing
+                {/* Split Actions */}
+                <div className="split-section">
+                    <div className="split-section-label">Actions</div>
+                    <div className="split-section-content">
+                        {isConnectedS ? (
+                            <div className="split-action-row">
+                                <button className="btn btn-secondary btn-sm" onClick={handleRoleSwap} disabled={!isConnected}>
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M16 3l4 4-4 4"/><path d="M20 7H4"/><path d="M8 21l-4-4 4-4"/><path d="M4 17h16"/>
+                                    </svg>
+                                    Switch Roles
+                                </button>
+                                {splitRole === SPLIT_ROLE_MASTER && (
+                                    <button
+                                        className="btn btn-secondary btn-sm"
+                                        onClick={handleRunBenchmark}
+                                        disabled={!isConnected}
+                                        title={benchStatus ?? undefined}
+                                    >
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                                        </svg>
+                                        {benchStatus ? `${benchStatus}` : 'Benchmark'}
                                     </button>
                                 )}
                             </div>
-                        </div>
-
+                        ) : (
+                            <p className="split-empty-hint">
+                                No actions available — pair both halves first.
+                            </p>
+                        )}
                     </div>
+                </div>
 
-                    {/* Test mode — only shown when MASTER + connected */}
-                    {isConnectedS && splitRole === SPLIT_ROLE_MASTER && (
-                        <div style={{ background: 'rgba(0, 0, 0, 0.2)', borderRadius: 8, padding: 16 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
-                                <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', color: '#aaa', letterSpacing: 1 }}>
-                                    Remote Key Test
-                                </div>
-                                <button className={`btn btn-sm ${testModeActive ? 'btn-danger' : 'btn-secondary'}`} onClick={() => setTestModeActive(!testModeActive)}>
-                                    {testModeActive ? 'Stop Test' : 'Start Test'}
-                                </button>
-                            </div>
-                            {testModeActive && (
-                                <div style={{ overflowX: 'auto', paddingBottom: 4 }}>
-                                    <MatrixVisualiser bitmap={remoteMatrix} />
-                                </div>
-                            )}
+            </div>
+
+            {/* ── Remote Key Test — only in developer mode, only when MASTER + connected ── */}
+            {isDeveloperMode && isConnectedS && splitRole === SPLIT_ROLE_MASTER && (
+                <div className="split-section split-test-section">
+                    <div className="split-section-header-row">
+                        <div className="split-section-label" style={{ marginBottom: 0 }}>Remote Key Test</div>
+                        <button
+                            id="split-test-toggle"
+                            className={`btn btn-sm ${testModeActive ? 'btn-danger' : 'btn-secondary'}`}
+                            onClick={() => setTestModeActive(!testModeActive)}
+                        >
+                            {testModeActive ? 'Stop' : 'Start Test'}
+                        </button>
+                    </div>
+                    {testModeActive && (
+                        <div className="split-matrix-wrapper">
+                            <MatrixVisualiser bitmap={remoteMatrix} />
                         </div>
                     )}
-
+                    {!testModeActive && (
+                        <p className="split-empty-hint" style={{ marginTop: '0.5rem' }}>
+                            Press Start Test to live-monitor the slave half's key matrix.
+                        </p>
+                    )}
                 </div>
             )}
 
             <style>{`
                 @keyframes split-pulse {
                     0%   { opacity: 1; }
-                    50%  { opacity: 0.3; }
+                    50%  { opacity: 0.25; }
                     100% { opacity: 1; }
                 }
             `}</style>
