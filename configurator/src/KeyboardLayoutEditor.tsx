@@ -524,7 +524,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                     title="Delete layout (coming soon)"
                                     onClick={(e) => e.stopPropagation() /* future: delete layout */}
                                 >
-                                    <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor">
+                                    <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor">
                                         <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
                                     </svg>
                                 </span>
@@ -538,7 +538,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                         title="Add new layout (coming soon)"
                         onClick={() => { /* future: add new layout */ }}
                     >
-                        <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+                        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
                             <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
                         </svg>
                     </button>
@@ -551,7 +551,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                         onClick={() => setIsMenuOpen(!isMenuOpen)}
                         title="Layout options"
                     >
-                        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                        <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
                             <circle cx="5" cy="12" r="2" />
                             <circle cx="12" cy="12" r="2" />
                             <circle cx="19" cy="12" r="2" />
@@ -572,7 +572,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                         }
                                     }}
                                 >
-                                    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
                                         <path d="M21 2H3c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-9 15H7v-2h5v2zm4-4H7v-2h9v2zm0-4H7V7h9v2z" />
                                     </svg>
                                     {isKeyTestMode ? 'Exit Key Test Mode' : 'Key Test Mode'}
@@ -586,7 +586,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                         setIsMenuOpen(false);
                                     }}
                                 >
-                                    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
                                         <path d="M3 3v18h18V3H3zm16 16H5V5h14v14zM7 7h2v2H7V7zm0 4h2v2H7v-2zm0 4h2v2H7v-2zm4-8h2v2h-2V7zm0 4h2v2h-2v-2zm0 4h2v2h-2v-2zm4-8h2v2h-2V7zm0 4h2v2h-2v-2zm0 4h2v2h-2v-2z" />
                                     </svg>
                                     {isRowColEditMode ? 'Exit Row/Col Edit' : 'Row/Col Edit'}
@@ -594,26 +594,26 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                             )}
                             {isDeveloperMode && <div className="dropdown-divider" />}
                             <button className="dropdown-item" onClick={() => { fetchLayer(activeLayer); setIsMenuOpen(false); }}>
-                                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
                                     <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
                                 </svg>
                                 Refresh layer
                             </button>
                             <button className="dropdown-item" onClick={() => { exportLayout(); setIsMenuOpen(false); }}>
-                                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
                                     <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
                                 </svg>
                                 Export layout
                             </button>
                             <button className="dropdown-item" onClick={() => { handleImportClick(); setIsMenuOpen(false); }}>
-                                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
                                     <path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z" />
                                 </svg>
                                 Import layout
                             </button>
                             {isDeveloperMode && (
                                 <button className="dropdown-item" onClick={() => { setShowKleImport(true); setKleError(null); setIsMenuOpen(false); }}>
-                                    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
                                         <path d="M20 5H4c-1.1 0-1.99.9-1.99 2L2 17c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm-9 3h2v2h-2V8zm0 3h2v2h-2v-2zM8 8h2v2H8V8zm0 3h2v2H8v-2zM5 8h2v2H5V8zm0 3h2v2H5v-2zm9 7H8v-2h6v2zm0-5h2v2h-2v-2zm0-3h2v2h-2V8zm3 3h2v2h-2v-2zm0-3h2v2h-2V8z" />
                                     </svg>
                                     Import physical layout
@@ -633,7 +633,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                 });
                                 setIsMenuOpen(false);
                             }}>
-                                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
                                     <path d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z" />
                                 </svg>
                                 Restore defaults
