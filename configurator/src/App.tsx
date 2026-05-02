@@ -12,6 +12,22 @@ import { useMacros } from './hooks/useMacros';
 import { useCustomKeys } from './hooks/useCustomKeys';
 import { getFlagsString } from './utils/packetUtils';
 import type { DeviceStatus, LogMessage } from './types/device';
+import { 
+  PAYLOAD_FLAG_FIRST, 
+  PAYLOAD_FLAG_LAST,
+  PAYLOAD_FLAG_ACK,
+  PAYLOAD_FLAG_NAK,
+  PAYLOAD_FLAG_OK,
+  PAYLOAD_FLAG_ERR,
+  PAYLOAD_FLAG_ABORT,
+  MODULE_STATUS,
+  MODULE_CONFIG,
+  CFG_KEY_LAYER_0,
+  CFG_KEY_LAYER_1,
+  CFG_KEY_LAYER_2,
+  CFG_KEY_LAYER_3,
+  CFG_KEY_PHYSICAL_LAYOUT
+} from './types/protocol';
 import './index.css';
 
 import { LayoutIcon, MacrosIcon, SplitIcon, IdentityIcon } from './components/SidebarIcons';
@@ -105,7 +121,14 @@ function App() {
     const handler = (connected: boolean) => {
       setIsConnected(connected);
       if (!connected) setDeviceStatus(null);
-      addLog(connected ? "Device connected" : "Device disconnected");
+      
+      // Clear logs and add connection status as the first entry
+      setLogs([{
+        id: getNextLogId(),
+        timestamp: new Date(),
+        data: new Uint8Array(64),
+        text: connected ? "Device connected" : "Device disconnected"
+      }]);
     };
     hidService.onConnectionChange(handler);
 
@@ -148,11 +171,56 @@ function App() {
     if (data.length < 48) return;
 
     const flags = data[0];
-    const remaining = data[1] | (data[2] << 8);
+
+    // ── 1. Check for Aggregated Summary (Virtual Packet 0xFF) ──
+    if (flags === 0xFF) {
+      const text = new TextDecoder().decode(data.slice(4)).replace(/\0/g, '');
+      setLogs(prev => [...prev, { id: getNextLogId(), timestamp: new Date(), data, text }]);
+      return;
+    }
+
+    // ── 2. Handle Noise Filtering ──
+    const isFirst = !!(flags & PAYLOAD_FLAG_FIRST);
+    const isLast = !!(flags & PAYLOAD_FLAG_LAST);
+
+    // Filter out ACK, NAK, or Process flags (OK/ERR/ABORT) as they are noise
+    const isNoise = (flags & (PAYLOAD_FLAG_ACK | PAYLOAD_FLAG_NAK | PAYLOAD_FLAG_OK | PAYLOAD_FLAG_ERR | PAYLOAD_FLAG_ABORT));
+    if (isNoise && !(isFirst && isLast)) return;
+
+    // ── 3. High-Level Interpretation ──
     const payloadLen = data[3];
     const safeLen = Math.min(payloadLen, 43);
     const payloadBytes = data.slice(4, 4 + safeLen);
 
+    if (isFirst && isLast && safeLen >= 3) {
+      const module = payloadBytes[0];
+      // const cmd = payloadBytes[1];
+      const keyId = payloadBytes[2];
+
+      if (module === MODULE_STATUS) {
+        const json = new TextDecoder().decode(payloadBytes.slice(7)).replace(/\0/g, '');
+        const text = `[StatusWidget] Received update${json ? ': ' + json : ''}`;
+        setLogs(prev => [...prev, { id: getNextLogId(), timestamp: new Date(), data, text }]);
+        return;
+      }
+
+      if (module === MODULE_CONFIG) {
+        let keyName = `Key ${keyId}`;
+        switch (keyId) {
+          case CFG_KEY_LAYER_0: keyName = 'Layer 0 (Base)'; break;
+          case CFG_KEY_LAYER_1: keyName = 'Layer 1 (FN1)'; break;
+          case CFG_KEY_LAYER_2: keyName = 'Layer 2 (FN2)'; break;
+          case CFG_KEY_LAYER_3: keyName = 'Layer 3 (FN3)'; break;
+          case CFG_KEY_PHYSICAL_LAYOUT: keyName = 'Physical Layout'; break;
+        }
+        const text = `[Config] Received data for ${keyName}`;
+        setLogs(prev => [...prev, { id: getNextLogId(), timestamp: new Date(), data, text }]);
+        return;
+      }
+    }
+
+    // Fallback for single packets that aren't filtered (handshakes or other modules)
+    const remaining = data[1] | (data[2] << 8);
     let text = `${getFlagsString(flags)} Len: ${safeLen}, Rem: ${remaining}`;
 
     if (safeLen > 0) {

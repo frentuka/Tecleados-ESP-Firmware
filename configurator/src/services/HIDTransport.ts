@@ -39,9 +39,9 @@ import type {
 import { MODULE_STATUS } from '../types/protocol';
 
 // ── Transport timing & limits ───────────────────────────────────────────
-const RECONNECT_INTERVAL_MS  = 2000; // How often to poll for device reconnection
-const TASK_QUEUE_DELAY_MS    = 50;   // Delay between sequential queued tasks
-const BLAST_RX_MAX_PACKETS   = 5000; // Abort if a single Blast RX exceeds this count
+const RECONNECT_INTERVAL_MS = 2000; // How often to poll for device reconnection
+const TASK_QUEUE_DELAY_MS = 50;   // Delay between sequential queued tasks
+const BLAST_RX_MAX_PACKETS = 5000; // Abort if a single Blast RX exceeds this count
 
 // ── CRC-8 Table (polynomial 0x07, matches firmware usb_crc.c) ──────────
 const CRC8_TABLE = new Uint8Array([
@@ -117,6 +117,7 @@ export class HIDTransport {
         buffer: null as Uint8Array | null,
         bitmap: null as Uint8Array | null,
         payloadLens: null as Uint8Array | null,
+        startTime: 0,
     };
 
     constructor() {
@@ -150,8 +151,8 @@ export class HIDTransport {
             if (devices.length > 0) {
                 const target = devices.find((d: any) => this.isCommInterface(d));
                 if (!target) {
-                    const debugInfo = devices.map((d: any) => 
-                        `${d.productName} cols: ${(d.collections||[]).map((c:any) => `UP:${c.usagePage}`).join(',')}`
+                    const debugInfo = devices.map((d: any) =>
+                        `${d.productName} cols: ${(d.collections || []).map((c: any) => `UP:${c.usagePage}`).join(',')}`
                     ).join('\n');
                     alert(`Fail: No Comm interface (0xFFFF) found.\nDevices seen:\n${debugInfo}`);
                     console.error('[HIDTransport] No valid Comm interface found.', debugInfo);
@@ -408,7 +409,7 @@ export class HIDTransport {
     // ── Blast RX Helpers ──
 
     private blastRxReset(): void {
-        this.blastRx = { active: false, totalPackets: 0, buffer: null, bitmap: null, payloadLens: null };
+        this.blastRx = { active: false, totalPackets: 0, buffer: null, bitmap: null, payloadLens: null, startTime: 0 };
     }
 
     private blastRxReceivePacket(index: number, payload: Uint8Array, payloadLen: number): void {
@@ -636,7 +637,8 @@ export class HIDTransport {
         const isBlastPacket = (flags & PAYLOAD_FLAG_MID) || (flags & PAYLOAD_FLAG_LAST);
         const isHandshake = (flags & PAYLOAD_FLAG_FIRST) && remaining > 0;
 
-        if (!this.blastRx.active || isHandshake || !isBlastPacket) {
+        // Only log single packets or handshakes (bursts are summarized on finish)
+        if (!this.blastRx.active && !isBlastPacket) {
             this.logCallbacks.forEach(cb => cb(data));
             this.rawPacketCallbacks.forEach(cb => cb(data, 'rx'));
         }
@@ -677,6 +679,7 @@ export class HIDTransport {
             this.blastRx.buffer = new Uint8Array(totalPackets * MAX_PAYLOAD_LENGTH);
             this.blastRx.bitmap = new Uint8Array(Math.ceil(totalPackets / 8));
             this.blastRx.payloadLens = new Uint8Array(totalPackets);
+            this.blastRx.startTime = Date.now();
             this.blastRxReceivePacket(0, payloadBytes, safeLen);
             this.sendResponse(PAYLOAD_FLAG_ACK);
             return;
@@ -698,6 +701,18 @@ export class HIDTransport {
         if (this.blastRx.active && (flags & PAYLOAD_FLAG_LAST)) {
             const lastIndex = this.blastRx.totalPackets - 1;
             this.blastRxReceivePacket(lastIndex, payloadBytes, safeLen);
+
+            const duration = Date.now() - this.blastRx.startTime;
+            const count = this.blastRx.totalPackets;
+
+            // Log aggregated summary
+            const summaryData = new TextEncoder().encode(`USB Comms: ${count} packets received in ${duration}ms`);
+            // We use a dummy packet structure (Flags: 0xFF) to signal a summary log
+            const virtualPacket = new Uint8Array(64);
+            virtualPacket[0] = 0xFF;
+            virtualPacket.set(summaryData.slice(0, 60), 4);
+            this.logCallbacks.forEach(cb => cb(virtualPacket));
+
             const fullPayload = this.blastRxAssemblePayload();
             if (fullPayload.length >= 7) {
                 const module = fullPayload[0];
@@ -706,6 +721,14 @@ export class HIDTransport {
                 const status = (fullPayload[3] | (fullPayload[4] << 8) | (fullPayload[5] << 16) | (fullPayload[6] << 24));
                 const jsonText = new TextDecoder().decode(fullPayload.slice(7)).replace(/\0/g, '');
                 this.pendingResponse = { module, cmd, keyId, status, jsonText };
+
+                // Also emit the reassembled result as a "virtual" single packet for high-level logging in App
+                const resultPacket = new Uint8Array(64);
+                resultPacket[0] = PAYLOAD_FLAG_FIRST | PAYLOAD_FLAG_LAST;
+                resultPacket[3] = Math.min(fullPayload.length, 43); // Peek first part
+                resultPacket.set(fullPayload.slice(0, resultPacket[3]), 4);
+                this.logCallbacks.forEach(cb => cb(resultPacket));
+
                 await this.sendAckAndFinish(true);
             }
             this.blastRxReset();

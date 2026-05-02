@@ -519,6 +519,61 @@ h3 {
   }
 }
 
+/* ── Elegant Action Buttons (Pill Style) ── */
+.btn-new-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 1.15rem;
+  border-radius: 50px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-secondary);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.btn-new-action svg {
+  width: 14px;
+  height: 14px;
+  stroke-width: 3px;
+}
+
+.btn-new-success {
+  background: rgba(46, 160, 67, 0.15);
+  border-color: rgba(46, 160, 67, 0.4);
+  color: #7ee787;
+}
+
+.btn-new-success:hover:not(:disabled) {
+  background: rgba(46, 160, 67, 0.25);
+  border-color: rgba(46, 160, 67, 0.6);
+  color: #aff5b4;
+  transform: translateY(-1.5px) scale(1.02);
+  box-shadow: 0 6px 20px rgba(46, 160, 67, 0.25);
+}
+
+.btn-new-success:active:not(:disabled) {
+  transform: translateY(0) scale(0.98);
+}
+
+.btn-new-action:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  filter: grayscale(1);
+  border-color: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-secondary);
+  box-shadow: none;
+}
+
 .dashboard {
   display: grid;
   grid-template-columns: 1fr;
@@ -3928,6 +3983,7 @@ village .preview-sleep-icon {
   gap: 0;
   /* Flows naturally — adds page height in dev mode, giving the expected scroll */
   margin-top: 1.5rem;
+  margin-bottom: 3rem;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
   animation: fadeSlideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -4204,7 +4260,7 @@ village .preview-sleep-icon {
   padding: 0.75rem 1.25rem;
   font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', 'Courier New', monospace;
   font-size: 0.8rem;
-  max-height: 320px;
+  height: 300px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;

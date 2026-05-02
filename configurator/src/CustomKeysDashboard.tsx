@@ -591,7 +591,13 @@ export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMod
 
                 <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                     <span className="ckey-count-badge">{customKeys.length} / {CKEY_MAX}</span>
-                    <button className="btn btn-success" onClick={handleNew} disabled={customKeys.length >= CKEY_MAX}>+ New</button>
+                    <button className="btn-new-action btn-new-success" onClick={handleNew} disabled={customKeys.length >= CKEY_MAX}>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                        New
+                    </button>
                 </div>
             </div>
 
