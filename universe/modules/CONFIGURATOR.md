@@ -2,7 +2,7 @@
 
 > **Source:** `configurator/src/`
 > **Entry point:** `configurator/src/main.tsx` → `App.tsx`
-> **Tech stack:** React 18 + TypeScript + Vite — runs entirely in the browser, no backend server.
+> **Tech stack:** React 19 + TypeScript + Vite — runs entirely in the browser, no backend server.
 
 The **Configurator** is the browser-based GUI for the keyboard firmware. It communicates with the device over [[USB_MODULE|the USB COMM channel]] using the **WebHID API**, implementing the exact same Blast+Reconcile transport protocol as the firmware. The user never installs a driver or companion app — they open a URL, click Connect, and the browser talks directly to the keyboard.
 
@@ -18,6 +18,7 @@ The application is divided into three layers that mirror the firmware's own laye
 ┌────────────────────────────────────────────────────────────────────┐
 │  UI Layer  (React components)                                      │
 │  App.tsx / KeyboardLayoutEditor / MacrosDashboard / SplitDashboard │
+│  CustomKeysDashboard / DeviceIdentityDashboard / StatusWidget      │
 ├────────────────────────────────────────────────────────────────────┤
 │  Business Logic Layer                                              │
 │  DeviceController.ts   (typed command methods)                     │
@@ -66,16 +67,16 @@ The legacy `HIDService.ts` file is a thin re-export façade that maps old import
 
 ### 3. UI Layer
 
-| Component | Tab / Role | What it manages |
+| Component | Section / Role | What it manages |
 |---|---|---|
-| `App.tsx` | Root shell | Connection state, tab routing, log stream, Developer Mode toggle |
-| `KeyboardLayoutEditor.tsx` | "Layout" tab | Visual key editor, layer switching, multi-selection (Ctrl+Drag), physical layout editing |
-| `MacrosDashboard.tsx` | "Macros" tab | Macro list, event sequence editor, CRUD operations |
-| `CustomKeysDashboard.tsx` | "Custom Keys" tab | Press/Release and MultiAction key rule editing |
-| `SplitDashboard.tsx` | "Split" tab | Pairing, role swap, latency benchmark, remote matrix visualizer |
-| `DeviceIdentityDashboard.tsx` | "Device" tab | Device name, split mirror/variant, shared BLE address |
-| `StatusWidget.tsx` | Always visible | Live BLE/USB/Split state pushed from [[STATUS_MODULE]] |
-| `DevControlsPanel.tsx` | Dev Mode only | Raw packet log, protocol debug tools |
+| `App.tsx` | Root shell | Connection state, section routing (Header Nav), Developer Mode |
+| `KeyboardLayoutEditor.tsx` | "Layout" section | Visual key editor, layer switching, multi-selection (Ctrl+Drag), physical layout management |
+| `MacrosDashboard.tsx` | "Macros & CKs" | Macro list, event sequence editor, CRUD + Export/Import |
+| `CustomKeysDashboard.tsx` | "Macros & CKs" | Press/Release and MultiAction key rule editing + Export/Import |
+| `SplitDashboard.tsx` | "Split" section | Pairing, role swap, latency benchmark, remote matrix visualizer |
+| `DeviceIdentityDashboard.tsx` | "Identity" (Dev) | Device name, split mirror/variant, shared BLE address (Developer Mode only) |
+| `StatusWidget.tsx` | Header | Always visible indicators for BLE/USB/Split state pushed from [[STATUS_MODULE]] |
+| `DevControlsPanel.tsx` | Dev Mode only | Raw packet log (bottom strip), protocol debug tools |
 
 ---
 
@@ -211,16 +212,16 @@ The configurator is the primary client of `cfg_usb_callback()`. Every user actio
 
 | User Action | Command | Key ID |
 |---|---|---|
-| Open "Layout" tab | GET | `CFG_KEY_LAYER_0..3` |
+| Open "Layout" section | GET | `CFG_KEY_LAYER_0..3` |
 | Save layer changes | SET | `CFG_KEY_LAYER_0..3` |
-| Open "Layout" tab (dev mode) | GET | `CFG_KEY_PHYSICAL_LAYOUT` |
+| Open "Layout" (dev mode) | GET | `CFG_KEY_PHYSICAL_LAYOUT` |
 | Save physical layout | SET | `CFG_KEY_PHYSICAL_LAYOUT` |
-| Open "Macros" tab | GET | `CFG_KEY_MACROS`, `CFG_KEY_MACRO_LIMITS` |
+| Open "Macros & CKs" | GET | `CFG_KEY_MACROS`, `CFG_KEY_MACRO_LIMITS` |
 | Edit a macro | GET / SET | `CFG_KEY_MACRO_SINGLE` |
-| Open "Custom Keys" tab | GET | `CFG_KEY_CKEYS` |
+| Open "Macros & CKs" | GET | `CFG_KEY_CKEYS` |
 | Edit a custom key | GET / SET | `CFG_KEY_CKEY_SINGLE` |
-| Open "Device" tab | GET | `CFG_KEY_SYSTEM` |
-| Save device identity | SET | `CFG_KEY_SYSTEM` (name, mirror_cols, variant) |
+| Open "Identity" (dev mode) | GET | `CFG_KEY_SYSTEM` |
+| Save identity | SET | `CFG_KEY_SYSTEM` (name, mirror_cols, variant) |
 
 ### [[STATUS_MODULE]] — Live State Display
 
@@ -247,14 +248,30 @@ Injected keys pass through the full keyboard pipeline (layers, macros, custom ke
 
 ---
 
+## Data Portability (Export/Import)
+
+The configurator supports full configuration portability via JSON files, allowing users to backup their settings or share layouts:
+
+- **Full Layouts**: The "..." menu in the Layout section provides options to export or import the entire layer set and (in Dev Mode) the physical layout geometry.
+- **Macros**: The Macros dashboard allows selective export of macro sequences and batch import from JSON.
+- **Custom Keys**: Similar to macros, custom key rules can be exported and imported to preserve complex behaviors.
+
+Imported data is validated against matrix bounds and device limits before being written to the device.
+
+---
+
 ## Developer Mode
 
-Toggled via a button in `App.tsx` and persisted in `localStorage`. When enabled:
+Developer Mode is hidden by default to prevent accidental configuration changes. It is toggled via the **Code** typed anywhere on the keyboard while the app is focused:
+`↑` `↑` `↓` `↓` `←` `→` `←` `→` `B` `A`
 
-- The **Physical Layout** panel becomes visible in the Layout tab, showing GET/SET controls.
-- The **Row/Col Edit Mode** overlay is unlocked: each key shows its matrix `R/C` coordinates, and clicking selects a key to reassign its matrix position. A polyline SVG overlay connects keys that share the same row (cyan) or column (magenta), making cross-key matrix structure visible.
-- The **DevControlsPanel** appears, showing a live raw packet log with flags decoded in human-readable form.
-- A **KLE Import** textarea appears for pasting raw KLE JSON to replace the physical layout.
+When enabled, the state is persisted in `localStorage` and unlocks:
+
+- The **Identity** section in the main navigation.
+- The **Physical Layout** management in the Layout section (via the "..." menu), allowing GET/SET operations.
+- The **Row/Col Edit Mode** overlay in the Layout section: each key shows its matrix `R/C` coordinates, and clicking selects a key to reassign its matrix position. A polyline SVG overlay connects keys that share the same row (cyan) or column (magenta).
+- The **DevControlsPanel** bottom strip, showing a live raw packet log with flags decoded in human-readable form.
+- The **KLE Import** interface for replacing the physical layout with raw JSON.
 
 The `isDeveloperMode` flag is passed as a prop from `App.tsx` down to each dashboard component. Components that have dev-only features gate them with `{isDeveloperMode && ...}`.
 
@@ -311,13 +328,13 @@ graph TD
 
 | File | Responsibility |
 |---|---|
-| `App.tsx` | Root component: WebHID connection lifecycle, tab routing, log stream, Developer Mode |
+| `App.tsx` | Root component: WebHID connection lifecycle, section routing, Developer Mode |
 | `HIDService.ts` | Backward-compat re-export façade — maps old import paths to new module structure |
-| `KeyboardLayoutEditor.tsx` | Main layout editor: layer switching, physical layout rendering, KLE import, key test mode |
-| `MacrosDashboard.tsx` | Macro list + event-sequence editor |
-| `CustomKeysDashboard.tsx` | Custom key rule editor (PressRelease and MultiAction modes) |
+| `KeyboardLayoutEditor.tsx` | Main layout editor: layer management, physical layout rendering, KLE/JSON import |
+| `MacrosDashboard.tsx` | Macro list + event-sequence editor (CRUD + Portability) |
+| `CustomKeysDashboard.tsx` | Custom key rule editor (PressRelease and MultiAction modes + Portability) |
 | `SplitDashboard.tsx` | Split link management, role swap, RTT benchmark, remote matrix visualizer |
-| `DeviceIdentityDashboard.tsx` | Device name, split variant, and shared BLE identity settings |
+| `DeviceIdentityDashboard.tsx` | Device identity (Identity section): name, split variant, and shared BLE ID |
 | `StatusWidget.tsx` | Live BLE / USB / Split status indicator fed by unsolicited firmware pushes |
 | `services/HIDTransport.ts` | WebHID driver: CRC-8, Blast+Reconcile TX/RX state machine, reconnect polling |
 | `services/DeviceController.ts` | Typed command API over HIDTransport; high-level methods for every firmware operation |

@@ -11,7 +11,7 @@ The configurator lets you:
 - Create, edit, and delete macros with rich action types and execution modes
 - Create, edit, and delete custom keys (PressRelease and MultiAction modes)
 - Import physical layouts from KLE (Keyboard Layout Editor) JSON
-- Export and import macro sets as portable JSON files
+- Export and import full layouts, macros, and custom keys as portable JSON files
 - Monitor raw HID communication in Developer Mode
 
 ### Getting started
@@ -45,7 +45,7 @@ Browser
 
 | Layer            | File                           | Responsibility                                                       |
 |------------------|--------------------------------|----------------------------------------------------------------------|
-| React UI         | `App.tsx`, dashboards, modals  | Rendering, user interaction, routing                                 |
+| React UI         | `App.tsx`, dashboards, modals  | Rendering, user interaction, section routing (Header Nav)            |
 | Zustand stores   | `stores/`                      | Global state shared across components                                |
 | React hooks      | `hooks/`                       | Local async device operations with their own state                   |
 | DeviceController | `services/DeviceController.ts` | Typed commands — fetchStatus, fetchMacros, saveMacro, etc.           |
@@ -59,16 +59,16 @@ Browser
 ```
 configurator/
 ├── src/
-│   ├── App.tsx                         — Top-level: connection wiring, log aggregation, root layout
+│   ├── App.tsx                         — Top-level: section routing, secret code listener, connection logic
 │   ├── main.tsx                        — React entry point, DeviceController instantiation
-│   ├── index.css                       — All CSS (variables, layout, components)
-│   ├── HIDService.ts                   — Backward-compat re-export façade (all protocol constants + hidService singleton)
-│   ├── KeyDefinitions.ts               — HID keycodes, key names, browser key→HID map, action code ranges
-│   ├── KeyboardLayoutEditor.tsx        — Visual key map editor: layers, physical layout, KLE import, test mode
-│   ├── MacrosDashboard.tsx             — Macro list + CRUD + export/import workflow
-│   ├── CustomKeysDashboard.tsx         — Custom key list + CRUD with PR/MA mode editor
-│   ├── StatusWidget.tsx                — BLE/USB transport mode + profile + pairing status display
-│   ├── SearchableKeyModal.tsx          — Legacy entry point; delegates to components/SearchableKeyModal.tsx
+│   ├── index.css                       — Global styles, dashboard layouts, utility classes
+│   ├── HIDService.ts                   — Backward-compat re-export façade (singleton instance)
+│   ├── KeyDefinitions.ts               — HID keycodes, key names, browser key→HID map
+│   ├── KeyboardLayoutEditor.tsx        — "Layout" section: visual matrix editor, KLE/JSON portability
+│   ├── MacrosDashboard.tsx             — "Macros & CKs" column: Macro CRUD + Export/Import
+│   ├── CustomKeysDashboard.tsx         — "Macros & CKs" column: Custom Key CRUD + Export/Import
+│   ├── StatusWidget.tsx                — Header widget: BLE/USB/Split status indicators
+│   ├── DeviceIdentityDashboard.tsx     — "Identity" section: device naming and split variants (Dev only)
 │   │
 │   ├── components/
 │   │   ├── DevControlsPanel.tsx        — Developer Mode panel: config GET/SET form + raw log viewer
@@ -242,8 +242,9 @@ The stores hold **typed actions** that accept a `DeviceController` argument, kee
 After hook extraction, `App.tsx` owns only:
 - `isConnected` — drives conditional rendering of all panels
 - `deviceStatus` — passed to `StatusWidget`
-- `isDeveloperMode` — persisted in `localStorage`, passed to dashboards
-- `logs[]` — ring of `LogMessage` entries for the dev panel
+- `isDeveloperMode` — persisted in `localStorage`, unlocked via the code
+- `logs[]` — ring of `LogMessage` entries for the dev panel strip
+- `activeSection` — current navigation target (layout, macrosCkeys, split, identity)
 
 ---
 
@@ -278,13 +279,15 @@ The editor accepts **KLE (Keyboard Layout Editor) raw JSON** pasted into a text 
 1. Bounds validation checks that no key has `row >= MATRIX_ROWS` or `col >= MATRIX_COLS`. Out-of-bounds keys show an error and abort.
 2. On success, `setPhysicalLayout(parsed)` updates the local state and the "Save Physical Layout" button pushes it to the device.
 
-### Test mode
+### Test mode / Row-Col Edit
 
-When test mode is active (`isTestMode === true`), physical key presses on the real keyboard are injected via `SYS_CMD_INJECT_KEY`. The highlighted key in the editor tracks which key was most recently pressed, giving visual feedback of the physical key matrix mapping.
+Accessed via the "..." options menu in the Layout section (Developer Mode only). 
 
-### Export
+When test mode is active, physical key presses are injected via `SYS_CMD_INJECT_KEY`. In Row-Col Edit mode, matrix coordinates are displayed over each key, and logical matrix positions can be reassigned.
 
-The current physical layout can be exported to JSON (the same format accepted by KLE import) via `saveJsonFile()` from `utils/fileUtils.ts`.
+### Portability (Export/Import)
+
+The entire layout (all 4 layers) and the physical layout geometry can be exported to a single JSON file. This is accessed via the options menu in the Layout section.
 
 ---
 
@@ -415,24 +418,25 @@ ID assignment follows the same "smallest available slot" pattern as macros. `id:
 
 ## 9. Developer Mode
 
-Toggle the **DEV MODE** switch in the top-right corner of the header. The state is persisted in `localStorage`.
+Developer Mode is toggled by typing the **Developer Code** while the application is focused. There is no visible button for this to prevent accidental activation:
+`↑` `↑` `↓` `↓` `←` `→` `←` `→` `B` `A`
 
 ### DevControlsPanel
 
-When Developer Mode is on, a `DevControlsPanel` appears at the bottom. It has two columns:
+When active, a `DevControlsPanel` appears as a strip at the bottom of the viewport. It provides:
 
-**Left — Controls:**
-- **Enable/disable toggle** — disables sending until explicitly enabled, preventing accidental writes.
+**Left — Config Explorer:**
 - **Target Module** selector — CONFIG or SYSTEM.
-- **Key ID** selector (CONFIG module only) — selects which config record to read/write.
-- **Configuration Form** — auto-generated form populated by a GET of the selected key. Edit fields and click **Save Payload** to send a SET.
-- **Clear Logs** button.
+- **Key ID** selector — selects which config record to read/write.
+- **Auto-Form** — populated by a GET of the selected key; allows editing and SETing raw JSON records.
 
-When the module or key ID changes, a GET is fired automatically to populate the form with the current device values.
+**Right — Raw Packet Log:**
+- Real-time display of every HID report sent/received.
+- Decoded flags (e.g. `[FIRST|LAST|ACK]`) and text-decoded payloads for rapid protocol debugging.
 
-**Right — Device Logs:**
-- Every received HID packet is shown with its timestamp, flag string (e.g. `[FIRST|ACK]`), payload length, remaining count, and either a hex dump or decoded text payload.
-- Text log entries (e.g. "Device connected", "Found 3 macros") are injected via `addLog()` in `App.tsx`.
+### Unlocked Sections
+
+Developer mode unlocks the **Identity** section in the main header navigation, which allows modifying device names and split hardware variants. It also unlocks advanced tools in the Layout section's options menu (KLE Import, Physical Layout Save, Matrix Row/Col Edit).
 
 ### Packet flags display
 

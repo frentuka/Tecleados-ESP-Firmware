@@ -66,10 +66,10 @@ function App() {
     localStorage.setItem('isDeveloperMode', isDeveloperMode.toString());
   }, [isDeveloperMode]);
 
-  // Konami Code for Developer Mode
+  // Secret code for Developer Mode
   useEffect(() => {
-    const konamiCode = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'b', 'a'];
-    let konamiIndex = 0;
+    const secretCode = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'b', 'a'];
+    let codeIndex = 0;
 
     const handleKeyDown = (e: KeyboardEvent) => {
       // Ignore keydowns if user is typing in an input field
@@ -79,19 +79,19 @@ function App() {
 
       const key = e.key;
       // Allow lowercase 'b' and 'a' to match
-      const isMatch = key === konamiCode[konamiIndex] || key.toLowerCase() === konamiCode[konamiIndex];
+      const isMatch = key === secretCode[codeIndex] || key.toLowerCase() === secretCode[codeIndex];
       
       if (isMatch) {
-        konamiIndex++;
-        if (konamiIndex === konamiCode.length) {
+        codeIndex++;
+        if (codeIndex === secretCode.length) {
           setIsDeveloperMode(prev => !prev);
-          konamiIndex = 0;
+          codeIndex = 0;
         }
       } else {
-        konamiIndex = 0;
+        codeIndex = 0;
         // Check if the current key is the start of the sequence
-        if (key === konamiCode[0]) {
-          konamiIndex = 1;
+        if (key === secretCode[0]) {
+          codeIndex = 1;
         }
       }
     };
