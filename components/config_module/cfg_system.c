@@ -38,11 +38,11 @@ static void sys_apply_local_id(cfg_system_t *s) {
 
 static void sys_default(void *out_struct) {
   cfg_system_t *s = (cfg_system_t *)out_struct;
-  strncpy(s->device_name, "Antigravity KB", sizeof(s->device_name) - 1);
+  strncpy(s->device_name, "Tecleados MK1", sizeof(s->device_name) - 1);
   s->device_name[sizeof(s->device_name) - 1] = '\0';
   s->sleep_timeout_ms = 300000; // 5 mins
   s->rgb_brightness = 255;
-  s->bluetooth_enabled = true;
+  s->bluetooth_enabled = false;
   s->is_split = false;
   s->split_mirror_cols = false;
   s->split_variant[0] = '\0';
