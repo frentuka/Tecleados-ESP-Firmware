@@ -68,6 +68,7 @@ configurator/
 │   ├── MacrosDashboard.tsx             — "Macros & CKs" column: Macro CRUD + Export/Import
 │   ├── CustomKeysDashboard.tsx         — "Macros & CKs" column: Custom Key CRUD + Export/Import
 │   ├── StatusWidget.tsx                — Header widget: BLE/USB/Split status indicators
+│   ├── SplitDashboard.tsx              — "Split" section: Pairing, role swap, latency, remote matrix visualizer
 │   ├── DeviceIdentityDashboard.tsx     — "Identity" section: device naming and split variants (Dev only)
 │   │
 │   ├── components/
@@ -79,6 +80,7 @@ configurator/
 │   │   ├── ExportModal.tsx             — Multi-select modal to choose which macros to export
 │   │   ├── ImportModal.tsx             — Preview + confirm modal for importing a JSON macro file
 │   │   ├── SearchableKeyModal.tsx      — Searchable key picker (HID keys, custom keys, macros, transparent)
+│   │   ├── SidebarIcons.tsx            — SVG icons used in the main application navigation sidebar/header
 │   │   └── Icons.tsx                   — Reusable SVG icon components (ActionTapIcon, etc.)
 │   │
 │   ├── hooks/
