@@ -103,7 +103,6 @@ function ActionSlot({ label, value, macros, onChange }: ActionSlotProps) {
                 <SearchableKeyModal
                     currentValue={value}
                     macros={macros}
-                    customKeys={[]} 
                     onSelect={v => { onChange(v); setOpen(false); }}
                     onClose={() => setOpen(false)}
                 />

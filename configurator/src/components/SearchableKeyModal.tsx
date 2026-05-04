@@ -101,7 +101,7 @@ const SystemIcon = () => (
 
 type MenuType = 'key' | 'macro' | 'custom' | 'system';
 
-export default function SearchableKeyModal({ currentValue, macros, customKeys = [], onSelect, onClose }: SearchableKeyModalProps) {
+export default function SearchableKeyModal({ currentValue, macros, customKeys, onSelect, onClose }: SearchableKeyModalProps) {
     const [selectedMenu, setSelectedMenu] = useState<MenuType | null>(null);
     const [searchTerm, setSearchTerm] = useState('');
     const inputRef = useRef<HTMLInputElement>(null);
@@ -112,7 +112,7 @@ export default function SearchableKeyModal({ currentValue, macros, customKeys = 
     }, []);
 
     const macroOptions = getMacroKeyOptions(macros);
-    const ckeyOptions  = getCKeyOptions(customKeys);
+    const ckeyOptions  = getCKeyOptions(customKeys || []);
     const combinedKeys = [...ALL_KEYS, ...macroOptions, ...ckeyOptions];
 
     const filteredKeys = combinedKeys.filter(k =>
@@ -158,7 +158,13 @@ export default function SearchableKeyModal({ currentValue, macros, customKeys = 
         }
     };
 
-    const isCustomKeysDisabled = customKeys.length === 0;
+    const isMacrosDisabled = macros.length === 0;
+    const isCustomKeysAllowed = customKeys !== undefined;
+    const isCustomKeysDisabled = !isCustomKeysAllowed || customKeys.length === 0;
+    
+    const customKeyTooltip = !isCustomKeysAllowed 
+        ? 'Custom Keys are not allowed here' 
+        : (isCustomKeysDisabled ? 'No custom keys were defined' : '');
     
     const isSearching = searchTerm.trim().length > 0;
     const isExpanded = isSearching || selectedMenu !== null;
@@ -205,13 +211,23 @@ export default function SearchableKeyModal({ currentValue, macros, customKeys = 
                         <button className={`accordion-btn ${selectedMenu === 'key' ? 'active' : ''}`} onClick={() => handleMenuSelect('key')}>
                             <KeyboardIcon /> <span>Keys</span>
                         </button>
-                        <button className={`accordion-btn ${selectedMenu === 'macro' ? 'active' : ''}`} onClick={() => handleMenuSelect('macro')}>
+                        <button 
+                            className={`accordion-btn ${selectedMenu === 'macro' ? 'active' : ''} ${isMacrosDisabled ? 'disabled' : ''}`} 
+                            onClick={() => !isMacrosDisabled && handleMenuSelect('macro')}
+                            title={isMacrosDisabled ? 'No macros were defined' : ''}
+                        >
                             <MacroIcon /> <span>Macros</span>
+                            {isMacrosDisabled && (
+                                <svg className="lock-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                                    <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                                </svg>
+                            )}
                         </button>
                         <button 
                             className={`accordion-btn ${selectedMenu === 'custom' ? 'active' : ''} ${isCustomKeysDisabled ? 'disabled' : ''}`} 
                             onClick={() => !isCustomKeysDisabled && handleMenuSelect('custom')}
-                            title={isCustomKeysDisabled ? 'Custom Keys unavailable' : ''}
+                            title={customKeyTooltip}
                         >
                             <CustomKeyIcon /> <span>Custom Keys</span>
                             {isCustomKeysDisabled && (
