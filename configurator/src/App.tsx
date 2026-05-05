@@ -408,10 +408,8 @@ function App() {
 
             {isDeveloperMode && (
               <DevControlsPanel
-                isConnected={isConnected}
                 logs={logs}
                 onClearLogs={() => setLogs([])}
-                onAddLog={addLog}
               />
             )}
           </div>
