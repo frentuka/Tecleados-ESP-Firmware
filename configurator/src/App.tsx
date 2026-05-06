@@ -12,8 +12,8 @@ import { useMacros } from './hooks/useMacros';
 import { useCustomKeys } from './hooks/useCustomKeys';
 import { getFlagsString } from './utils/packetUtils';
 import type { DeviceStatus, LogMessage } from './types/device';
-import { 
-  PAYLOAD_FLAG_FIRST, 
+import {
+  PAYLOAD_FLAG_FIRST,
   PAYLOAD_FLAG_LAST,
   PAYLOAD_FLAG_ACK,
   PAYLOAD_FLAG_NAK,
@@ -37,6 +37,7 @@ export type { Macro, MacroElement, MacroAction } from './types/macros';
 export type { CustomKey } from './types/customKeys';
 
 type ActiveSection = 'layout' | 'macrosCkeys' | 'split' | 'identity';
+
 
 function App() {
   const [activeSection, setActiveSection] = useState<ActiveSection>('layout');
@@ -96,7 +97,7 @@ function App() {
       const key = e.key;
       // Allow lowercase 'b' and 'a' to match
       const isMatch = key === secretCode[codeIndex] || key.toLowerCase() === secretCode[codeIndex];
-      
+
       if (isMatch) {
         codeIndex++;
         if (codeIndex === secretCode.length) {
@@ -121,7 +122,7 @@ function App() {
     const handler = (connected: boolean) => {
       setIsConnected(connected);
       if (!connected) setDeviceStatus(null);
-      
+
       // Clear logs and add connection status as the first entry
       setLogs([{
         id: getNextLogId(),
@@ -256,6 +257,39 @@ function App() {
     await hidService.disconnect();
   };
 
+  const DISCONNECTED_MESSAGES = [
+    "Disconnected... for now.",
+    "Waiting for the spark.",
+    "Your keys are resting.",
+    "Silence is golden.",
+    "Awaiting signal...",
+    "Looking for its better half.",
+    "Keyboard out of office.",
+    "The keys are quiet.",
+    "One click away from magic.",
+    "Wake up, little keyboard.",
+    "Ready to sync.",
+    "Tap into the power.",
+    "Waiting for a sign.",
+    "Your custom layout awaits.",
+    "Type-less... temporarily.",
+    "In a world of its own.",
+    "Awaiting your command.",
+    "The board is dormant.",
+    "Connection pending...",
+    "Ready for a fresh start.",
+    "Keyboard.exe is not responding.",
+    "Quiet on the set!",
+    "Awaiting the digital handshake.",
+    "Expecto Connection!",
+    "The Chamber of Keys is closed...",
+    "A Keyboard is never late, nor is it early."
+  ];
+
+  const [disconnectedMessage] = useState(() =>
+    DISCONNECTED_MESSAGES[Math.floor(Math.random() * DISCONNECTED_MESSAGES.length)]
+  );
+
   return (
     <div className="app-container">
       <header className="main-header">
@@ -268,7 +302,7 @@ function App() {
 
         <div className="header-center">
           <div className={`center-container ${isConnected ? 'connected' : 'disconnected'}`}>
-            <button 
+            <button
               className={`btn-connection ${isConnected ? 'btn-disconnect' : 'btn-connect'}`}
               onClick={isConnected ? handleDisconnect : handleConnect}
               title={isConnected ? 'Disconnect' : 'Connect'}
@@ -288,26 +322,26 @@ function App() {
               )}
             </button>
             <nav className={`header-nav ${isConnected ? 'visible' : 'hidden'}`}>
-              <button 
+              <button
                 className={`header-nav-item ${activeSection === 'layout' ? 'active' : ''}`}
                 onClick={() => setActiveSection('layout')}
               >
                 <LayoutIcon /> <span className="nav-label">Layout</span>
               </button>
-              <button 
+              <button
                 className={`header-nav-item ${activeSection === 'macrosCkeys' ? 'active' : ''}`}
                 onClick={() => setActiveSection('macrosCkeys')}
               >
                 <MacrosIcon /> <span className="nav-label">Macros & CKs</span>
               </button>
-              <button 
+              <button
                 className={`header-nav-item ${activeSection === 'split' ? 'active' : ''}`}
                 onClick={() => setActiveSection('split')}
               >
                 <SplitIcon /> <span className="nav-label">Split</span>
               </button>
               {isDeveloperMode && (
-                <button 
+                <button
                   className={`header-nav-item ${activeSection === 'identity' ? 'active' : ''}`}
                   onClick={() => setActiveSection('identity')}
                 >
@@ -339,7 +373,7 @@ function App() {
 
       </header>
 
-      {isConnected && (
+      {isConnected ? (
         <div className="app-layout">
           <div className="app-main-content">
             <div className="app-sections-area">
@@ -413,6 +447,29 @@ function App() {
                 isConnected={isConnected}
               />
             )}
+          </div>
+        </div>
+      ) : (
+        <div className="disconnected-overlay">
+          <div className="disconnected-content">
+
+            <div className="disconnected-icon-wrapper">
+              <svg className="disconnected-icon" xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="4" width="20" height="16" rx="2" ry="2"></rect>
+                <line x1="6" y1="8" x2="6.01" y2="8" strokeWidth="2"></line>
+                <line x1="10" y1="8" x2="10.01" y2="8" strokeWidth="2"></line>
+                <line x1="14" y1="8" x2="14.01" y2="8" strokeWidth="2"></line>
+                <line x1="18" y1="8" x2="18.01" y2="8" strokeWidth="2"></line>
+                <line x1="6" y1="12" x2="6.01" y2="12" strokeWidth="2"></line>
+                <line x1="10" y1="12" x2="10.01" y2="12" strokeWidth="2"></line>
+                <line x1="14" y1="12" x2="14.01" y2="12" strokeWidth="2"></line>
+                <line x1="18" y1="12" x2="18.01" y2="12" strokeWidth="2"></line>
+                <line x1="7" y1="16" x2="17" y2="16" strokeWidth="2"></line>
+              </svg>
+              <div className="pulse-ring"></div>
+            </div>
+            <h2>{disconnectedMessage}</h2>
+            <p>Tap the <strong style={{ color: 'var(--success-color)' }}>Connect</strong> button above<br />to start configuring your keyboard.</p>
           </div>
         </div>
       )}
