@@ -635,7 +635,6 @@ export class HIDTransport {
         const payloadBytes = data.slice(4, 4 + safeLen);
 
         const isBlastPacket = (flags & PAYLOAD_FLAG_MID) || (flags & PAYLOAD_FLAG_LAST);
-        const isHandshake = (flags & PAYLOAD_FLAG_FIRST) && remaining > 0;
 
         // Only log single packets or handshakes (bursts are summarized on finish)
         if (!this.blastRx.active && !isBlastPacket) {

@@ -8,6 +8,7 @@ import MacroModeModal from './components/MacroModeModal';
 import ExportModal from './components/ExportModal';
 import ImportModal from './components/ImportModal';
 import { saveJsonFile } from './utils/fileUtils';
+import './assets/css/macros-dashboard.css';
 
 interface MacrosDashboardProps {
     macros: Macro[];

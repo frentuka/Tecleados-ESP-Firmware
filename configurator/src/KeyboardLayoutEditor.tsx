@@ -19,6 +19,8 @@ import type { Macro } from './types/macros';
 import { parseKleJson } from './utils/kleParser';
 import { parsePhysicalLayoutJson, serializePhysicalLayout } from './utils/layoutUtils';
 import { saveJsonFile } from './utils/fileUtils';
+import './assets/css/keyboard-layout.css';
+import './assets/css/key-types.css';
 
 // ── Matrix dimensions (must match firmware) ──
 const LAYER_COUNT = 4;

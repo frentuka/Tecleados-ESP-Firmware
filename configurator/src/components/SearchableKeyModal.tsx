@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { ALL_KEYS, getKeyClass, TRANSPARENT, getMacroKeyOptions, getCKeyOptions, MACRO_BASE, CKEY_BASE } from '../KeyDefinitions';
 import type { Macro } from '../types/macros';
 import type { CustomKey } from '../types/customKeys';
+import '../assets/css/searchable-key-modal.css';
 
 interface SearchableKeyModalProps {
     title?: string;

@@ -12,6 +12,7 @@ import {
     SPLIT_ROLE_SLAVE,
 } from './types/protocol';
 import type { DeviceStatus } from './types/device';
+import './assets/css/split-dashboard.css';
 
 // ── Label helpers ─────────────────────────────────────────────────────────────
 

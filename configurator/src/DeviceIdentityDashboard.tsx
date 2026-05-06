@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { hidService } from './HIDService';
 import type { DeviceIdentity } from './services/DeviceController';
+import './assets/css/device-identity.css';
 
 // ── Props ──────────────────────────────────────────────────────────────────────
 

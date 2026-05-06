@@ -410,6 +410,7 @@ function App() {
               <DevControlsPanel
                 logs={logs}
                 onClearLogs={() => setLogs([])}
+                isConnected={isConnected}
               />
             )}
           </div>

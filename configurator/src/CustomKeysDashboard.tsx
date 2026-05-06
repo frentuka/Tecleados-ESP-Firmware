@@ -6,6 +6,7 @@ import SearchableKeyModal from './components/SearchableKeyModal';
 import { getKeyName, CKEY_BASE } from './KeyDefinitions';
 import { getCustomKeyBadge } from './components/MacroIcons';
 import { saveJsonFile } from './utils/fileUtils';
+import './assets/css/custom-keys-dashboard.css';
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 

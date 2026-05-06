@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type { LogMessage } from '../types/device';
+import '../assets/css/dev-controls.css';
 
 interface DevControlsPanelProps {
     isConnected: boolean;
