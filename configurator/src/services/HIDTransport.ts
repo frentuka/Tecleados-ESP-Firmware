@@ -34,6 +34,7 @@ import type {
     StatusUpdateCallback,
     DeviceStatus,
     CommandResponse,
+    ConnectionNotification,
 } from '../types/device';
 
 import { MODULE_STATUS } from '../types/protocol';
@@ -132,16 +133,22 @@ export class HIDTransport {
         }
     }
 
+    public static isLinux(): boolean {
+        return /Linux/i.test(navigator.userAgent) || /Linux/i.test((navigator as any).platform || '');
+    }
+
     // ══════════════════════════════════════════════════════════
     // ── Device Discovery & Connection ──
     // ══════════════════════════════════════════════════════════
 
-    public async requestDevice(): Promise<boolean> {
+    public async requestDevice(): Promise<{ ok: boolean; notification?: ConnectionNotification }> {
         try {
             const nav = navigator as any;
             if (!('hid' in nav)) {
-                console.error('WebHID is not supported in this browser.');
-                return false;
+                return {
+                    ok: false,
+                    notification: { type: 'error', message: 'WebHID is not supported in this browser.' }
+                };
             }
 
             const devices = await nav.hid.requestDevice({
@@ -149,49 +156,110 @@ export class HIDTransport {
             });
 
             if (devices.length > 0) {
-                const target = devices.find((d: any) => this.isCommInterface(d));
-                if (!target) {
-                    const debugInfo = devices.map((d: any) =>
-                        `${d.productName} cols: ${(d.collections || []).map((c: any) => `UP:${c.usagePage}`).join(',')}`
-                    ).join('\n');
-                    alert(`Fail: No Comm interface (0xFFFF) found.\nDevices seen:\n${debugInfo}`);
-                    console.error('[HIDTransport] No valid Comm interface found.', debugInfo);
-                    return false;
+                const candidates = devices.filter((d: any) => this.isCommInterface(d));
+                
+                if (candidates.length === 0) {
+                    return {
+                        ok: false,
+                        notification: { type: 'warning', message: 'The selected device does not have the required communication interface.' }
+                    };
                 }
 
-                console.log(`[HIDTransport] Found Comm interface: ${target.productName}`);
                 this.wantConnection = true;
-                const ok = await this.openDevice(target);
-                if (!ok) {
-                    alert(`Fail: dev.open() returned false for ${target.productName}. Check browser console for SecurityError or UnknownError.`);
-                    console.warn('[HIDTransport] Initial open failed, starting reconnect polling');
-                    this.startReconnectPolling();
+                let lastError: any = null;
+
+                for (const target of candidates) {
+                    console.log(`[HIDTransport] Attempting to open interface: ${target.productName}`);
+                    try {
+                        await this.openDevice(target);
+                        return { ok: true };
+                    } catch (e: any) {
+                        console.warn(`[HIDTransport] Failed to open interface "${target.productName}":`, e);
+                        lastError = e;
+                    }
                 }
-                return ok;
+
+                // If we reach here, all candidates failed
+                const msg = lastError?.message || 'Unknown error during open';
+                
+                if (msg.toLowerCase().includes('failed to open') && HIDTransport.isLinux()) {
+                    return {
+                        ok: false,
+                        notification: { 
+                            type: 'error', 
+                            message: 'System lock: The device is busy. Please try unplugging and plugging it back in.' 
+                        }
+                    };
+                }
+
+                if (lastError?.name === 'SecurityError' || msg.toLowerCase().includes('access denied')) {
+                    return {
+                        ok: false,
+                        notification: { type: 'error', message: 'PERMISSION_DENIED' }
+                    };
+                }
+
+                return {
+                    ok: false,
+                    notification: { type: 'error', message: msg }
+                };
             }
-            return false;
-        } catch (error) {
+            return {
+                ok: false,
+                notification: { type: 'info', message: 'Connection cancelled: No device selected.' }
+            };
+        } catch (error: any) {
+            if (error.name === 'NotFoundError') {
+                return {
+                    ok: false,
+                    notification: { type: 'info', message: 'Connection cancelled: No device selected.' }
+                };
+            }
             console.error('Error requesting HID device:', error);
-            return false;
+            return {
+                ok: false,
+                notification: { type: 'error', message: error.message || 'Error requesting device' }
+            };
         }
     }
 
-    private async openDevice(dev: HIDDeviceLike): Promise<boolean> {
+    private async openDevice(dev: HIDDeviceLike): Promise<void> {
         try {
-            this.device = dev;
-            if (!dev.opened) {
-                await dev.open();
+            // Check for any "ghost" connections that might be hanging
+            const nav = navigator as any;
+            if ('hid' in nav) {
+                const existing = await nav.hid.getDevices();
+                for (const d of existing) {
+                    if (d !== dev && d.opened && d.vendorId === VENDOR_ID && d.productId === PRODUCT_ID) {
+                        console.log('[HIDTransport] Closing ghost connection to existing device...');
+                        try { await d.close(); } catch { /* ignore */ }
+                    }
+                }
             }
+
+            if (!dev.opened) {
+                // Mandatory small pre-delay (Chromium bug workaround for quick reconnections)
+                await new Promise(r => setTimeout(r, 300));
+                
+                try {
+                    await dev.open();
+                } catch (e) {
+                    // Second attempt with longer delay
+                    console.warn('[HIDTransport] First open attempt failed, retrying...', e);
+                    await new Promise(r => setTimeout(r, 800));
+                    await dev.open();
+                }
+            }
+
+            this.device = dev;
             dev.addEventListener('inputreport', this.handleInputReport as EventListener);
             console.log(`Connected to HID device: ${dev.productName}`);
             this.notifyConnectionChange(true);
             this.stopReconnectPolling();
-            return true;
-        } catch (error: any) {
-            alert(`Error opening HID device: ${error?.message || error}`);
-            console.error('Error opening HID device:', error);
+        } catch (e) {
+            console.error('[HIDTransport] Failed to open device:', e);
             this.device = null;
-            return false;
+            throw e;
         }
     }
 

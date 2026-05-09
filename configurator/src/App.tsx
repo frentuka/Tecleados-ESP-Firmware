@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { hidService } from './HIDService';
+import { hidService, HIDTransport } from './HIDService';
 import KeyboardLayoutEditor from './KeyboardLayoutEditor';
 import MacrosDashboard from './MacrosDashboard';
 import CustomKeysDashboard from './CustomKeysDashboard';
@@ -11,7 +11,7 @@ import { useConfirm } from './hooks/useConfirm';
 import { useMacros } from './hooks/useMacros';
 import { useCustomKeys } from './hooks/useCustomKeys';
 import { getFlagsString } from './utils/packetUtils';
-import type { DeviceStatus, LogMessage } from './types/device';
+import type { DeviceStatus, LogMessage, ConnectionNotification } from './types/device';
 import {
   PAYLOAD_FLAG_FIRST,
   PAYLOAD_FLAG_LAST,
@@ -42,6 +42,11 @@ type ActiveSection = 'layout' | 'macrosCkeys' | 'split' | 'identity';
 function App() {
   const [activeSection, setActiveSection] = useState<ActiveSection>('layout');
   const [isConnected, setIsConnected] = useState(false);
+  const [notification, setNotification] = useState<ConnectionNotification | null>(null);
+  const [displayedNotification, setDisplayedNotification] = useState<ConnectionNotification | null>(null);
+  const [isNotificationHovered, setIsNotificationHovered] = useState(false);
+  const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [notificationVisible, setNotificationVisible] = useState(false);
   const [deviceStatus, setDeviceStatus] = useState<DeviceStatus | null>(null);
   const [isDeveloperMode, setIsDeveloperMode] = useState<boolean>(() => {
     return localStorage.getItem('isDeveloperMode') === 'true';
@@ -133,6 +138,10 @@ function App() {
     };
     hidService.onConnectionChange(handler);
 
+    if (isConnected) {
+      setNotification(null);
+    }
+
     // Also listen for status updates (pushed from ESP)
     const statusHandler = (status: DeviceStatus) => {
       setDeviceStatus(status);
@@ -144,6 +153,63 @@ function App() {
       hidService.offStatusUpdate(statusHandler);
     };
   }, []);
+
+  // Auto-dismiss logic with hover protection
+  useEffect(() => {
+    if (notification && notification.message !== 'COPIED') {
+      setDisplayedNotification(notification);
+      const showTimer = setTimeout(() => setNotificationVisible(true), 50);
+
+      // Function to start the dismissal timer
+      const startDismissTimer = (customDuration?: number) => {
+        if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
+
+        const isLinuxFix = notification.message === 'PERMISSION_DENIED' || notification.message.includes('System lock');
+        const defaultDuration = isLinuxFix ? 20000 : 10000;
+        const duration = customDuration ?? defaultDuration;
+
+        dismissTimerRef.current = setTimeout(() => {
+          setNotificationVisible(false);
+          const clearTimer = setTimeout(() => {
+            setNotification(null);
+            setDisplayedNotification(null);
+          }, 500);
+          return () => clearTimeout(clearTimer);
+        }, duration);
+      };
+
+      if (!isNotificationHovered) {
+        startDismissTimer();
+      } else {
+        if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
+      }
+
+      return () => {
+        clearTimeout(showTimer);
+        if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
+      };
+    } else if (!notification) {
+      setNotificationVisible(false);
+      const clearTimer = setTimeout(() => setDisplayedNotification(null), 500);
+      return () => clearTimeout(clearTimer);
+    }
+  }, [notification, isNotificationHovered, setNotification]);
+
+  const handleMouseEnter = () => setIsNotificationHovered(true);
+  const handleMouseLeave = () => {
+    setIsNotificationHovered(false);
+    // When leaving, start a fresh 4-second countdown before closing
+    if (notificationVisible) {
+      if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
+      dismissTimerRef.current = setTimeout(() => {
+        setNotificationVisible(false);
+        setTimeout(() => {
+          setNotification(null);
+          setDisplayedNotification(null);
+        }, 500);
+      }, 4000); // 4 second grace period after de-hovering
+    }
+  };
 
   const fetchStatus = useCallback(async () => {
     if (!isConnected) return;
@@ -250,7 +316,11 @@ function App() {
   }, [handleLogReceived]);
 
   const handleConnect = async () => {
-    await hidService.requestDevice();
+    setNotification(null);
+    const result = await hidService.requestDevice();
+    if (!result.ok && result.notification) {
+      setNotification(result.notification);
+    }
   };
 
   const handleDisconnect = async () => {
@@ -289,6 +359,8 @@ function App() {
   const [disconnectedMessage] = useState(() =>
     DISCONNECTED_MESSAGES[Math.floor(Math.random() * DISCONNECTED_MESSAGES.length)]
   );
+
+  const LINUX_HID_PERMS_FIX_COMMAND = 'echo \'KERNEL==\"hidraw*\", ATTRS{idVendor}==\"303a\", ATTRS{idProduct}==\"1324\", MODE=\"0666\"\' | sudo tee /etc/udev/rules.d/99-tecleados.rules && sudo udevadm control --reload-rules && sudo udevadm trigger';
 
   return (
     <div className="app-container">
@@ -452,7 +524,6 @@ function App() {
       ) : (
         <div className="disconnected-overlay">
           <div className="disconnected-content">
-
             <div className="disconnected-icon-wrapper">
               <svg className="disconnected-icon" xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="2" y="4" width="20" height="16" rx="2" ry="2"></rect>
@@ -470,9 +541,101 @@ function App() {
             </div>
             <h2>{disconnectedMessage}</h2>
             <p>Tap the <strong style={{ color: 'var(--success-color)' }}>Connect</strong> button above<br />to start configuring your keyboard.</p>
+
           </div>
         </div>
       )}
+
+      {/* Global Floating Notifications */}
+      {(displayedNotification?.message === 'PERMISSION_DENIED' || displayedNotification?.message.includes('System lock')) && HIDTransport.isLinux() && (
+        <div
+          className={`permissions-help ${notificationVisible ? 'visible' : ''}`}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+        >
+          <h3>
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+            </svg>
+            Linux Configuration Required
+          </h3>
+          <p>WebHID needs permission to access your keyboard. Run this command in your terminal to fix it:</p>
+          <div className="code-block-wrapper">
+            <pre className="code-block" style={{ fontSize: '0.75rem' }}>
+              {LINUX_HID_PERMS_FIX_COMMAND}
+            </pre>
+            <button
+              className={`btn-copy ${notification?.message === 'COPIED' ? 'copied' : ''}`}
+              onClick={() => {
+                navigator.clipboard.writeText(LINUX_HID_PERMS_FIX_COMMAND);
+                const originalNotification = notification;
+                setNotification({ type: 'info', message: 'COPIED' });
+                setTimeout(() => setNotification(originalNotification), 2000);
+              }}
+              title="Copy command"
+            >
+              {notification?.message === 'COPIED' ? (
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+              ) : (
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </svg>
+              )}
+            </button>
+          </div>
+          <p style={{ marginTop: '0.75rem', fontSize: '0.8rem', opacity: 0.7 }}>
+            After running the command, try connecting again.
+          </p>
+        </div>
+      )}
+
+      {displayedNotification &&
+        displayedNotification.message !== 'PERMISSION_DENIED' &&
+        !displayedNotification.message.includes('System lock') &&
+        displayedNotification.message !== 'COPIED' && (
+          <div
+            className={`notification-toast ${displayedNotification.type} ${notificationVisible ? 'visible' : ''}`}
+            onMouseEnter={handleMouseEnter}
+            onMouseLeave={handleMouseLeave}
+          >
+            {displayedNotification.type === 'error' && (
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="8" x2="12" y2="12"></line>
+                <line x1="12" y1="16" x2="12.01" y2="16"></line>
+              </svg>
+            )}
+            {displayedNotification.type === 'warning' && (
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                <line x1="12" y1="9" x2="12" y2="13"></line>
+                <line x1="12" y1="17" x2="12.01" y2="17"></line>
+              </svg>
+            )}
+            {displayedNotification.type === 'info' && (
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="16" x2="12" y2="12"></line>
+                <line x1="12" y1="8" x2="12.01" y2="8"></line>
+              </svg>
+            )}
+            {displayedNotification.message}
+            {displayedNotification.message.includes('System lock') && (
+              <button
+                className="btn-notification-action"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  window.location.reload();
+                }}
+              >
+                Refresh Now
+              </button>
+            )}
+          </div>
+        )}
     </div>
   );
 }

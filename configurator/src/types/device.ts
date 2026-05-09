@@ -50,3 +50,11 @@ export type LogCallback = (logData: Uint8Array) => void;
 export type RawPacketCallback = (data: Uint8Array, direction: 'rx' | 'tx') => void;
 export type ConnectionCallback = (connected: boolean) => void;
 export type StatusUpdateCallback = (status: DeviceStatus) => void;
+
+// ── Notification types ──────────────────────────────────────────────────
+export type NotificationType = 'info' | 'warning' | 'error';
+
+export interface ConnectionNotification {
+    type: NotificationType;
+    message: string;
+}
