@@ -13,6 +13,7 @@ The configurator lets you:
 - Import physical layouts from KLE (Keyboard Layout Editor) JSON
 - Export and import full layouts, macros, and custom keys as portable JSON files
 - Monitor raw HID communication in Developer Mode
+- Receive non-intrusive in-app feedback for every device operation via the global notification system
 
 ### Getting started
 
@@ -33,7 +34,7 @@ The app requires a Chromium-based browser (Chrome, Edge, Opera) — Firefox does
 ```
 Browser
   └── React UI (App.tsx)
-        ├── Zustand Stores         — global state (device, macros, custom keys, logs)
+        ├── Zustand Stores         — global state (device, macros, custom keys, logs, notifications)
         ├── React Hooks            — local business logic (useMacros, useCustomKeys)
         └── DeviceController       — high-level typed API
               └── HIDTransport     — low-level WebHID transport
@@ -96,11 +97,12 @@ configurator/
 │   │   ├── deviceStore.ts              — Zustand: isConnected, deviceStatus, isDeveloperMode, controller ref
 │   │   ├── macroStore.ts               — Zustand: macros[], macroLimits, macroCache, async fetch/save/delete
 │   │   ├── customKeyStore.ts           — Zustand: customKeys[], async fetch/save/delete
-│   │   └── logStore.ts                 — Zustand: logs[] (max 200 entries), addLog, clearLogs
+│   │   ├── logStore.ts                 — Zustand: logs[] (max 200 entries), addLog, clearLogs
+│   │   └── notificationStore.ts        — Zustand: global notification state; showNotification(message, type)
 │   │
 │   ├── types/
 │   │   ├── protocol.ts                 — All protocol constants (VID/PID, flag bits, module IDs, key IDs)
-│   │   ├── device.ts                   — CommandResponse, DeviceStatus, LogMessage, PhysKey, LayerData, callbacks
+│   │   ├── device.ts                   — CommandResponse, DeviceStatus, LogMessage, PhysKey, LayerData, callbacks, NotificationType
 │   │   ├── macros.ts                   — Macro, MacroElement, MacroAction, MacroLimits, ImportableMacro
 │   │   ├── customKeys.ts               — CustomKey, CustomKeyPR, CustomKeyMA
 │   │   └── index.ts                    — Barrel re-export
@@ -109,7 +111,8 @@ configurator/
 │       ├── packetUtils.ts              — getFlagsString() for log display, formatHex() helper
 │       ├── kleParser.ts                — Parses KLE (Keyboard Layout Editor) JSON into PhysKey[][]
 │       ├── layoutUtils.ts              — Physical layout JSON parse + serialize
-│       └── fileUtils.ts               — saveJsonFile(): File System Access API + <a> fallback
+│       ├── fileUtils.ts                — saveJsonFile(): File System Access API + <a> fallback
+│       └── withTimeout.ts              — withTimeout<T>(promise, ms): wraps any promise with a deadline; throws TimeoutError on expiry
 ```
 
 ---
@@ -218,16 +221,17 @@ If the device disconnects unexpectedly while `wantConnection` is true, `HIDTrans
 
 ### Zustand stores (`src/stores/`)
 
-| Store            | Key state                                                      | Purpose                             |
-|------------------|----------------------------------------------------------------|-------------------------------------|
-| `deviceStore`    | `isConnected`, `deviceStatus`, `isDeveloperMode`, `controller` | Connection + global UI flags        |
-| `macroStore`     | `macros[]`, `macroLimits`, `macroCache`                        | Macro list + per-macro detail cache |
-| `customKeyStore` | `customKeys[]`                                                 | Custom key list                     |
-| `logStore`       | `logs[]` (max 200) | Communication log ring buffer             |
+| Store                 | Key state                                                      | Purpose                                   |
+|-----------------------|----------------------------------------------------------------|-------------------------------------------|
+| `deviceStore`         | `isConnected`, `deviceStatus`, `isDeveloperMode`, `controller` | Connection + global UI flags              |
+| `macroStore`          | `macros[]`, `macroLimits`, `macroCache`                        | Macro list + per-macro detail cache       |
+| `customKeyStore`      | `customKeys[]`                                                 | Custom key list                           |
+| `logStore`            | `logs[]` (max 200)                                             | Communication log ring buffer             |
+| `notificationStore`   | `notification`, `showNotification`, `clearNotification`        | Global user-feedback notification system  |
 
 The stores hold **typed actions** that accept a `DeviceController` argument, keeping the async device logic inside the store rather than leaking into components.
 
-> **Note:** The current `App.tsx` + hooks architecture does **not** read from these Zustand stores — it manages its own local state and uses `useMacros` / `useCustomKeys` hooks directly. The Zustand stores are prepared infrastructure for a future refactor that would unify all state. New features should use the stores; the existing App flow still uses hooks.
+> **Note:** The current `App.tsx` + hooks architecture does **not** read from the device/macro/customKey Zustand stores — it manages its own local state and uses `useMacros` / `useCustomKeys` hooks directly. The Zustand stores are prepared infrastructure for a future refactor. The exception is `notificationStore`, which **is actively used** by all dashboard components and `App.tsx` for UI feedback.
 
 ### React hooks (`src/hooks/`)
 
@@ -457,7 +461,73 @@ In Developer Mode, each macro card shows its raw HID action code: `ID: 0x4000` t
 
 ---
 
-## 10. Packet Flow: End-to-End Example
+## 10. Notification System
+
+A global, non-intrusive toast notification system provides consistent user feedback across all dashboards. It replaces any use of `alert()` or local error state.
+
+### Store (`src/stores/notificationStore.ts`)
+
+```typescript
+showNotification(message: string, type?: NotificationType): void
+// type: 'info' | 'warning' | 'error' | 'success'
+```
+
+Any component can import `useNotificationStore` and call `showNotification` without prop drilling.
+
+### Notification types
+
+| Type      | Color  | Use case                                          | Auto-dismiss |
+|-----------|--------|---------------------------------------------------|--------------|
+| `success` | Green  | Save confirmed, import/export completed           | 2.5 s        |
+| `info`    | Blue   | Informational status changes                      | 6 s          |
+| `warning` | Amber  | Non-fatal issues (e.g. layout not stored, import needs save) | 6 s |
+| `error`   | Red    | Operation failed or timed out                     | 6 s          |
+
+### Auto-dismiss behavior (`App.tsx`)
+
+- A CSS transition makes the toast slide in/out.
+- **Success** notifications dismiss after **2.5 s**. All others dismiss after **6 s**. Linux permission errors persist for **20 s**.
+- **Hover-to-pause**: moving the mouse over the toast cancels the timer. On mouse-leave, a grace period (1.5 s for success, 4 s for others) restarts before dismissal.
+
+### Coverage
+
+The notification system is used in every dashboard for all save, delete, import, and export operations:
+
+| Component | Events notified |
+|-----------|-----------------|
+| `MacrosDashboard` | Save, delete, export, import |
+| `CustomKeysDashboard` | Save, delete, export, import |
+| `KeyboardLayoutEditor` | Layer save (per layer), KLE physical layout save, JSON export/import, Key Test Mode toggle |
+| `SplitDashboard` | Pairing start/cancel, unpair, role swap |
+| `DeviceIdentityDashboard` | Identity save, load failure |
+
+---
+
+## 11. Save Timeout Guard (`src/utils/withTimeout.ts`)
+
+All write operations to the device are wrapped with a 7-second timeout to prevent the UI from hanging indefinitely if the firmware does not respond.
+
+```typescript
+// Throws TimeoutError if promise does not resolve within ms milliseconds
+export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T>
+
+export class TimeoutError extends Error {
+    readonly isTimeout = true;
+}
+```
+
+**Applied to:**
+- `useMacros.ts` — `saveMacro`, `deleteMacro`
+- `useCustomKeys.ts` — `saveCustomKey`, `deleteCustomKey`
+- `DeviceIdentityDashboard.tsx` — `saveDeviceIdentity`
+- `SplitDashboard.tsx` — `splitStartPairing`, `splitCancelPairing`, `splitUnpair`, `splitRoleSwap`
+- `KeyboardLayoutEditor.tsx` — per-layer saves, KLE physical layout SET
+
+On timeout, a `TimeoutError` is caught and surfaced as an `error` notification with a "please retry" message. The `isSaving`/`busy` state is always cleared in a `finally` block so the UI remains usable.
+
+---
+
+## 12. Packet Flow: End-to-End Example
 
 **Fetching a single macro (id=2):**
 
@@ -489,7 +559,7 @@ App               useMacros           HIDTransport           Device
 
 ---
 
-## 11. Key Definitions & Action Code Ranges
+## 13. Key Definitions & Action Code Ranges
 
 Defined in `types/protocol.ts` and `KeyDefinitions.ts`:
 

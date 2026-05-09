@@ -12,6 +12,8 @@ import {
     SPLIT_ROLE_SLAVE,
 } from './types/protocol';
 import type { DeviceStatus } from './types/device';
+import { useNotificationStore } from './stores/notificationStore';
+import { withTimeout, TimeoutError } from './utils/withTimeout';
 import './assets/css/split-dashboard.css';
 
 // ── Label helpers ─────────────────────────────────────────────────────────────
@@ -92,6 +94,7 @@ interface SplitDashboardProps {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 const SplitDashboard: React.FC<SplitDashboardProps> = ({ isConnected, deviceStatus, isDeveloperMode, onLog }) => {
+    const { showNotification } = useNotificationStore();
     const [pairingTimeout, setPairingTimeout] = useState(30);
     const [testModeActive, setTestModeActive] = useState(false);
     const [remoteMatrix, setRemoteMatrix] = useState<Uint8Array | null>(null);
@@ -134,24 +137,72 @@ const SplitDashboard: React.FC<SplitDashboardProps> = ({ isConnected, deviceStat
     // ── Actions ──────────────────────────────────────────────────────────
 
     const handleStartPairing = useCallback(async () => {
-        const ok = await hidService.splitStartPairing(pairingTimeout * 1000);
-        onLog(ok ? `Split: pairing started (${pairingTimeout}s timeout)` : 'Split: start pairing failed');
-    }, [pairingTimeout, onLog]);
+        try {
+            const ok = await withTimeout(hidService.splitStartPairing(pairingTimeout * 1000), 7000);
+            if (ok) {
+                onLog(`Split: pairing started (${pairingTimeout}s timeout)`);
+                showNotification(`Split pairing started (${pairingTimeout}s timeout)`, "success");
+            } else {
+                onLog('Split: start pairing failed');
+                showNotification('Split pairing failed to start', "error");
+            }
+        } catch (e) {
+            const msg = e instanceof TimeoutError ? 'Pairing request timed out — please retry' : 'Split pairing failed to start';
+            onLog(`Split: start pairing failed — ${e instanceof TimeoutError ? 'timeout' : 'error'}`);
+            showNotification(msg, "error");
+        }
+    }, [pairingTimeout, onLog, showNotification]);
 
     const handleCancelPairing = useCallback(async () => {
-        const ok = await hidService.splitCancelPairing();
-        onLog(ok ? 'Split: pairing cancelled' : 'Split: cancel pairing failed');
-    }, [onLog]);
+        try {
+            const ok = await withTimeout(hidService.splitCancelPairing(), 7000);
+            if (ok) {
+                onLog('Split: pairing cancelled');
+                showNotification('Split pairing cancelled', "success");
+            } else {
+                onLog('Split: cancel pairing failed');
+                showNotification('Failed to cancel split pairing', "error");
+            }
+        } catch (e) {
+            const msg = e instanceof TimeoutError ? 'Cancel request timed out — please retry' : 'Failed to cancel split pairing';
+            onLog(`Split: cancel pairing failed — ${e instanceof TimeoutError ? 'timeout' : 'error'}`);
+            showNotification(msg, "error");
+        }
+    }, [onLog, showNotification]);
 
     const handleUnpair = useCallback(async () => {
-        const ok = await hidService.splitUnpair();
-        onLog(ok ? 'Split: unpaired' : 'Split: unpair failed');
-    }, [onLog]);
+        try {
+            const ok = await withTimeout(hidService.splitUnpair(), 7000);
+            if (ok) {
+                onLog('Split: unpaired');
+                showNotification('Split halves unpaired', "success");
+            } else {
+                onLog('Split: unpair failed');
+                showNotification('Failed to unpair split halves', "error");
+            }
+        } catch (e) {
+            const msg = e instanceof TimeoutError ? 'Unpair request timed out — please retry' : 'Failed to unpair split halves';
+            onLog(`Split: unpair failed — ${e instanceof TimeoutError ? 'timeout' : 'error'}`);
+            showNotification(msg, "error");
+        }
+    }, [onLog, showNotification]);
 
     const handleRoleSwap = useCallback(async () => {
-        const ok = await hidService.splitRoleSwap();
-        onLog(ok ? 'Split: role swap requested' : 'Split: role swap failed');
-    }, [onLog]);
+        try {
+            const ok = await withTimeout(hidService.splitRoleSwap(), 7000);
+            if (ok) {
+                onLog('Split: role swap requested');
+                showNotification('Split role swap requested', "success");
+            } else {
+                onLog('Split: role swap failed');
+                showNotification('Failed to request role swap', "error");
+            }
+        } catch (e) {
+            const msg = e instanceof TimeoutError ? 'Role swap timed out — please retry' : 'Failed to request role swap';
+            onLog(`Split: role swap failed — ${e instanceof TimeoutError ? 'timeout' : 'error'}`);
+            showNotification(msg, "error");
+        }
+    }, [onLog, showNotification]);
 
     const handleRunBenchmark = useCallback(async () => {
         const ok = await hidService.splitRunBenchmark();

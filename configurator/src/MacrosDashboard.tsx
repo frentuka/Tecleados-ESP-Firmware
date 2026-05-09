@@ -8,6 +8,7 @@ import MacroModeModal from './components/MacroModeModal';
 import ExportModal from './components/ExportModal';
 import ImportModal from './components/ImportModal';
 import { saveJsonFile } from './utils/fileUtils';
+import { useNotificationStore } from './stores/notificationStore';
 import './assets/css/macros-dashboard.css';
 
 interface MacrosDashboardProps {
@@ -29,6 +30,7 @@ export default function MacrosDashboard({
     onReload, 
     onFetchSingleMacro 
 }: MacrosDashboardProps) {
+    const { showNotification } = useNotificationStore();
     const [editingMacro, setEditingMacro] = useState<Macro | null>(null);
     const [modeMacro, setModeMacro] = useState<Macro | null>(null);
     const [fetchingMacroId, setFetchingMacroId] = useState<number | null>(null);
@@ -80,7 +82,7 @@ export default function MacrosDashboard({
             if (fullMacro) {
                 setEditingMacro(fullMacro);
             } else {
-                alert("Failed to fetch full macro data.");
+                showNotification("Failed to fetch full macro data.", "error");
             }
         } else {
             setEditingMacro(macro);
@@ -91,8 +93,9 @@ export default function MacrosDashboard({
         markBusy(id, 'Deleting...');
         try {
             await onDeleteMacro(id);
+            showNotification("Macro deleted", "success");
         } catch (err: any) {
-            alert(`Failed to delete macro: ${err?.message || 'Unknown error'}`);
+            showNotification(`Failed to delete macro: ${err?.message || 'Unknown error'}`, "error");
         } finally {
             clearBusy(id);
         }
@@ -117,8 +120,9 @@ export default function MacrosDashboard({
             const dataStr = JSON.stringify(fullMacros, null, 2);
 
             await saveJsonFile(dataStr, 'macros_export.json');
+            showNotification("Macros exported successfully", "success");
         } catch (err) {
-            alert("Failed to export macros.");
+            showNotification("Failed to export macros.", "error");
         } finally {
             setIsExporting(false);
             setIsExportModalOpen(false);
@@ -141,7 +145,7 @@ export default function MacrosDashboard({
                 setMacrosToImport(importableMacros);
                 setIsImportModalOpen(true);
             } catch (error) {
-                alert("Failed to parse JSON file.");
+                showNotification("Failed to parse JSON file.", "error");
             }
         };
         reader.readAsText(file);
@@ -160,8 +164,9 @@ export default function MacrosDashboard({
                 try {
                     await onSaveMacro(newMacro);
                     setMacrosToImport(prev => prev.filter(item => item.tempId !== tempId));
+                    showNotification(`Macro "${newMacro.name}" imported`, "success");
                 } catch (err: any) {
-                    alert(`Failed to save imported macro "${newMacro.name}": ${err?.message || 'Unknown error'}`);
+                    showNotification(`Failed to save imported macro "${newMacro.name}": ${err?.message || 'Unknown error'}`, "error");
                     break;
                 } finally {
                     setIsCreating(false);
@@ -284,8 +289,9 @@ export default function MacrosDashboard({
                         markBusy(m.id, 'Saving...');
                         try {
                             await onSaveMacro(m);
+                            showNotification(`Macro "${m.name}" mode updated`, "success");
                         } catch (err: any) {
-                            alert(`Failed to save mode: ${err?.message || 'Unknown error'}`);
+                            showNotification(`Failed to save mode: ${err?.message || 'Unknown error'}`, "error");
                         } finally {
                             clearBusy(m.id);
                         }
@@ -306,8 +312,9 @@ export default function MacrosDashboard({
                         else markBusy(m.id, 'Saving...');
                         try {
                             await onSaveMacro(m);
+                            showNotification(`Macro "${m.name}" saved`, "success");
                         } catch (err: any) {
-                            alert(`Failed to save macro: ${err?.message || 'Unknown error'}`);
+                            showNotification(`Failed to save macro: ${err?.message || 'Unknown error'}`, "error");
                         } finally {
                             if (isNew) setIsCreating(false);
                             else clearBusy(m.id);

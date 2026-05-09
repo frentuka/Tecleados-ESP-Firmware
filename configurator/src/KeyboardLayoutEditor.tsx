@@ -19,6 +19,8 @@ import type { Macro } from './types/macros';
 import { parseKleJson } from './utils/kleParser';
 import { parsePhysicalLayoutJson, serializePhysicalLayout } from './utils/layoutUtils';
 import { saveJsonFile } from './utils/fileUtils';
+import { useNotificationStore } from './stores/notificationStore';
+import { withTimeout, TimeoutError } from './utils/withTimeout';
 import './assets/css/keyboard-layout.css';
 import './assets/css/key-types.css';
 
@@ -104,6 +106,7 @@ const DEFAULT_PHYSICAL_LAYOUT: PhysKey[][] = [
 
 
 export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, macros, customKeys = [], onLog }: KeyboardLayoutEditorProps) {
+    const { showNotification } = useNotificationStore();
     const [activeLayer, setActiveLayer] = useState(0);
     const [layers, setLayers] = useState<(LayerData | null)[]>([null, null, null, null]);
     const [layerStatus, setLayerStatus] = useState<('idle' | 'loading' | 'loaded' | 'error')[]>(['idle', 'idle', 'idle', 'idle']);
@@ -167,6 +170,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
 
         await saveJsonFile(jsonContent, fileName);
         onLogRef.current('Layout exported to JSON');
+        showNotification('Layout exported to JSON', 'success');
     };
 
     const handleImportClick = () => {
@@ -191,9 +195,12 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                     setLayerStatus(data.layers.map((l: LayerData | null) => l ? 'loaded' : 'idle'));
                     setHasChanges(data.layers.map((l: LayerData | null) => l !== null));
                 }
-                onLogRef.current('Layout imported from JSON. Remember to save layout and layers to device.');
+                const msg = 'Layout imported from JSON. Remember to save layout and layers to device.';
+                onLogRef.current(msg);
+                showNotification(msg, 'warning');
             } catch (err) {
                 onLogRef.current('Failed to parse layout JSON');
+                showNotification('Failed to parse layout JSON', 'error');
                 console.error(err);
             }
         };
@@ -208,9 +215,11 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
         setHeldTestKeys(new Set());
         if (isConnected) {
             await hidService.clearInjectedKeys();
-            onLogRef.current('Key Test Mode disabled. Cleared all injected keys.');
+            const msg = 'Key Test Mode disabled. Cleared all injected keys.';
+            onLogRef.current(msg);
+            showNotification(msg, 'info');
         }
-    }, [isConnected]);
+    }, [isConnected, showNotification]);
 
     useEffect(() => {
         // Clear injected keys on unmount or disconnect
@@ -395,8 +404,9 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
 
         setLayerStatus(prev => { const n = [...prev]; n[layerIdx] = 'error'; return n; });
         onLogRef.current(`Layer ${layerIdx} fetch failed`);
+        showNotification(`Failed to load Layer ${layerIdx}`, 'error');
         return false;
-    }, [isConnected]);
+    }, [isConnected, showNotification]);
 
     // ── Fetch physical layout + all layers sequentially on connect ──
     useEffect(() => {
@@ -432,6 +442,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                 setPhysLayoutStatus('error');
                 setPhysicalLayout(DEFAULT_PHYSICAL_LAYOUT);
                 onLogRef.current('Physical layout fetch failed - using default');
+                showNotification('Failed to fetch physical layout, using default', 'warning');
             }
 
             // Then fetch all layers
@@ -458,16 +469,28 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
             const jsonBytes = new TextEncoder().encode(jsonStr);
             const payload = buildConfigPayload(CFG_CMD_SET, keyId, jsonBytes);
 
-            const resp = await hidService.sendCommand(payload);
-            if (resp && resp.status === 0) {
-                onLogRef.current(`Layer ${layerIdx} (${LAYER_NAMES[layerIdx]}) saved to device`);
-                setHasChanges(prev => {
-                    const next = [...prev];
-                    next[layerIdx] = false;
-                    return next;
-                });
-            } else {
-                onLogRef.current(`Layer ${layerIdx} save failed`);
+            try {
+                const resp = await withTimeout(hidService.sendCommand(payload), 7000);
+                if (resp && resp.status === 0) {
+                    onLogRef.current(`Layer ${layerIdx} (${LAYER_NAMES[layerIdx]}) saved to device`);
+                    setHasChanges(prev => {
+                        const next = [...prev];
+                        next[layerIdx] = false;
+                        return next;
+                    });
+                    showNotification(`Layer ${layerIdx} saved`, 'success');
+                } else {
+                    onLogRef.current(`Layer ${layerIdx} save failed`);
+                    showNotification(`Failed to save Layer ${layerIdx}`, 'error');
+                }
+            } catch (e) {
+                if (e instanceof TimeoutError) {
+                    onLogRef.current(`Layer ${layerIdx} save timed out`);
+                    showNotification(`Layer ${layerIdx} save timed out — please retry`, 'error');
+                } else {
+                    onLogRef.current(`Layer ${layerIdx} save failed`);
+                    showNotification(`Failed to save Layer ${layerIdx}`, 'error');
+                }
             }
         }
 
@@ -570,7 +593,9 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                             exitKeyTestMode();
                                         } else {
                                             setIsKeyTestMode(true);
-                                            onLogRef.current('Key Test Mode enabled.');
+                                            const msg = 'Key Test Mode enabled.';
+                                            onLogRef.current(msg);
+                                            showNotification(msg, 'success');
                                         }
                                     }}
                                 >
@@ -691,13 +716,25 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                 const payload = buildConfigPayload(CFG_CMD_SET, CFG_KEY_PHYSICAL_LAYOUT, jsonBytes);
                                 console.log(`[LayoutEditor] KLE Apply: payload total=${payload.length} bytes, header: ${Array.from(payload.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
 
-                                const resp = await hidService.sendCommand(payload);
-                                console.log('[LayoutEditor] KLE Apply SET response:', resp ? { status: resp.status, statusHex: '0x' + resp.status.toString(16), cmd: resp.cmd, keyId: resp.keyId, jsonLen: resp.jsonText.length } : 'NULL (timeout)');
+                                try {
+                                    const resp = await withTimeout(hidService.sendCommand(payload), 7000);
+                                    console.log('[LayoutEditor] KLE Apply SET response:', resp ? { status: resp.status, statusHex: '0x' + resp.status.toString(16), cmd: resp.cmd, keyId: resp.keyId, jsonLen: resp.jsonText.length } : 'NULL (timeout)');
 
-                                if (resp && resp.status === 0) {
-                                    onLogRef.current(`KLE layout saved to device: ${parsed.length} rows, ${parsed.reduce((s, r) => s + r.length, 0)} keys (${jsonBytes.length} bytes)`);
-                                } else {
-                                    onLogRef.current(`KLE layout save failed (status: ${resp?.status ?? 'timeout'})`);
+                                    if (resp && resp.status === 0) {
+                                        onLogRef.current(`KLE layout saved to device: ${parsed.length} rows, ${parsed.reduce((s, r) => s + r.length, 0)} keys (${jsonBytes.length} bytes)`);
+                                        showNotification('Physical layout updated', 'success');
+                                    } else {
+                                        onLogRef.current(`KLE layout save failed (status: ${resp?.status ?? 'timeout'})`);
+                                        showNotification('Failed to update physical layout', 'error');
+                                    }
+                                } catch (e) {
+                                    if (e instanceof TimeoutError) {
+                                        onLogRef.current('KLE layout save timed out');
+                                        showNotification('Physical layout save timed out — please retry', 'error');
+                                    } else {
+                                        onLogRef.current('KLE layout save failed');
+                                        showNotification('Failed to update physical layout', 'error');
+                                    }
                                 }
                                 setShowKleImport(false);
                                 setKleInput('');

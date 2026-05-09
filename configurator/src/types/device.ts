@@ -52,7 +52,7 @@ export type ConnectionCallback = (connected: boolean) => void;
 export type StatusUpdateCallback = (status: DeviceStatus) => void;
 
 // ── Notification types ──────────────────────────────────────────────────
-export type NotificationType = 'info' | 'warning' | 'error';
+export type NotificationType = 'info' | 'warning' | 'error' | 'success';
 
 export interface ConnectionNotification {
     type: NotificationType;

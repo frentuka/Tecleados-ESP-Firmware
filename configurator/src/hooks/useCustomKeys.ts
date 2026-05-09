@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { hidService } from '../HIDService';
 import type { CustomKey } from '../types/customKeys';
+import { withTimeout } from '../utils/withTimeout';
 
 type ConfirmFn = (title: string, description: string) => Promise<boolean>;
 
@@ -62,7 +63,7 @@ export function useCustomKeys(
             if (nextId >= 32) throw new Error('Maximum number of custom keys (32) reached.');
             ckeyToSave = { ...ckey, id: nextId };
         }
-        const ok = await hidService.saveCustomKey(ckeyToSave);
+        const ok = await withTimeout(hidService.saveCustomKey(ckeyToSave), 7000);
         if (!ok) throw new Error('Failed to save custom key to device');
         setCustomKeys(prev => {
             const filtered = prev.filter(k => k.id !== ckeyToSave.id);
@@ -76,7 +77,7 @@ export function useCustomKeys(
             'Are you sure? Any keys mapped to this custom key will stop working.'
         );
         if (!isConfirmed) return;
-        const ok = await hidService.deleteCustomKey(id);
+        const ok = await withTimeout(hidService.deleteCustomKey(id), 7000);
         if (!ok) throw new Error('Failed to delete custom key from device');
         setCustomKeys(prev => prev.filter(k => k.id !== id));
     };

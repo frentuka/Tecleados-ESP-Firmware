@@ -22,8 +22,9 @@ The application is divided into three layers that mirror the firmware's own laye
 ├────────────────────────────────────────────────────────────────────┤
 │  Business Logic Layer                                              │
 │  DeviceController.ts   (typed command methods)                     │
-│  hooks/useMacros.ts    (macro CRUD + state)                        │
-│  hooks/useCustomKeys.ts (custom key CRUD + state)                  │
+│  hooks/useMacros.ts    (macro CRUD + state + 7s timeout guard)     │
+│  hooks/useCustomKeys.ts (custom key CRUD + state + 7s timeout guard)│
+│  stores/notificationStore.ts  (global notification state)          │
 ├────────────────────────────────────────────────────────────────────┤
 │  Transport Layer                                                   │
 │  HIDTransport.ts  (WebHID, CRC-8, Blast+Reconcile state machine)   │
@@ -248,6 +249,47 @@ Injected keys pass through the full keyboard pipeline (layers, macros, custom ke
 
 ---
 
+## Global Notification System
+
+A Zustand-based notification store (`stores/notificationStore.ts`) provides a unified, non-intrusive user feedback mechanism used across all dashboards. It replaces all `alert()` calls and ad-hoc local error states.
+
+```typescript
+showNotification(message: string, type?: NotificationType): void
+// NotificationType: 'info' | 'warning' | 'error' | 'success'
+```
+
+Any component calls `useNotificationStore().showNotification(...)` without prop drilling. `App.tsx` renders the resulting toast and manages auto-dismiss timers:
+
+| Type      | Auto-dismiss | Use case |
+|-----------|-------------|----------|
+| `success` | 2.5 s       | Confirmed saves, completed exports |
+| `info`    | 6 s         | Status changes |
+| `warning` | 6 s         | Non-fatal issues (layout not stored, import needs save) |
+| `error`   | 6 s         | Failed or timed-out operations |
+
+Hovering the toast pauses the dismiss timer. On mouse-leave a grace period restarts (1.5 s for success, 4 s for others).
+
+---
+
+## Save Timeout Guard
+
+All write operations to the device are protected by a 7-second timeout via `utils/withTimeout.ts`:
+
+```typescript
+export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T>
+export class TimeoutError extends Error { readonly isTimeout = true; }
+```
+
+On expiry, `TimeoutError` is caught at the call site and surfaced as an `error` notification with a "please retry" suggestion. The saving/busy state is always cleared via `finally` so the UI never gets stuck. Covered operations:
+
+- `useMacros`: `saveMacro`, `deleteMacro`
+- `useCustomKeys`: `saveCustomKey`, `deleteCustomKey`
+- `DeviceIdentityDashboard`: `saveDeviceIdentity`
+- `SplitDashboard`: `splitStartPairing`, `splitCancelPairing`, `splitUnpair`, `splitRoleSwap`
+- `KeyboardLayoutEditor`: per-layer saves, KLE physical layout SET
+
+---
+
 ## Data Portability (Export/Import)
 
 The configurator supports full configuration portability via JSON files, allowing users to backup their settings or share layouts:
@@ -328,25 +370,27 @@ graph TD
 
 | File | Responsibility |
 |---|---|
-| `App.tsx` | Root component: WebHID connection lifecycle, section routing, Developer Mode |
+| `App.tsx` | Root component: WebHID connection lifecycle, section routing, Developer Mode, global notification rendering |
 | `HIDService.ts` | Backward-compat re-export façade — maps old import paths to new module structure |
-| `KeyboardLayoutEditor.tsx` | Main layout editor: layer management, physical layout rendering, KLE/JSON import |
-| `MacrosDashboard.tsx` | Macro list + event-sequence editor (CRUD + Portability) |
-| `CustomKeysDashboard.tsx` | Custom key rule editor (PressRelease and MultiAction modes + Portability) |
-| `SplitDashboard.tsx` | Split link management, role swap, RTT benchmark, remote matrix visualizer |
-| `DeviceIdentityDashboard.tsx` | Device identity (Identity section): name, split variant, and shared BLE ID |
+| `KeyboardLayoutEditor.tsx` | Main layout editor: layer management, physical layout rendering, KLE/JSON import, save timeout guard |
+| `MacrosDashboard.tsx` | Macro list + event-sequence editor (CRUD + Portability), success/error notifications |
+| `CustomKeysDashboard.tsx` | Custom key rule editor (PressRelease and MultiAction modes + Portability), success/error notifications |
+| `SplitDashboard.tsx` | Split link management, role swap, RTT benchmark, remote matrix visualizer, success/error notifications |
+| `DeviceIdentityDashboard.tsx` | Device identity (Identity section): name, split variant, and shared BLE ID, success/error notifications |
 | `StatusWidget.tsx` | Live BLE / USB / Split status indicator fed by unsolicited firmware pushes |
 | `services/HIDTransport.ts` | WebHID driver: CRC-8, Blast+Reconcile TX/RX state machine, reconnect polling |
 | `services/DeviceController.ts` | Typed command API over HIDTransport; high-level methods for every firmware operation |
+| `stores/notificationStore.ts` | Zustand: `notification` state + `showNotification(message, type)` — consumed globally |
+| `utils/withTimeout.ts` | Promise timeout wrapper + `TimeoutError`; protects all device writes with a 7 s deadline |
 | `utils/kleParser.ts` | KLE JSON parser: full rotation state machine, auto-anchor, collision resolution |
 | `utils/layoutUtils.ts` | Physical layout serialization/deserialization including rotation side-map |
 | `utils/packetUtils.ts` | Debug helpers: decodes flag bytes to human-readable strings |
 | `types/protocol.ts` | Single source of truth for all wire protocol constants (mirrors `usb_defs.h`, `cfgmod.h`) |
-| `types/device.ts` | Shared TypeScript types: `PhysKey`, `DeviceStatus`, `DeviceIdentity` |
+| `types/device.ts` | Shared TypeScript types: `PhysKey`, `DeviceStatus`, `DeviceIdentity`, `NotificationType` |
 | `types/macros.ts` | Macro and MacroElement type definitions |
 | `types/customKeys.ts` | CustomKey, CustomKeyPR, CustomKeyMA type definitions |
-| `hooks/useMacros.ts` | React hook: macro list state + fetch/save/delete operations |
-| `hooks/useCustomKeys.ts` | React hook: custom key state + fetch/save/delete operations |
+| `hooks/useMacros.ts` | React hook: macro list state + fetch/save/delete with 7 s timeout guard |
+| `hooks/useCustomKeys.ts` | React hook: custom key state + fetch/save/delete with 7 s timeout guard |
 | `components/SearchableKeyModal.tsx` | Searchable HID key picker modal with custom title support |
 | `components/MacroEditorModal.tsx` | Full macro event-sequence editor modal |
 | `components/DevControlsPanel.tsx` | Developer mode raw packet log and debug controls |

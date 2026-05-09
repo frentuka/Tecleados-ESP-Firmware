@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { hidService } from './HIDService';
 import type { DeviceIdentity } from './services/DeviceController';
+import { useNotificationStore } from './stores/notificationStore';
+import { withTimeout, TimeoutError } from './utils/withTimeout';
 import './assets/css/device-identity.css';
 
 // ── Props ──────────────────────────────────────────────────────────────────────
@@ -24,6 +26,7 @@ const DEFAULT_IDENTITY: DeviceIdentity = {
 // ── Component ──────────────────────────────────────────────────────────────────
 
 const DeviceIdentityDashboard: React.FC<DeviceIdentityDashboardProps> = ({ isConnected, onLog }) => {
+    const { showNotification } = useNotificationStore();
     const [saved, setSaved] = useState<DeviceIdentity>(DEFAULT_IDENTITY);
     const [draft, setDraft] = useState<DeviceIdentity>(DEFAULT_IDENTITY);
     const [isSaving, setIsSaving] = useState(false);
@@ -51,8 +54,9 @@ const DeviceIdentityDashboard: React.FC<DeviceIdentityDashboardProps> = ({ isCon
             onLog('Device Identity: loaded');
         } else {
             onLog('Device Identity: failed to load');
+            showNotification('Failed to load device identity', 'error');
         }
-    }, [isConnected, onLog]);
+    }, [isConnected, onLog, showNotification]);
 
     useEffect(() => {
         if (isConnected) fetchIdentity();
@@ -68,16 +72,30 @@ const DeviceIdentityDashboard: React.FC<DeviceIdentityDashboardProps> = ({ isCon
         if (!isConnected || isSaving) return;
         setIsSaving(true);
         setSaveResult(null);
-        const ok = await hidService.saveDeviceIdentity(draft);
-        setIsSaving(false);
-        setSaveResult(ok ? 'ok' : 'err');
-        if (ok) {
-            setSaved(draft);
-            onLog(`Device Identity: saved (name="${draft.device_name}", ble_name="${draft.ble_shared_name}", split=${draft.is_split})`);
-        } else {
-            onLog('Device Identity: save failed');
+        try {
+            const ok = await withTimeout(hidService.saveDeviceIdentity(draft), 7000);
+            setSaveResult(ok ? 'ok' : 'err');
+            if (ok) {
+                setSaved(draft);
+                onLog(`Device Identity: saved (name="${draft.device_name}", ble_name="${draft.ble_shared_name}", split=${draft.is_split})`);
+                showNotification('Device identity saved successfully', 'success');
+            } else {
+                onLog('Device Identity: save failed');
+                showNotification('Failed to save device identity', 'error');
+            }
+        } catch (e) {
+            setSaveResult('err');
+            if (e instanceof TimeoutError) {
+                onLog('Device Identity: save timed out');
+                showNotification('Save timed out — please retry', 'error');
+            } else {
+                onLog('Device Identity: save failed');
+                showNotification('Failed to save device identity', 'error');
+            }
+        } finally {
+            setIsSaving(false);
+            setTimeout(() => setSaveResult(null), 2000);
         }
-        setTimeout(() => setSaveResult(null), 2000);
     };
 
     // ── Field helpers ─────────────────────────────────────────────────────

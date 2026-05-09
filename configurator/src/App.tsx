@@ -10,6 +10,7 @@ import DeviceIdentityDashboard from './DeviceIdentityDashboard';
 import { useConfirm } from './hooks/useConfirm';
 import { useMacros } from './hooks/useMacros';
 import { useCustomKeys } from './hooks/useCustomKeys';
+import { useNotificationStore } from './stores/notificationStore';
 import { getFlagsString } from './utils/packetUtils';
 import type { DeviceStatus, LogMessage, ConnectionNotification } from './types/device';
 import {
@@ -42,7 +43,7 @@ type ActiveSection = 'layout' | 'macrosCkeys' | 'split' | 'identity';
 function App() {
   const [activeSection, setActiveSection] = useState<ActiveSection>('layout');
   const [isConnected, setIsConnected] = useState(false);
-  const [notification, setNotification] = useState<ConnectionNotification | null>(null);
+  const { notification, setNotification, showNotification } = useNotificationStore();
   const [displayedNotification, setDisplayedNotification] = useState<ConnectionNotification | null>(null);
   const [isNotificationHovered, setIsNotificationHovered] = useState(false);
   const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -165,7 +166,8 @@ function App() {
         if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
 
         const isLinuxFix = notification.message === 'PERMISSION_DENIED' || notification.message.includes('System lock');
-        const defaultDuration = isLinuxFix ? 20000 : 10000;
+        const isSuccess = notification.type === 'success';
+        const defaultDuration = isLinuxFix ? 20000 : (isSuccess ? 2500 : 6000);
         const duration = customDuration ?? defaultDuration;
 
         dismissTimerRef.current = setTimeout(() => {
@@ -201,13 +203,16 @@ function App() {
     // When leaving, start a fresh 4-second countdown before closing
     if (notificationVisible) {
       if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
+      const isSuccess = notification?.type === 'success';
+      const gracePeriod = isSuccess ? 1500 : 4000;
+
       dismissTimerRef.current = setTimeout(() => {
         setNotificationVisible(false);
         setTimeout(() => {
           setNotification(null);
           setDisplayedNotification(null);
         }, 500);
-      }, 4000); // 4 second grace period after de-hovering
+      }, gracePeriod);
     }
   };
 
@@ -569,7 +574,7 @@ function App() {
               onClick={() => {
                 navigator.clipboard.writeText(LINUX_HID_PERMS_FIX_COMMAND);
                 const originalNotification = notification;
-                setNotification({ type: 'info', message: 'COPIED' });
+                showNotification('COPIED', 'info');
                 setTimeout(() => setNotification(originalNotification), 2000);
               }}
               title="Copy command"
@@ -620,6 +625,13 @@ function App() {
                 <circle cx="12" cy="12" r="10"></circle>
                 <line x1="12" y1="16" x2="12" y2="12"></line>
                 <line x1="12" y1="8" x2="12.01" y2="8"></line>
+              </svg>
+            )}
+            {displayedNotification.type === 'success' && (
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <polyline points="9 11 12 14 22 4"></polyline>
+                <path d="M22 12A10 10 0 1 1 12 2"></path>
               </svg>
             )}
             {displayedNotification.message}

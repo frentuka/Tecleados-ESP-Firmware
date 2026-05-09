@@ -872,6 +872,12 @@ h3 {
   color: var(--accent-color);
 }
 
+.notification-toast.success {
+  background: rgba(46, 160, 67, 0.1);
+  border: 1px solid rgba(46, 160, 67, 0.3);
+  color: #3fb950;
+}
+
 .btn-notification-action {
   margin-left: 0.5rem;
   padding: 0.25rem 0.75rem;

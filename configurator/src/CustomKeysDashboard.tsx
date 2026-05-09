@@ -6,6 +6,7 @@ import SearchableKeyModal from './components/SearchableKeyModal';
 import { getKeyName, CKEY_BASE } from './KeyDefinitions';
 import { getCustomKeyBadge } from './components/MacroIcons';
 import { saveJsonFile } from './utils/fileUtils';
+import { useNotificationStore } from './stores/notificationStore';
 import './assets/css/custom-keys-dashboard.css';
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -470,6 +471,7 @@ function CKeyEditorModal({ ckey, macros, isSaving, error, onSave, onDelete, onCl
 const CKEY_MAX = 120;
 
 export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMode, onSave, onDelete, onReload }: CustomKeysDashboardProps) {
+    const { showNotification } = useNotificationStore();
     const [selected, setSelected] = useState<CustomKey | null>(null);
     const [isSaving, setIsSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -492,8 +494,9 @@ export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMod
         try {
             const dataStr = JSON.stringify(customKeys, null, 2);
             await saveJsonFile(dataStr, 'custom_keys_export.json');
+            showNotification("Custom keys exported successfully", "success");
         } catch (err) {
-            alert("Failed to export custom keys.");
+            showNotification("Failed to export custom keys.", "error");
         }
         setIsMenuOpen(false);
     };
@@ -511,8 +514,9 @@ export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMod
                 for (const ck of parsedKeys) {
                     await onSave(ck);
                 }
+                showNotification("Custom keys imported successfully", "success");
             } catch (error) {
-                alert("Failed to import custom keys.");
+                showNotification("Failed to import custom keys.", "error");
             }
         };
         reader.readAsText(file);
@@ -545,8 +549,11 @@ export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMod
         try {
             await onSave(ckey);
             setSelected(null);
+            showNotification(`Custom key "${ckey.name}" saved`, "success");
         } catch (e: unknown) {
-            setError(e instanceof Error ? e.message : 'Save failed');
+            const msg = e instanceof Error ? e.message : 'Save failed';
+            setError(msg);
+            showNotification(`Failed to save custom key: ${msg}`, "error");
         } finally {
             setIsSaving(false);
         }
@@ -557,8 +564,11 @@ export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMod
         try {
             await onDelete(id);
             setSelected(null);
+            showNotification("Custom key deleted", "success");
         } catch (e: unknown) {
-            setError(e instanceof Error ? e.message : 'Delete failed');
+            const msg = e instanceof Error ? e.message : 'Delete failed';
+            setError(msg);
+            showNotification(`Failed to delete custom key: ${msg}`, "error");
         } finally {
             setIsSaving(false);
         }
