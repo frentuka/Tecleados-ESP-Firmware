@@ -267,7 +267,7 @@ Any component calls `useNotificationStore().showNotification(...)` without prop 
 | `warning` | 6 s         | Non-fatal issues (layout not stored, import needs save) |
 | `error`   | 6 s         | Failed or timed-out operations |
 
-Hovering the toast pauses the dismiss timer. On mouse-leave a grace period restarts (1.5 s for success, 4 s for others).
+Hovering the toast pauses the dismiss timer. On mouse-leave a grace period restarts (1.5 s for success, 4 s for others). Every notification can also be manually dismissed via the "x" close button. On Linux, connectivity errors trigger a specialized, persistent help overlay with actionable fix commands and udev rules.
 
 ---
 

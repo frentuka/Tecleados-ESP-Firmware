@@ -488,6 +488,9 @@ Any component can import `useNotificationStore` and call `showNotification` with
 - A CSS transition makes the toast slide in/out.
 - **Success** notifications dismiss after **2.5 s**. All others dismiss after **6 s**. Linux permission errors persist for **20 s**.
 - **Hover-to-pause**: moving the mouse over the toast cancels the timer. On mouse-leave, a grace period (1.5 s for success, 4 s for others) restarts before dismissal.
+- **Manual Dismissal**: Every notification features an "x" close button in the top-right corner for immediate removal.
+- **Actionable Notifications**: Some notifications include interactive buttons, such as the "Refresh Now" button for Linux system locks.
+- **Linux Permission Help**: On Linux, connectivity failures (Permission Denied or System Lock) trigger a persistent, detailed help overlay with the necessary `udev` rules and a copyable fix command.
 
 ### Coverage
 
