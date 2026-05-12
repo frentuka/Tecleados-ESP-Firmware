@@ -57,4 +57,6 @@ export type NotificationType = 'info' | 'warning' | 'error' | 'success';
 export interface ConnectionNotification {
     type: NotificationType;
     message: string;
+    title?: string;
+    duration?: number;
 }

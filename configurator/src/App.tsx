@@ -3,10 +3,9 @@ import { hidService, HIDTransport } from './HIDService';
 import KeyboardLayoutEditor from './KeyboardLayoutEditor';
 import MacrosDashboard from './MacrosDashboard';
 import CustomKeysDashboard from './CustomKeysDashboard';
-import SplitDashboard from './SplitDashboard';
+import DeviceDashboard from './DeviceDashboard';
 import StatusWidget from './StatusWidget';
 import DevControlsPanel from './components/DevControlsPanel';
-import DeviceIdentityDashboard from './DeviceIdentityDashboard';
 import { useConfirm } from './hooks/useConfirm';
 import { useMacros } from './hooks/useMacros';
 import { useCustomKeys } from './hooks/useCustomKeys';
@@ -31,13 +30,13 @@ import {
 } from './types/protocol';
 import './index.css';
 
-import { LayoutIcon, MacrosIcon, SplitIcon, IdentityIcon } from './components/SidebarIcons';
+import { LayoutIcon, MacrosIcon, DeviceIcon } from './components/SidebarIcons';
 
 // Re-export types for backward compatibility — consumers can import from './App'
 export type { Macro, MacroElement, MacroAction } from './types/macros';
 export type { CustomKey } from './types/customKeys';
 
-type ActiveSection = 'layout' | 'macrosCkeys' | 'split' | 'identity';
+type ActiveSection = 'layout' | 'macrosCkeys' | 'device';
 
 
 function App() {
@@ -157,26 +156,50 @@ function App() {
 
   // Auto-dismiss logic with hover protection
   useEffect(() => {
-    if (notification && notification.message !== 'COPIED') {
-      setDisplayedNotification(notification);
-      const showTimer = setTimeout(() => setNotificationVisible(true), 50);
+    // 1. Handle clearing (Store notification is null)
+    if (!notification) {
+      if (notificationVisible) {
+        setNotificationVisible(false);
+        const clearTimer = setTimeout(() => setDisplayedNotification(null), 500);
+        return () => clearTimeout(clearTimer);
+      }
+      return;
+    }
 
-      // Function to start the dismissal timer
-      const startDismissTimer = (customDuration?: number) => {
+    if (notification.message === 'COPIED') return;
+
+    // 2. Handle replacement (Visible but content is wrong)
+    if (notificationVisible && displayedNotification && displayedNotification.message !== notification.message) {
+      setNotificationVisible(false);
+      // Wait for fade out before syncing content in next run
+      return;
+    }
+
+    // 3. Sync content (Hidden but content is wrong or missing)
+    if (!notificationVisible && (!displayedNotification || displayedNotification.message !== notification.message)) {
+      const syncTimer = setTimeout(() => setDisplayedNotification(notification), 150);
+      return () => clearTimeout(syncTimer);
+    }
+
+    // 4. Manage visible state and timers (Content is correct)
+    if (displayedNotification && displayedNotification.message === notification.message) {
+      // Trigger fade in if hidden
+      if (!notificationVisible) {
+        const showTimer = setTimeout(() => setNotificationVisible(true), 50);
+        return () => clearTimeout(showTimer);
+      }
+
+      // Manage dismissal timer
+      const startDismissTimer = () => {
         if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
 
         const isLinuxFix = notification.message === 'PERMISSION_DENIED' || notification.message.includes('System lock');
         const isSuccess = notification.type === 'success';
         const defaultDuration = isLinuxFix ? 20000 : (isSuccess ? 2500 : 6000);
-        const duration = customDuration ?? defaultDuration;
+        const duration = notification.duration ?? defaultDuration;
 
         dismissTimerRef.current = setTimeout(() => {
-          setNotificationVisible(false);
-          const clearTimer = setTimeout(() => {
-            setNotification(null);
-            setDisplayedNotification(null);
-          }, 500);
-          return () => clearTimeout(clearTimer);
+          setNotification(null); // This will trigger the "Handle clearing" block in next run
         }, duration);
       };
 
@@ -187,33 +210,15 @@ function App() {
       }
 
       return () => {
-        clearTimeout(showTimer);
         if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
       };
-    } else if (!notification) {
-      setNotificationVisible(false);
-      const clearTimer = setTimeout(() => setDisplayedNotification(null), 500);
-      return () => clearTimeout(clearTimer);
     }
-  }, [notification, isNotificationHovered, setNotification]);
+  }, [notification, displayedNotification, notificationVisible, isNotificationHovered, setNotification]);
 
   const handleMouseEnter = () => setIsNotificationHovered(true);
   const handleMouseLeave = () => {
     setIsNotificationHovered(false);
-    // When leaving, start a fresh 4-second countdown before closing
-    if (notificationVisible) {
-      if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
-      const isSuccess = notification?.type === 'success';
-      const gracePeriod = isSuccess ? 1500 : 4000;
-
-      dismissTimerRef.current = setTimeout(() => {
-        setNotificationVisible(false);
-        setTimeout(() => {
-          setNotification(null);
-          setDisplayedNotification(null);
-        }, 500);
-      }, gracePeriod);
-    }
+    // Timer will be restarted by the useEffect when isNotificationHovered changes
   };
 
   const handleDismissNotification = () => {
@@ -417,19 +422,11 @@ function App() {
                 <MacrosIcon /> <span className="nav-label">Macros & CKs</span>
               </button>
               <button
-                className={`header-nav-item ${activeSection === 'split' ? 'active' : ''}`}
-                onClick={() => setActiveSection('split')}
+                className={`header-nav-item ${activeSection === 'device' ? 'active' : ''}`}
+                onClick={() => setActiveSection('device')}
               >
-                <SplitIcon /> <span className="nav-label">Split</span>
+                <DeviceIcon /> <span className="nav-label">Device</span>
               </button>
-              {isDeveloperMode && (
-                <button
-                  className={`header-nav-item ${activeSection === 'identity' ? 'active' : ''}`}
-                  onClick={() => setActiveSection('identity')}
-                >
-                  <IdentityIcon /> <span className="nav-label">Identity</span>
-                </button>
-              )}
             </nav>
           </div>
         </div>
@@ -499,27 +496,16 @@ function App() {
                 )}
               </div>
 
-              <div className={`section-container ${activeSection === 'split' ? 'active' : ''}`}>
-                {activeSection === 'split' && (
-                  <SplitDashboard
+              <div className={`section-container ${activeSection === 'device' ? 'active' : ''}`}>
+                {activeSection === 'device' && (
+                  <DeviceDashboard
                     isConnected={isConnected}
-                    deviceStatus={deviceStatus}
                     isDeveloperMode={isDeveloperMode}
+                    deviceStatus={deviceStatus}
                     onLog={addLog}
                   />
                 )}
               </div>
-
-              {isDeveloperMode && (
-                <div className={`section-container ${activeSection === 'identity' ? 'active' : ''}`}>
-                  {activeSection === 'identity' && (
-                    <DeviceIdentityDashboard
-                      isConnected={isConnected}
-                      onLog={addLog}
-                    />
-                  )}
-                </div>
-              )}
             </div>
 
             {isDeveloperMode && (
@@ -649,7 +635,10 @@ function App() {
                 <path d="M22 12A10 10 0 1 1 12 2"></path>
               </svg>
             )}
-            {displayedNotification.message}
+            <div className="notification-body">
+              {displayedNotification.title && <div className="notification-title">{displayedNotification.title}</div>}
+              <div className="notification-message">{displayedNotification.message}</div>
+            </div>
             {displayedNotification.message.includes('System lock') && (
               <button
                 className="btn-notification-action"

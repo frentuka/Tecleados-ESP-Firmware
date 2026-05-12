@@ -848,9 +848,10 @@ h3 {
 }
 
 .notification-toast.visible {
-  max-height: 100px;
+  max-height: 200px;
   opacity: 1;
-  padding: 1.25rem 1.75rem;
+  padding: 1rem 1.5rem;
+  padding-right: 2.5rem;
   border-width: 1px;
   transform: translateX(-50%) translateY(0);
 }
@@ -877,6 +878,26 @@ h3 {
   background: rgba(46, 160, 67, 0.1);
   border: 1px solid rgba(46, 160, 67, 0.3);
   color: #3fb950;
+}
+
+.notification-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.notification-title {
+  font-weight: 800;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.1rem;
+}
+
+.notification-message {
+  font-size: 0.88rem;
+  opacity: 0.95;
+  line-height: 1.4;
 }
 
 .btn-notification-action {

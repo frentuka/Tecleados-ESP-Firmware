@@ -98,7 +98,7 @@ const SplitDashboard: React.FC<SplitDashboardProps> = ({ isConnected, deviceStat
     const [pairingTimeout, setPairingTimeout] = useState(30);
     const [testModeActive, setTestModeActive] = useState(false);
     const [remoteMatrix, setRemoteMatrix] = useState<Uint8Array | null>(null);
-    const [benchStatus, setBenchStatus] = useState<string | null>(null);
+    const [isBenchmarking, setIsBenchmarking] = useState(false);
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     const splitState = deviceStatus?.split_state ?? SPLIT_STATE_DISABLED;
@@ -207,19 +207,23 @@ const SplitDashboard: React.FC<SplitDashboardProps> = ({ isConnected, deviceStat
     const handleRunBenchmark = useCallback(async () => {
         const ok = await hidService.splitRunBenchmark();
         if (ok) {
-            setBenchStatus('Running…');
+            setIsBenchmarking(true);
+            showNotification('Running benchmark...', 'info');
             const bRef = setInterval(async () => {
                 const res = await hidService.splitGetBench();
                 if (res && (!res.active && res.min > 0)) {
                     clearInterval(bRef);
-                    setBenchStatus(`min=${(res.min/1000).toFixed(2)}ms avg=${(res.avg/1000).toFixed(2)}ms max=${(res.max/1000).toFixed(2)}ms lost=${res.lost}`);
-                    setTimeout(() => setBenchStatus(null), 10000);
+                    setIsBenchmarking(false);
+                    const resultText = `Min: ${(res.min/1000).toFixed(2)}ms  •  Avg: ${(res.avg/1000).toFixed(2)}ms  •  Max: ${(res.max/1000).toFixed(2)}ms  •  Lost: ${res.lost}`;
+                    showNotification(resultText, 'success', 'Benchmark Results', 8000);
+                    onLog(`Split: Benchmark Results -> ${resultText}`);
                 }
             }, 500);
         } else {
             onLog('Split: Benchmark start failed');
+            showNotification('Failed to start benchmark', 'error');
         }
-    }, [onLog]);
+    }, [onLog, showNotification]);
 
     // ── Render ────────────────────────────────────────────────────────────
 
@@ -251,6 +255,37 @@ const SplitDashboard: React.FC<SplitDashboardProps> = ({ isConnected, deviceStat
                         )}
                     </div>
                 </div>
+
+                {isConnectedS && (
+                    <div className="split-status-actions">
+                        {isDeveloperMode && (
+                            <button
+                                className="btn-banner-action"
+                                onClick={handleRoleSwap}
+                                disabled={!isConnected}
+                                title="Switch Roles"
+                            >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M16 3l4 4-4 4"/><path d="M20 7H4"/><path d="M8 21l-4-4 4-4"/><path d="M4 17h16"/>
+                                </svg>
+                                <span>Switch Roles</span>
+                            </button>
+                        )}
+                        {splitRole === SPLIT_ROLE_MASTER && (
+                            <button
+                                className={`btn-banner-action ${isBenchmarking ? 'loading' : ''}`}
+                                onClick={handleRunBenchmark}
+                                disabled={!isConnected || isBenchmarking}
+                                title="Run Benchmark"
+                            >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                                </svg>
+                                <span>{isBenchmarking ? 'Benchmarking…' : 'Benchmark'}</span>
+                            </button>
+                        )}
+                    </div>
+                )}
             </div>
 
             {/* ── Controls grid ── */}
@@ -262,26 +297,29 @@ const SplitDashboard: React.FC<SplitDashboardProps> = ({ isConnected, deviceStat
                     <div className="split-section-content">
                         {!isPairing ? (
                             <div className="split-action-row">
-                                <button className="btn btn-success btn-sm" onClick={handleStartPairing} disabled={!isConnected}>
-                                    Start Pairing
-                                </button>
-                                {isConnectedS && (
+                                {!isConnectedS ? (
+                                    <button className="btn btn-success btn-sm" onClick={handleStartPairing} disabled={!isConnected}>
+                                        Start Pairing
+                                    </button>
+                                ) : (
                                     <button className="btn btn-danger btn-sm" onClick={handleUnpair} disabled={!isConnected}>
                                         Unpair
                                     </button>
                                 )}
-                                <label className="split-timeout-label">
-                                    Timeout
-                                    <input
-                                        id="split-pairing-timeout"
-                                        type="number"
-                                        min={5} max={120} step={5}
-                                        value={pairingTimeout}
-                                        onChange={e => setPairingTimeout(Number(e.target.value))}
-                                        className="split-timeout-input"
-                                    />
-                                    <span style={{ fontSize: 11, opacity: 0.5 }}>s</span>
-                                </label>
+                                {isDeveloperMode && !isConnectedS && (
+                                    <label className="split-timeout-label">
+                                        Timeout
+                                        <input
+                                            id="split-pairing-timeout"
+                                            type="number"
+                                            min={5} max={120} step={5}
+                                            value={pairingTimeout}
+                                            onChange={e => setPairingTimeout(Number(e.target.value))}
+                                            className="split-timeout-input"
+                                        />
+                                        <span style={{ fontSize: 11, opacity: 0.5 }}>s</span>
+                                    </label>
+                                )}
                             </div>
                         ) : (
                             <div className="split-action-row">
@@ -297,37 +335,16 @@ const SplitDashboard: React.FC<SplitDashboardProps> = ({ isConnected, deviceStat
                     </div>
                 </div>
 
-                {/* Split Actions */}
+                {/* Split Configuration Info */}
                 <div className="split-section">
-                    <div className="split-section-label">Actions</div>
+                    <div className="split-section-label">Configuration</div>
                     <div className="split-section-content">
-                        {isConnectedS ? (
-                            <div className="split-action-row">
-                                <button className="btn btn-secondary btn-sm" onClick={handleRoleSwap} disabled={!isConnected}>
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                        <path d="M16 3l4 4-4 4"/><path d="M20 7H4"/><path d="M8 21l-4-4 4-4"/><path d="M4 17h16"/>
-                                    </svg>
-                                    Switch Roles
-                                </button>
-                                {splitRole === SPLIT_ROLE_MASTER && (
-                                    <button
-                                        className="btn btn-secondary btn-sm"
-                                        onClick={handleRunBenchmark}
-                                        disabled={!isConnected}
-                                        title={benchStatus ?? undefined}
-                                    >
-                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
-                                        </svg>
-                                        {benchStatus ? `${benchStatus}` : 'Benchmark'}
-                                    </button>
-                                )}
-                            </div>
-                        ) : (
-                            <p className="split-empty-hint">
-                                No actions available — pair both halves first.
-                            </p>
-                        )}
+                        <p className="split-empty-hint">
+                            {isConnectedS
+                                ? "Your split halves are connected and synced. Use the buttons above for quick actions."
+                                : "No split connection detected. Pair both halves to enable advanced features."
+                            }
+                        </p>
                     </div>
                 </div>
 

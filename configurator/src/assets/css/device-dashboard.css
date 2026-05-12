@@ -1,0 +1,464 @@
+/* ═══════════════════════════════════════════════
+   DEVICE DASHBOARD
+   ═══════════════════════════════════════════════ */
+
+.dd-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding: 1.5rem 0;
+  max-width: 720px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+/* ── Page header ─────────────────────────────── */
+
+.dd-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.dd-page-header-left {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.dd-page-title {
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.dd-loading-hint {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  opacity: 0.5;
+  font-weight: 400;
+}
+
+/* ── Sections list ───────────────────────────── */
+
+.dd-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* ── Section block ───────────────────────────── */
+
+.dd-section {
+  background: rgba(22, 27, 34, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.dd-section-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--text-secondary);
+  opacity: 0.65;
+  padding: 0.85rem 1.25rem 0;
+}
+
+.dd-section-body {
+  padding: 0.75rem 1.25rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.dd-section-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+/* ── Field helpers ───────────────────────────── */
+
+.dd-field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.dd-field-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--accent-color);
+  letter-spacing: 0.04em;
+  opacity: 0.9;
+}
+
+/* ── Input ───────────────────────────────────── */
+
+.dd-input {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  color: var(--text-primary);
+  padding: 0.5rem 0.85rem;
+  font-size: 0.9rem;
+  font-family: inherit;
+  outline: none;
+  width: 100%;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.dd-input:focus {
+  border-color: rgba(88, 166, 255, 0.5);
+  background: rgba(88, 166, 255, 0.05);
+  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.08);
+}
+
+.dd-input-mono {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  letter-spacing: 0.05em;
+}
+
+/* ── Field row (input + char count) ─────────── */
+
+.dd-field-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.dd-field-row .dd-input {
+  flex: 1;
+}
+
+.dd-char-count {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  opacity: 0.45;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* ── Hint ────────────────────────────────────── */
+
+.dd-hint {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  opacity: 0.55;
+  line-height: 1.45;
+  margin: 0.35rem 0 0;
+}
+
+.dd-hint-warn {
+  color: rgba(230, 200, 100, 0.85);
+  opacity: 1;
+}
+
+/* ── Toggle widget ───────────────────────────── */
+
+.dd-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.dd-toggle-label {
+  font-size: 0.88rem;
+  cursor: pointer;
+  user-select: none;
+  color: var(--text-primary);
+}
+
+.dd-toggle {
+  width: 36px;
+  height: 20px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.12);
+  position: relative;
+  cursor: pointer;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+
+.dd-toggle.active {
+  background: var(--accent-color);
+}
+
+.dd-toggle-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  transition: left 0.2s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+.dd-toggle.active .dd-toggle-thumb {
+  left: 19px;
+}
+
+/* ── Split configuration sub-grid ───────────── */
+
+.dd-split-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-top: 1rem;
+  transition: opacity 0.2s;
+}
+
+.dd-split-fields.disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+/* ── BLE fields stack ────────────────────────── */
+
+.dd-ble-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* ── Split link status row ───────────────────── */
+
+.dd-split-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.dd-split-status-left {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.dd-split-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dd-split-state-label {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.dd-split-role-badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent-color);
+  background: rgba(88, 166, 255, 0.12);
+  border: 1px solid rgba(88, 166, 255, 0.25);
+  border-radius: 6px;
+  padding: 0.1rem 0.5rem;
+}
+
+.dd-split-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* ── Pairing row ─────────────────────────────── */
+
+.dd-split-pairing-row {
+  /* already part of section-body flex column */
+}
+
+.dd-split-action-row {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.dd-pairing-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: #f39c12;
+  font-weight: 500;
+}
+
+.dd-pairing-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #f39c12;
+  box-shadow: 0 0 8px #f39c12;
+  animation: dd-pulse 1.2s infinite ease-in-out;
+  flex-shrink: 0;
+}
+
+/* ── Timeout input ───────────────────────────── */
+
+.dd-timeout-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  opacity: 0.8;
+}
+
+.dd-timeout-input {
+  width: 52px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  color: var(--text-primary);
+  padding: 3px 6px;
+  font-size: 0.82rem;
+  font-family: inherit;
+  text-align: center;
+  transition: border-color 0.15s;
+  outline: none;
+}
+
+.dd-timeout-input:focus {
+  border-color: rgba(88, 166, 255, 0.5);
+  background: rgba(88, 166, 255, 0.06);
+}
+
+/* Hide number spinners */
+.dd-timeout-input::-webkit-outer-spin-button,
+.dd-timeout-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.dd-timeout-input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+/* ── Banner action buttons ───────────────────── */
+
+.btn-banner-action {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  padding: 0.4rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.btn-banner-action:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: var(--text-primary);
+  transform: translateY(-1px);
+}
+
+.btn-banner-action:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.btn-banner-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-banner-action svg {
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+
+.btn-banner-action:hover svg {
+  opacity: 1;
+}
+
+.btn-banner-action.loading {
+  color: var(--accent-color);
+  border-color: rgba(88, 166, 255, 0.3);
+  background: rgba(88, 166, 255, 0.08);
+}
+
+.btn-banner-action.loading svg {
+  animation: spin 2s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* ── Remote matrix visualiser ────────────────── */
+
+.dd-matrix-wrapper {
+  overflow-x: auto;
+  padding-bottom: 4px;
+  animation: fadeSlideUp 0.25s ease-out;
+  margin-top: 0.75rem;
+}
+
+.dd-matrix-grid {
+  display: grid;
+  grid-template-columns: repeat(18, 18px);
+  gap: 3px;
+}
+
+.dd-matrix-cell {
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: background 0.08s, border-color 0.08s, box-shadow 0.08s;
+}
+
+.dd-matrix-cell.pressed {
+  background: var(--success-color);
+  border-color: rgba(46, 204, 113, 0.6);
+  box-shadow: 0 0 8px rgba(46, 204, 113, 0.4);
+}
+
+.dd-matrix-empty {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  opacity: 0.5;
+  padding: 0.5rem 0;
+}
+
+/* ── Responsive ──────────────────────────────── */
+
+@media (max-width: 640px) {
+  .dd-split-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .dd-split-status-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .dd-split-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
