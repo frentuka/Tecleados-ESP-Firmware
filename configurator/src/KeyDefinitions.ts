@@ -51,7 +51,8 @@ export function getKeyClass(code: number): string {
     const isModifier = code >= 0xE0 && code <= 0xE7;
     const isAction = (code >= 0x28 && code <= 0x2B) || // Enter, Esc, Bksp, Tab
         (code >= 0x49 && code <= 0x52) || // Ins, Home, PgDn, Del, End, PgUp, Right, Left, Down, Up
-        code === 0x39; // Caps
+        code === 0x39 || // Caps
+        code === 0x65; // Menu
     if (isModifier || isAction) return 'key-modifier';
     return 'key-normal';
 }

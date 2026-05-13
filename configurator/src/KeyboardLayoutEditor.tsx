@@ -20,6 +20,7 @@ import { parseKleJson } from './utils/kleParser';
 import { parsePhysicalLayoutJson, serializePhysicalLayout } from './utils/layoutUtils';
 import { saveJsonFile } from './utils/fileUtils';
 import { useNotificationStore } from './stores/notificationStore';
+import { useLayoutStore } from './stores/layoutStore';
 import { withTimeout, TimeoutError } from './utils/withTimeout';
 import './assets/css/keyboard-layout.css';
 import './assets/css/key-types.css';
@@ -107,10 +108,8 @@ const DEFAULT_PHYSICAL_LAYOUT: PhysKey[][] = [
 
 export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, macros, customKeys = [], onLog }: KeyboardLayoutEditorProps) {
     const { showNotification } = useNotificationStore();
-    const [activeLayer, setActiveLayer] = useState(0);
-    const [layers, setLayers] = useState<(LayerData | null)[]>([null, null, null, null]);
+    const { physicalLayout, setPhysicalLayout, layers, setLayers, activeLayer, setActiveLayer } = useLayoutStore();
     const [layerStatus, setLayerStatus] = useState<('idle' | 'loading' | 'loaded' | 'error')[]>(['idle', 'idle', 'idle', 'idle']);
-    const [physicalLayout, setPhysicalLayout] = useState<PhysKey[][] | null>(null);
     const [physLayoutStatus, setPhysLayoutStatus] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle');
     const [showKleImport, setShowKleImport] = useState(false);
     const [kleInput, setKleInput] = useState('');
@@ -226,13 +225,19 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
         if (!isConnected && isKeyTestMode) {
             exitKeyTestMode();
         }
+        // Clear layout store on disconnect so 3D background fades out
+        if (!isConnected) {
+            setPhysicalLayout(null);
+            setLayers([null, null, null, null]);
+            setActiveLayer(0);
+        }
         return () => {
             // We can't safely async await on unmount without hanging, but we do our best
             if (isKeyTestMode) {
                 hidService.clearInjectedKeys().catch(() => { });
             }
         };
-    }, [isConnected, isKeyTestMode, exitKeyTestMode]);
+    }, [isConnected, isKeyTestMode, exitKeyTestMode, setPhysicalLayout, setLayers, setActiveLayer]);
 
 
     // ── Global Key Listeners ──

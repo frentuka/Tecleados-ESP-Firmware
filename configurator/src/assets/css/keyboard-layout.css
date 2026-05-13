@@ -4,6 +4,7 @@
 
 .layout-editor {
   text-align: center;
+  margin-top: -1.5rem;
   /* allows inline-flex toolbar to center via margin:auto */
 }
 
@@ -27,9 +28,9 @@
   display: inline-flex;
   align-items: center;
   gap: 0.6rem;
-  margin: 1.25rem auto 3.5rem;
+  margin: 0 auto 1.5rem;
   padding: 0.45rem 0.6rem;
-  background: rgba(13, 17, 23, 0.6);
+  background: rgba(13, 17, 23, 0.2);
   border: 1px solid var(--border-color);
   border-radius: 14px;
   backdrop-filter: blur(8px);
@@ -252,7 +253,9 @@
   flex-direction: column;
   gap: 4px;
   padding: 1.25rem;
-  background: rgba(0, 0, 0, 0.4);
+  background: rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   border-radius: 12px;
   border: 1px solid var(--border-color);
 }
@@ -633,7 +636,7 @@
   padding: 3rem;
   text-align: center;
   color: var(--text-secondary);
-  background: rgba(0, 0, 0, 0.3);
+  background: rgba(0, 0, 0, 0.2);
   border-radius: 12px;
   border: 1px dashed var(--border-color);
 }
@@ -645,7 +648,7 @@
   gap: 1.25rem;
   margin-top: 0.75rem;
   padding: 0.75rem 1.25rem;
-  background: rgba(22, 27, 34, 0.7);
+  background: rgba(22, 27, 34, 0.2);
   backdrop-filter: blur(8px);
   border: 1px solid var(--border-color);
   border-radius: 10px;
@@ -817,4 +820,3 @@
   background: var(--border-color);
   margin: 0.5rem;
 }
-

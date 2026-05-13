@@ -31,6 +31,8 @@ import {
 import './index.css';
 
 import { LayoutIcon, MacrosIcon, DeviceIcon } from './components/SidebarIcons';
+import Background3D from './components/Background3D';
+import { useLayoutStore } from './stores/layoutStore';
 
 // Re-export types for backward compatibility — consumers can import from './App'
 export type { Macro, MacroElement, MacroAction } from './types/macros';
@@ -42,6 +44,7 @@ type ActiveSection = 'layout' | 'macrosCkeys' | 'device';
 function App() {
   const [activeSection, setActiveSection] = useState<ActiveSection>('layout');
   const [isConnected, setIsConnected] = useState(false);
+  const setLayoutIsConnected = useLayoutStore(state => state.setIsConnected);
   const { notification, setNotification, showNotification } = useNotificationStore();
   const [displayedNotification, setDisplayedNotification] = useState<ConnectionNotification | null>(null);
   const [isNotificationHovered, setIsNotificationHovered] = useState(false);
@@ -126,6 +129,7 @@ function App() {
   useEffect(() => {
     const handler = (connected: boolean) => {
       setIsConnected(connected);
+      setLayoutIsConnected(connected);
       if (!connected) setDeviceStatus(null);
 
       // Clear logs and add connection status as the first entry
@@ -379,6 +383,7 @@ function App() {
 
   return (
     <div className="app-container">
+      <Background3D />
       <header className="main-header">
         <div className="header-left">
           <div className="header-brand">
