@@ -73,6 +73,7 @@ configurator/
 │   ├── DeviceIdentityDashboard.tsx     — "Identity" section: device naming and split variants (Dev only)
 │   │
 │   ├── components/
+│   │   ├── Background3D.tsx            — Full-page 3D keyboard background (React Three Fiber; procedural geometry, split detection, Minkowski-sum baseplates)
 │   │   ├── DevControlsPanel.tsx        — Developer Mode panel: config GET/SET form + raw log viewer
 │   │   ├── MacroEditorModal.tsx        — Full macro editor with recording, element list, drag-and-drop
 │   │   ├── MacroModeModal.tsx          — Inline modal to change a macro's execution mode
@@ -98,7 +99,8 @@ configurator/
 │   │   ├── macroStore.ts               — Zustand: macros[], macroLimits, macroCache, async fetch/save/delete
 │   │   ├── customKeyStore.ts           — Zustand: customKeys[], async fetch/save/delete
 │   │   ├── logStore.ts                 — Zustand: logs[] (max 200 entries), addLog, clearLogs
-│   │   └── notificationStore.ts        — Zustand: global notification state; showNotification(message, type)
+│   │   ├── notificationStore.ts        — Zustand: global notification state; showNotification(message, type)
+│   │   └── layoutStore.ts              — Zustand: physicalLayout, layers, activeLayer, isConnected (shared between editor and 3D background)
 │   │
 │   ├── types/
 │   │   ├── protocol.ts                 — All protocol constants (VID/PID, flag bits, module IDs, key IDs)
@@ -228,6 +230,7 @@ If the device disconnects unexpectedly while `wantConnection` is true, `HIDTrans
 | `customKeyStore`      | `customKeys[]`                                                 | Custom key list                           |
 | `logStore`            | `logs[]` (max 200)                                             | Communication log ring buffer             |
 | `notificationStore`   | `notification`, `showNotification`, `clearNotification`        | Global user-feedback notification system  |
+| `layoutStore`         | `physicalLayout`, `layers`, `activeLayer`, `isConnected`       | Bridge between `KeyboardLayoutEditor` and `Background3D` |
 
 The stores hold **typed actions** that accept a `DeviceController` argument, keeping the async device logic inside the store rather than leaking into components.
 
@@ -575,3 +578,34 @@ Defined in `types/protocol.ts` and `KeyDefinitions.ts`:
 | `0x4000–0x4FFF` | `ACTION_CODE_MACRO_MIN/MAX` | Macro slots (base 0x4000 + id) |
 | `0xFFFF` | `KB_KEY_TRANSPARENT` | Pass-through to next layer |
 | `0x0000` | `ACTION_CODE_NONE` | No-op / unassigned |
+
+---
+
+## 14. 3D Animated Background
+
+The configurator renders a **procedurally generated, real-time 3D keyboard** as a full-page background. It is driven by React Three Fiber and Three.js. No external 3D assets are required — all geometry is computed at runtime from layout data.
+
+### How it works
+
+1. **Geometry source** — `Background3D.tsx` reads `physicalLayout` from `layoutStore`. If no layout is loaded, it renders a hardcoded 65% keyboard with realistic key colour assignments.
+2. **Key colouring** — each keycap is coloured according to the action code stored in the active layer at the key's `{row, col}` position, using `getKeyClass()` from `KeyDefinitions.ts`:
+
+   | Key class | Colour |
+   |---|---|
+   | Standard alphanumerics | Dark charcoal (`#111111`) |
+   | Modifiers + action keys (Ctrl, Shift, Enter, Esc, Caps, Menu, arrows) | Deep blue (`#2a61a8`) |
+   | F1–F12 | Forest green (`#2a7a3b`) |
+   | System actions, macros, custom keys | Deep purple (`#6436b5`) |
+   | Unassigned / transparent | Near-black (`#080b0f`) |
+
+3. **Split detection** — column gaps in the middle of the physical layout signal a split keyboard. The layout is split into two clusters, each rendered with independent ergonomic tenting (Z-axis roll) and a lateral gap.
+4. **Custom baseplates** — each cluster gets a backplate whose outline is computed via a **Minkowski sum on its 2D Convex Hull**: the hull of all key corners is inflated with smooth circular arcs at every vertex, then extruded into a bevelled 3D slab. This produces a rounded, organic silhouette that exactly matches each half's physical outline.
+5. **Rotation correctness** — KLE rotation pivots `(rx, ry)` are fully replicated in 3D: keys are placed inside a `<group>` at the pivot position, then the group is rotated, so angled thumb clusters land in their correct world positions without clipping.
+
+### Connection-driven visibility
+
+The `isConnected` flag is stored in `layoutStore` and set by `App.tsx`'s connection handler. `Background3D` reads it and applies:
+
+- **Fade-in on connect**: `opacity 0 → 1` + `translateY(40px → 0)` over 2.5 s (CSS, spring easing).
+- **Key colour fade-in**: keycap `opacity` is animated per-frame via `useFrame` over ~2.5 s so colours bloom in gradually.
+- **Fade-out on disconnect**: the layout store is cleared (`physicalLayout → null`, `layers → [null,…]`), reversing both animations and sinking the model out of view.

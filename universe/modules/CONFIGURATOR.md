@@ -25,6 +25,7 @@ The application is divided into three layers that mirror the firmware's own laye
 │  hooks/useMacros.ts    (macro CRUD + state + 7s timeout guard)     │
 │  hooks/useCustomKeys.ts (custom key CRUD + state + 7s timeout guard)│
 │  stores/notificationStore.ts  (global notification state)          │
+│  stores/layoutStore.ts        (physical layout + connection state)  │
 ├────────────────────────────────────────────────────────────────────┤
 │  Transport Layer                                                   │
 │  HIDTransport.ts  (WebHID, CRC-8, Blast+Reconcile state machine)   │
@@ -249,6 +250,70 @@ Injected keys pass through the full keyboard pipeline (layers, macros, custom ke
 
 ---
 
+## 3D Animated Background (`Background3D.tsx`)
+
+The configurator renders a **procedurally generated, real-time 3D representation** of the currently connected keyboard as a full-page background using **React Three Fiber** (a React renderer for Three.js). It is visually distinct from the 2D editor and requires no external 3D assets — every mesh is generated at runtime from layout data.
+
+### Rendering Pipeline
+
+1. **Hardcoded fallback** — when no physical layout is loaded, a static 65% keyboard with pre-assigned key colours is displayed (keyed to a standard 65% layout's modifier positions).
+2. **Dynamic generation** — when a physical layout is loaded from the device, the renderer derives all geometry from the `PhysKey[][]` data in `layoutStore`.
+3. **Colourisation** — each keycap mesh is coloured based on the active layer's action code at that key's `{row, col}` matrix position, using `getKeyClass()` from `KeyDefinitions.ts`:
+   - Standard keys → dark charcoal (`#111111`)
+   - Modifiers / action keys (Ctrl, Shift, Alt, Enter, Esc, Caps, Menu, arrows…) → deep blue (`#2a61a8`)
+   - F1–F12 → forest green (`#2a7a3b`)
+   - System actions, macros, and custom keys → deep purple (`#6436b5`)
+   - Unassigned / transparent → near-black (`#080b0f`)
+
+### Split Keyboard Detection
+
+The renderer detects split keyboards by scanning for **column gaps** in the middle of the physical layout. If a contiguous column range with no assigned keys is found, the layout is partitioned into two independent clusters:
+
+- The right half is identified by `isLayoutMirrored === true` on the split object.
+- Each half is rendered with independent tenting (Z-axis rotation) and a lateral offset for visual separation.
+- Each half gets its own custom baseplate (see below).
+
+### Custom Baseplates (Minkowski Sum Algorithm)
+
+Each key cluster has a **custom-fitted backplate** computed at runtime:
+
+1. Collect the four padded corners of every keycap in the cluster (applying full rotation math for angled thumb clusters via `rotatePoint`).
+2. Compute the **2D Convex Hull** of all corner points using Andrew's monotone chain algorithm.
+3. Expand the hull using a **Minkowski sum**: each flat edge is offset outward by radius `R`, and every vertex corner is bridged by a perfect circular arc using `shape.absarc()`. This eliminates all sharp corners.
+4. Extrude the resulting `THREE.Shape` downward with a bevelled edge via `ExtrudeGeometry`.
+
+This produces a single mesh that tightly hugs the keyboard's exact ergonomic contour, whether it is a simple rectangle (65%) or a complex split with angled thumb clusters.
+
+### Rotation Pivot Correctness
+
+KLE rotation data uses an external pivot point `(rx, ry)`, not the key's own centre. The renderer replicates this exactly:
+
+- A `<group>` is positioned at the pivot world coordinate.
+- The group is rotated by `-pk.r` degrees on the Y axis.
+- The key mesh is placed inside the group at its offset from the pivot.
+- Corner points are rotated the same way when collecting hull vertices, so the baseplate fits correctly around angled thumb clusters without clipping.
+
+### Connection-Driven Visibility
+
+The 3D canvas is hidden when no keyboard is connected and revealed on connection via a **smooth CSS transition**:
+
+- `isConnected` is stored in `layoutStore` and updated by `App.tsx`'s `hidService.onConnectionChange` handler.
+- On connect: `opacity 0 → 1` + `translateY(40px → 0)` over 2.5 s with a spring-like `cubic-bezier(0.16, 1, 0.3, 1)` easing.
+- On disconnect: the transition runs in reverse — the keyboard gracefully sinks into the background.
+- Simultaneously, keycap colours fade in over ~2.5 s via per-frame `opacity` interpolation in `useFrame` (Three.js render loop), so the colour information blooms in slowly rather than snapping into place.
+
+### State Wiring
+
+| State | Source | Consumer |
+|---|---|---|
+| `physicalLayout` | `KeyboardLayoutEditor` (on device load / KLE import) | `Background3D` (geometry generation) |
+| `layers` / `activeLayer` | `KeyboardLayoutEditor` (on device load) | `Background3D` (key colouring) |
+| `isConnected` | `App.tsx` (connection handler) | `Background3D` (fade in/out) |
+
+All shared state lives in `stores/layoutStore.ts` (Zustand). Clearing the layout store on disconnect (setting `physicalLayout → null`, `layers → [null,…]`) is what triggers the fade-out.
+
+---
+
 ## Global Notification System
 
 A Zustand-based notification store (`stores/notificationStore.ts`) provides a unified, non-intrusive user feedback mechanism used across all dashboards. It replaces all `alert()` calls and ad-hoc local error states.
@@ -381,6 +446,7 @@ graph TD
 | `services/HIDTransport.ts` | WebHID driver: CRC-8, Blast+Reconcile TX/RX state machine, reconnect polling |
 | `services/DeviceController.ts` | Typed command API over HIDTransport; high-level methods for every firmware operation |
 | `stores/notificationStore.ts` | Zustand: `notification` state + `showNotification(message, type)` — consumed globally |
+| `stores/layoutStore.ts` | Zustand: `physicalLayout`, `layers`, `activeLayer`, `isConnected` — shared between `KeyboardLayoutEditor` and `Background3D` |
 | `utils/withTimeout.ts` | Promise timeout wrapper + `TimeoutError`; protects all device writes with a 7 s deadline |
 | `utils/kleParser.ts` | KLE JSON parser: full rotation state machine, auto-anchor, collision resolution |
 | `utils/layoutUtils.ts` | Physical layout serialization/deserialization including rotation side-map |
@@ -391,6 +457,7 @@ graph TD
 | `types/customKeys.ts` | CustomKey, CustomKeyPR, CustomKeyMA type definitions |
 | `hooks/useMacros.ts` | React hook: macro list state + fetch/save/delete with 7 s timeout guard |
 | `hooks/useCustomKeys.ts` | React hook: custom key state + fetch/save/delete with 7 s timeout guard |
+| `components/Background3D.tsx` | Full-page 3D keyboard background: procedural geometry, split detection, Minkowski-sum baseplates, connection-driven fade animation |
 | `components/SearchableKeyModal.tsx` | Searchable HID key picker modal with custom title support |
 | `components/MacroEditorModal.tsx` | Full macro event-sequence editor modal |
 | `components/DevControlsPanel.tsx` | Developer mode raw packet log and debug controls |
