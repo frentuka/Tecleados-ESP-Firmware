@@ -10,11 +10,15 @@
   --accent-hover: #3182ce;
   --success-color: #2ea043;
   --danger-color: #f85149;
-
-  /* Scrollbar colors */
-  --scrollbar-track: rgba(255, 255, 255, 0.02);
-  --scrollbar-thumb: rgba(255, 255, 255, 0.15);
-  --scrollbar-thumb-hover: rgba(88, 166, 255, 0.4);
+  /* Key Type Base Colors (HSL) */
+  --key-h-normal: 215; --key-s-normal: 20%; --key-l-normal: 20%;
+  --key-h-modifier: 212; --key-s-modifier: 100%; --key-l-modifier: 67%;
+  --key-h-system: 262; --key-s-system: 90%; --key-l-system: 70%;
+  --key-h-macro: 32; --key-s-macro: 91%; --key-l-macro: 65%;
+  --key-h-ckey: 142; --key-s-ckey: 57%; --key-l-ckey: 62%;
+  --key-h-fkey: 155; --key-s-fkey: 50%; --key-l-fkey: 32%;
+  --key-h-transparent: 215; --key-s-transparent: 15%; --key-l-transparent: 50%;
+  --key-h-none: 215; --key-s-none: 15%; --key-l-none: 10%;
 }
 
 /* Global scrollbar styles */

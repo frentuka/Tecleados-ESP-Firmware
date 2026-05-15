@@ -23,7 +23,6 @@ import { useNotificationStore } from './stores/notificationStore';
 import { useLayoutStore } from './stores/layoutStore';
 import { withTimeout, TimeoutError } from './utils/withTimeout';
 import './assets/css/keyboard-layout.css';
-import './assets/css/key-types.css';
 
 // ── Matrix dimensions (must match firmware) ──
 const LAYER_COUNT = 4;

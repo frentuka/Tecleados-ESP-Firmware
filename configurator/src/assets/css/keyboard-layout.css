@@ -309,29 +309,44 @@
 
 /* Key type colors */
 .key-normal {
-  background: rgba(40, 48, 60, 0.9);
+  background: hsla(var(--key-h-normal), var(--key-s-normal), var(--key-l-normal), 0.9);
 }
 
 .key-modifier {
-  background: rgba(88, 166, 255, 0.15);
-  border-color: rgba(88, 166, 255, 0.3);
+  background: hsla(var(--key-h-modifier), var(--key-s-modifier), var(--key-l-modifier), 0.15);
+  border-color: hsla(var(--key-h-modifier), var(--key-s-modifier), var(--key-l-modifier), 0.3);
 }
 
 .key-system {
-  background: rgba(163, 113, 247, 0.15);
-  border-color: rgba(163, 113, 247, 0.3);
+  background: hsla(var(--key-h-system), var(--key-s-system), var(--key-l-system), 0.15);
+  border-color: hsla(var(--key-h-system), var(--key-s-system), var(--key-l-system), 0.3);
+}
+
+.key-macro {
+  background: hsla(var(--key-h-macro), var(--key-s-macro), var(--key-l-macro), 0.15);
+  border-color: hsla(var(--key-h-macro), var(--key-s-macro), var(--key-l-macro), 0.3);
+}
+
+.key-ckey {
+  background: hsla(var(--key-h-ckey), var(--key-s-ckey), var(--key-l-ckey), 0.15);
+  border-color: hsla(var(--key-h-ckey), var(--key-s-ckey), var(--key-l-ckey), 0.3);
+}
+
+.key-fkey {
+  background: hsla(var(--key-h-fkey), var(--key-s-fkey), var(--key-l-fkey), 0.15);
+  border-color: hsla(var(--key-h-fkey), var(--key-s-fkey), var(--key-l-fkey), 0.3);
 }
 
 .key-transparent {
-  background: rgba(255, 255, 255, 0.03);
+  background: hsla(var(--key-h-transparent), var(--key-s-transparent), var(--key-l-transparent), 0.08);
   border-style: dashed;
-  border-color: rgba(255, 255, 255, 0.08);
+  border-color: hsla(var(--key-h-transparent), var(--key-s-transparent), var(--key-l-transparent), 0.15);
   color: var(--text-secondary);
 }
 
 .key-none {
-  background: rgba(0, 0, 0, 0.2);
-  border-color: rgba(255, 255, 255, 0.05);
+  background: hsla(var(--key-h-none), var(--key-s-none), var(--key-l-none), 0.2);
+  border-color: hsla(var(--key-h-none), var(--key-s-none), var(--key-l-none), 0.1);
 }
 
 .key-selected {
@@ -571,55 +586,64 @@
 
 /* Noticeable categorization with vibrant backgrounds */
 .key-option.key-modifier {
-  background: rgba(88, 166, 255, 0.15);
-  border-color: rgba(88, 166, 255, 0.3);
+  background: hsla(var(--key-h-modifier), var(--key-s-modifier), var(--key-l-modifier), 0.15);
+  border-color: hsla(var(--key-h-modifier), var(--key-s-modifier), var(--key-l-modifier), 0.3);
 }
 
 .key-option.key-modifier:hover {
-  background: rgba(88, 166, 255, 0.25);
-  border-color: rgba(88, 166, 255, 0.5);
+  background: hsla(var(--key-h-modifier), var(--key-s-modifier), var(--key-l-modifier), 0.25);
+  border-color: hsla(var(--key-h-modifier), var(--key-s-modifier), var(--key-l-modifier), 0.5);
 }
 
 .key-option.key-system {
-  background: rgba(163, 113, 247, 0.15);
-  border-color: rgba(163, 113, 247, 0.3);
+  background: hsla(var(--key-h-system), var(--key-s-system), var(--key-l-system), 0.15);
+  border-color: hsla(var(--key-h-system), var(--key-s-system), var(--key-l-system), 0.3);
 }
 
 .key-option.key-system:hover {
-  background: rgba(163, 113, 247, 0.25);
-  border-color: rgba(163, 113, 247, 0.5);
+  background: hsla(var(--key-h-system), var(--key-s-system), var(--key-l-system), 0.25);
+  border-color: hsla(var(--key-h-system), var(--key-s-system), var(--key-l-system), 0.5);
 }
 
 .key-option.key-macro {
-  background: rgba(255, 80, 80, 0.15);
-  border-color: rgba(255, 80, 80, 0.3);
+  background: hsla(var(--key-h-macro), var(--key-s-macro), var(--key-l-macro), 0.15);
+  border-color: hsla(var(--key-h-macro), var(--key-s-macro), var(--key-l-macro), 0.3);
 }
 
 .key-option.key-macro:hover {
-  background: rgba(255, 80, 80, 0.25);
-  border-color: rgba(255, 80, 80, 0.5);
+  background: hsla(var(--key-h-macro), var(--key-s-macro), var(--key-l-macro), 0.25);
+  border-color: hsla(var(--key-h-macro), var(--key-s-macro), var(--key-l-macro), 0.5);
 }
 
 .key-option.key-ckey {
-  background: rgba(104, 211, 145, 0.15);
-  border-color: rgba(104, 211, 145, 0.3);
+  background: hsla(var(--key-h-ckey), var(--key-s-ckey), var(--key-l-ckey), 0.15);
+  border-color: hsla(var(--key-h-ckey), var(--key-s-ckey), var(--key-l-ckey), 0.3);
 }
 
 .key-option.key-ckey:hover {
-  background: rgba(104, 211, 145, 0.25);
-  border-color: rgba(104, 211, 145, 0.5);
+  background: hsla(var(--key-h-ckey), var(--key-s-ckey), var(--key-l-ckey), 0.25);
+  border-color: hsla(var(--key-h-ckey), var(--key-s-ckey), var(--key-l-ckey), 0.5);
 }
 
+.key-option.key-fkey {
+  background: hsla(var(--key-h-fkey), var(--key-s-fkey), var(--key-l-fkey), 0.15);
+  border-color: hsla(var(--key-h-fkey), var(--key-s-fkey), var(--key-l-fkey), 0.3);
+}
 
+.key-option.key-fkey:hover {
+  background: hsla(var(--key-h-fkey), var(--key-s-fkey), var(--key-l-fkey), 0.25);
+  border-color: hsla(var(--key-h-fkey), var(--key-s-fkey), var(--key-l-fkey), 0.5);
+}
 
 .key-option.key-transparent {
-  background: rgba(139, 148, 158, 0.15);
-  border-color: rgba(139, 148, 158, 0.3);
+  background: hsla(var(--key-h-transparent), var(--key-s-transparent), var(--key-l-transparent), 0.15);
+  border-color: hsla(var(--key-h-transparent), var(--key-s-transparent), var(--key-l-transparent), 0.3);
   opacity: 0.8;
 }
 
 .key-option.key-none {
-  background: rgba(255, 255, 255, 0.05);
+  background: hsla(var(--key-h-none), var(--key-s-none), var(--key-l-none), 0.15);
+  border-color: hsla(var(--key-h-none), var(--key-s-none), var(--key-l-none), 0.3);
   opacity: 0.5;
 }
 

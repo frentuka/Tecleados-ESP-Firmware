@@ -45,6 +45,7 @@ export const CKEY_BASE   = 0x3000;
 export function getKeyClass(code: number): string {
     if (code === TRANSPARENT) return 'key-transparent';
     if (code === 0) return 'key-none';
+    if (code >= 0x3A && code <= 0x45) return 'key-fkey';
     if (code >= 0x2000 && code <= 0x20FF) return 'key-system';
     if (code >= CKEY_BASE  && code <= 0x3FFF) return 'key-ckey';
     if (code >= MACRO_BASE && code <= 0x40FF) return 'key-macro';
