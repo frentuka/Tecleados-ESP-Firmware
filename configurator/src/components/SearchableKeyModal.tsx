@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { ALL_KEYS, getKeyClass, TRANSPARENT, getMacroKeyOptions, getCKeyOptions, MACRO_BASE, CKEY_BASE } from '../KeyDefinitions';
+import { ALL_KEYS, getKeyClass, TRANSPARENT, getMacroKeyOptions, getCKeyOptions, MACRO_BASE, CKEY_BASE, getSecondaryKeyName } from '../KeyDefinitions';
 import type { Macro } from '../types/macros';
 import type { CustomKey } from '../types/customKeys';
 import '../assets/css/searchable-key-modal.css';
@@ -116,9 +116,12 @@ export default function SearchableKeyModal({ currentValue, macros, customKeys, o
     const ckeyOptions  = getCKeyOptions(customKeys || []);
     const combinedKeys = [...ALL_KEYS, ...macroOptions, ...ckeyOptions];
 
-    const filteredKeys = combinedKeys.filter(k =>
-        k.label.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    const filteredKeys = combinedKeys.filter(k => {
+        const primary = k.label.toLowerCase();
+        const secondary = (getSecondaryKeyName(k.value) || '').toLowerCase();
+        const term = searchTerm.toLowerCase();
+        return primary.includes(term) || secondary.includes(term);
+    });
 
     const CATEGORIES = [
         { name: 'Custom Keys', filter: (v: number) => v >= CKEY_BASE && v <= 0x3FFF, menu: 'custom' },
@@ -279,6 +282,9 @@ export default function SearchableKeyModal({ currentValue, macros, customKeys, o
                                                 style={{ animationDelay: `${Math.min(index * 0.015, 0.4)}s` }}
                                             >
                                                 <span className="key-option-label">{k.label}</span>
+                                                {getSecondaryKeyName(k.value) && (
+                                                    <span className="key-option-secondary-label">{getSecondaryKeyName(k.value)}</span>
+                                                )}
                                             </button>
                                         ))}
                                     </div>

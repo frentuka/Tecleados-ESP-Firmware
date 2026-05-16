@@ -299,6 +299,24 @@
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 100%;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  height: 100%;
+  width: 100%;
+}
+
+.key-main-label {
+  display: inline-block;
+}
+
+.key-secondary-label {
+  font-size: 0.6rem;
+  opacity: 0.85;
+  font-weight: 400;
+  color: var(--text-secondary);
 }
 
 .key-pos {
@@ -397,11 +415,14 @@
 }
 
 .key-pressed {
-  background: var(--accent-color) !important;
-  color: #fff !important;
-  transform: translateY(2px) !important;
-  box-shadow: 0 0 15px var(--accent-color);
-  border-color: #fff !important;
+  background: linear-gradient(145deg, #2a313c, #1e252e) !important;
+  color: var(--accent-color) !important;
+  transform: translateY(1.5px) scale(0.97) !important;
+  border: 1.5px solid var(--accent-color) !important;
+  box-shadow: 
+    0 0 15px rgba(88, 166, 255, 0.2),
+    inset 0 1px 4px rgba(0, 0, 0, 0.4) !important;
+  z-index: 10;
 }
 
 
@@ -537,19 +558,19 @@
 }
 
 .key-option {
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
+  background: rgba(40, 48, 60, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
   padding: 0.85rem 0.5rem;
   cursor: pointer;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 8px;
   transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   color: var(--text-primary);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 
 .key-option:hover {
@@ -560,15 +581,16 @@
 }
 
 .key-option.active {
-  background: var(--accent-color);
-  border-color: var(--accent-hover);
-  box-shadow: 0 4px 15px rgba(88, 166, 255, 0.3);
-  color: #fff;
+  background: linear-gradient(145deg, #323945, #222831) !important;
+  border-color: var(--accent-color) !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3), inset 0 0 8px rgba(0, 0, 0, 0.4);
+  color: var(--accent-color) !important;
+  transform: scale(0.98);
 }
 
 .key-option.active .key-option-label,
-.key-option.active .key-option-hex {
-  color: #fff;
+.key-option.active .key-option-secondary-label {
+  color: var(--accent-color) !important;
 }
 
 .key-option-label {
@@ -576,6 +598,14 @@
   font-weight: 600;
   text-align: center;
   letter-spacing: 0.01em;
+}
+
+.key-option-secondary-label {
+  font-size: 0.6rem;
+  opacity: 0.85;
+  font-weight: 400;
+  color: var(--text-secondary);
+  margin-bottom: -2px;
 }
 
 .no-results {

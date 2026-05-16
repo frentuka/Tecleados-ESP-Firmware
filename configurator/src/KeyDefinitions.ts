@@ -24,6 +24,14 @@ export const HID_KEY_NAMES: Record<number, string> = {
     0xE4: 'RCTRL', 0xE5: 'RSHIFT', 0xE6: 'RALT', 0xE7: 'RGUI',
 };
 
+// Shifted legends for standard keys
+export const SECONDARY_HID_LEGENDS: Record<number, string> = {
+    0x1E: '!', 0x1F: '@', 0x20: '#', 0x21: '$', 0x22: '%',
+    0x23: '^', 0x24: '&', 0x25: '*', 0x26: '(', 0x27: ')',
+    0x2D: '_', 0x2E: '+', 0x2F: '{', 0x30: '}', 0x31: '|',
+    0x33: ':', 0x34: '"', 0x35: '~', 0x36: '<', 0x37: '>', 0x38: '?',
+};
+
 // System action code names (from kb_layout.h)
 export const SYSTEM_ACTION_NAMES: Record<number, string> = {
     0x2000: 'L.BASE', 0x2001: 'L.FN1', 0x2002: 'L.FN2',
@@ -74,12 +82,12 @@ export const ALL_KEYS: { label: string; value: number }[] = [
     // Symbols and special keys
     { label: 'Enter', value: 0x28 }, { label: 'Escape', value: 0x29 },
     { label: 'Backspace', value: 0x2A }, { label: 'Tab', value: 0x2B },
-    { label: 'Space', value: 0x2C }, { label: '- _', value: 0x2D },
-    { label: '= +', value: 0x2E }, { label: '[ {', value: 0x2F },
-    { label: '] }', value: 0x30 }, { label: '\\ |', value: 0x31 },
-    { label: '; :', value: 0x33 }, { label: "' \"", value: 0x34 },
-    { label: '` ~', value: 0x35 }, { label: ', <', value: 0x36 },
-    { label: '. >', value: 0x37 }, { label: '/ ?', value: 0x38 },
+    { label: 'Space', value: 0x2C }, { label: '-', value: 0x2D },
+    { label: '=', value: 0x2E }, { label: '[', value: 0x2F },
+    { label: ']', value: 0x30 }, { label: '\\', value: 0x31 },
+    { label: ';', value: 0x33 }, { label: "'", value: 0x34 },
+    { label: '`', value: 0x35 }, { label: ',', value: 0x36 },
+    { label: '.', value: 0x37 }, { label: '/', value: 0x38 },
     { label: 'Caps Lock', value: 0x39 },
     // F-keys
     ...Array.from({ length: 12 }, (_, i) => ({
@@ -162,6 +170,10 @@ export function getKeyName(
     if (SYSTEM_ACTION_NAMES[code]) return SYSTEM_ACTION_NAMES[code];
     if (HID_KEY_NAMES[code]) return HID_KEY_NAMES[code];
     return `0x${code.toString(16).toUpperCase().padStart(4, '0')}`;
+}
+
+export function getSecondaryKeyName(code: number): string | null {
+    return SECONDARY_HID_LEGENDS[code] || null;
 }
 
 export function getMacroKeyOptions(macros: { id: number, name: string }[]) {

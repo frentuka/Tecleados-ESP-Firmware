@@ -55,7 +55,7 @@ export function getKeyColor(code: number, lMult: number = 1, sMult: number = 1, 
 
 // Helper duplicated from KeyDefinitions to avoid circular imports if needed, 
 // but we'll eventually move the logic here or keep it in KeyDefinitions.
-function getCategoryFromCode(code: number): KeyCategory {
+export function getCategoryFromCode(code: number): KeyCategory {
     if (code === 0xFFFF) return 'key-transparent';
     if (code === 0) return 'key-none';
     if (code >= 0x3A && code <= 0x45) return 'key-fkey';

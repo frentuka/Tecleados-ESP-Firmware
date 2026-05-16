@@ -5,7 +5,7 @@ import { Environment, Float, ContactShadows, RoundedBox } from '@react-three/dre
 import { Geometry, Base, Subtraction } from '@react-three/csg'
 import { useLayoutStore } from '../stores/layoutStore'
 import { getKeyClass } from '../KeyDefinitions'
-import { getKeyColor } from '../utils/keyColors'
+import { getKeyColor, getCategoryFromCode, KEY_BASE_COLORS } from '../utils/keyColors'
 
 const createNoiseNormalMap = (size = 256, intensity = 30, repeat = 1) => {
   const canvas = document.createElement('canvas');
@@ -309,8 +309,8 @@ function LayoutBuffer({ physicalLayout, layers, activeLayer, opacityRef, targetF
   const groupRef = useRef<THREE.Group>(null);
   const materialsRef = useRef<THREE.MeshStandardMaterial[]>([]);
   const targetColorsRef = useRef<Map<THREE.Material, THREE.Color>>(new Map());
-  const keyInfoRef = useRef<{mat: THREE.Material, row: number, col: number, defaultColor: string}[]>([]);
-
+  const keyInfoRef = useRef<{mesh: THREE.Mesh, mat: THREE.Material, row: number, col: number, defaultColor: string, pressOffset: number}[]>([]);
+  
   useEffect(() => {
     if (groupRef.current) {
       const mats: THREE.MeshStandardMaterial[] = [];
@@ -325,7 +325,7 @@ function LayoutBuffer({ physicalLayout, layers, activeLayer, opacityRef, targetF
             mats.push(mat);
             
             if (mesh.userData?.isKey) {
-               keys.push({ mat, row: mesh.userData.row, col: mesh.userData.col, defaultColor: mesh.userData.defaultColor });
+               keys.push({ mesh, mat, row: mesh.userData.row, col: mesh.userData.col, defaultColor: mesh.userData.defaultColor, pressOffset: 0 });
             }
           }
         }
@@ -335,26 +335,6 @@ function LayoutBuffer({ physicalLayout, layers, activeLayer, opacityRef, targetF
     }
   }, [physicalLayout]);
 
-  useEffect(() => {
-    keyInfoRef.current.forEach(({mat, row, col, defaultColor}) => {
-       let hex = defaultColor;
-       if (physicalLayout && physicalLayout.length > 0 && layers && layers[activeLayer]) {
-         const rowData = layers[activeLayer][row];
-         const code = rowData ? rowData[col] || 0 : 0;
-         // Use the unified color scheme but slightly darker for 3D model
-         hex = getKeyColor(code, 0.5, 0.8);
-       }
-       
-       let target = targetColorsRef.current.get(mat);
-       if (!target) {
-          target = new THREE.Color(hex);
-          targetColorsRef.current.set(mat, target);
-       } else {
-          target.set(hex);
-       }
-    });
-  }, [physicalLayout, layers, activeLayer]);
-
   useFrame((state, delta) => {
     if (groupRef.current) {
       const opacity = opacityRef.current * targetFadeRef.current;
@@ -363,8 +343,54 @@ function LayoutBuffer({ physicalLayout, layers, activeLayer, opacityRef, targetF
         for (let i = 0; i < materialsRef.current.length; i++) {
           materialsRef.current[i].opacity = opacity;
         }
-        targetColorsRef.current.forEach((targetColor, mat) => {
-           (mat as THREE.MeshStandardMaterial).color.lerp(targetColor, delta * 12);
+
+        const store = useLayoutStore.getState();
+        const { pressedCodes, heldTestKeys } = store;
+
+        // Key press animation & Color updates
+        keyInfoRef.current.forEach(info => {
+          let isPressed = false;
+          let code = 0;
+          if (physicalLayout && physicalLayout.length > 0 && layers && layers[activeLayer]) {
+            const rowData = layers[activeLayer][info.row];
+            code = rowData ? rowData[info.col] || 0 : 0;
+            isPressed = pressedCodes.has(code) || heldTestKeys.has(`${info.row}-${info.col}`);
+          }
+
+          // Adaptive highlight logic
+          const category = getCategoryFromCode(code);
+          const baseL = KEY_BASE_COLORS[category]?.l || 20;
+          
+          // The 3D model uses 50% of base lightness as its "normal" state.
+          const normalL3D = baseL * 0.5;
+          // When pressed, we add a fixed boost to that 50% base.
+          // +20 for dark keys, +12 for bright keys feels like a good balance.
+          const lBoost = baseL > 50 ? 12 : 20;
+          const pressedL3D = Math.min(100, normalL3D + lBoost);
+          
+          const finalLMult = isPressed ? pressedL3D / baseL : 0.5;
+
+          const hex = getKeyColor(code, finalLMult, isPressed ? 1.0 : 0.8);
+          let targetColor = targetColorsRef.current.get(info.mat);
+          if (!targetColor) {
+            targetColor = new THREE.Color(hex);
+            targetColorsRef.current.set(info.mat, targetColor);
+          } else {
+            targetColor.set(hex);
+          }
+          
+          // Smooth color lerp
+          (info.mat as THREE.MeshStandardMaterial).color.lerp(targetColor, delta * 12);
+          
+          // Add an adaptive emissive glow (much subtler for already bright keys)
+          const emissiveMult = isPressed ? (baseL > 50 ? 0.02 : 0.15) : 0;
+          const emissiveColor = new THREE.Color(hex).multiplyScalar(emissiveMult);
+          (info.mat as THREE.MeshStandardMaterial).emissive.lerp(emissiveColor, delta * 12);
+
+          // Smooth position lerp
+          const targetOffset = isPressed ? -0.15 : 0;
+          info.pressOffset = THREE.MathUtils.lerp(info.pressOffset, targetOffset, delta * 20);
+          info.mesh.position.y = info.pressOffset;
         });
       }
     }

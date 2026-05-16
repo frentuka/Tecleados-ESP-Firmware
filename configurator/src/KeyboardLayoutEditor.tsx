@@ -12,6 +12,7 @@ import type { PhysKey } from './types/device';
 import {
     getKeyClass,
     getKeyName,
+    getSecondaryKeyName,
     BROWSER_CODE_TO_HID,
 } from './KeyDefinitions';
 import SearchableKeyModal from './components/SearchableKeyModal';
@@ -107,7 +108,7 @@ const DEFAULT_PHYSICAL_LAYOUT: PhysKey[][] = [
 
 export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, macros, customKeys = [], onLog }: KeyboardLayoutEditorProps) {
     const { showNotification } = useNotificationStore();
-    const { physicalLayout, setPhysicalLayout, layers, setLayers, activeLayer, setActiveLayer } = useLayoutStore();
+    const { physicalLayout, setPhysicalLayout, layers, setLayers, activeLayer, setActiveLayer, pressedCodes, setPressedCodes, heldTestKeys, setHeldTestKeys } = useLayoutStore();
     const [layerStatus, setLayerStatus] = useState<('idle' | 'loading' | 'loaded' | 'error')[]>(['idle', 'idle', 'idle', 'idle']);
     const [physLayoutStatus, setPhysLayoutStatus] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle');
     const [showKleImport, setShowKleImport] = useState(false);
@@ -117,15 +118,12 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [hasChanges, setHasChanges] = useState<boolean[]>([false, false, false, false]);
-    const [pressedCodes, setPressedCodes] = useState<Set<number>>(new Set());
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const [isKeyTestMode, setIsKeyTestMode] = useState(false);
     const [isRowColEditMode, setIsRowColEditMode] = useState(false);
     const [hasPhysLayoutChanges, setHasPhysLayoutChanges] = useState(false);
     const [rowInput, setRowInput] = useState('');
     const [colInput, setColInput] = useState('');
-    // Track virtually held keys by string key `${row}-${col}`
-    const [heldTestKeys, setHeldTestKeys] = useState<Set<string>>(new Set());
     const menuRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const lastClickedKeyRef = useRef<string | null>(null);
@@ -856,11 +854,8 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                                             position: 'absolute',
                                                             cursor: isKeyTestMode ? 'crosshair' : 'pointer',
                                                             zIndex: isSelected ? 5 : undefined,
-                                                            ...(pk.r ? {
-                                                                transform: `rotate(${pk.r}deg)`,
-                                                                // transform-origin is relative to the element's own top-left corner
-                                                                transformOrigin: `${(pk.rx! - pk.x) * 3.2}rem ${(pk.ry! - pk.y) * 3.2}rem`,
-                                                            } : {}),
+                                                            transform: `${pk.r ? `rotate(${pk.r}deg)` : ''} ${isPressed ? 'translateY(2px)' : ''}`.trim() || undefined,
+                                                            transformOrigin: pk.r ? `${(pk.rx! - pk.x) * 3.2}rem ${(pk.ry! - pk.y) * 3.2}rem` : undefined,
                                                         }}
                                                         onMouseDown={(e) => {
                                                             if (isKeyTestMode) {
@@ -981,7 +976,12 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                                         title={isRowColEditMode ? `R${pk.row} C${pk.col}` : `[${pk.row},${pk.col}] = 0x${(code ?? 0).toString(16).toUpperCase().padStart(4, '0')}`}
                                                     >
                                                         <span className="key-label">
-                                                            {isRowColEditMode ? `R${pk.row} C${pk.col}` : getKeyName(code, macros, customKeys)}
+                                                            <span className="key-main-label">
+                                                                {isRowColEditMode ? `R${pk.row} C${pk.col}` : getKeyName(code, macros, customKeys)}
+                                                            </span>
+                                                            {!isRowColEditMode && getSecondaryKeyName(code) && (
+                                                                <span className="key-secondary-label">{getSecondaryKeyName(code)}</span>
+                                                            )}
                                                         </span>
                                                     </button>
                                                 );
