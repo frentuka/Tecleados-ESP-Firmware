@@ -843,147 +843,154 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                                 const isSelected = selectedKeys.has(physKeyId);
 
                                                 return (
-                                                    <button
+                                                    <div
                                                         key={physKeyId}
-                                                        className={`keyboard-key ${getKeyClass(code)} ${isSelected ? 'key-selected' : ''} ${isPressed ? 'key-pressed' : ''}`}
                                                         style={{
+                                                            position: 'absolute',
                                                             left: `${(pk.x - minKeyX) * 3.2}rem`,
                                                             top: `${(pk.y - minKeyY) * 3.2}rem`,
                                                             width: `${pk.w * 3.2 - 0.25}rem`,
                                                             height: `${pk.h * 3.2 - 0.25}rem`,
-                                                            position: 'absolute',
-                                                            cursor: isKeyTestMode ? 'crosshair' : 'pointer',
-                                                            zIndex: isSelected ? 5 : undefined,
-                                                            transform: `${pk.r ? `rotate(${pk.r}deg)` : ''} ${isPressed ? 'translateY(2px)' : ''}`.trim() || undefined,
+                                                            transform: pk.r ? `rotate(${pk.r}deg)` : undefined,
                                                             transformOrigin: pk.r ? `${(pk.rx! - pk.x) * 3.2}rem ${(pk.ry! - pk.y) * 3.2}rem` : undefined,
+                                                            zIndex: isSelected ? 5 : undefined,
                                                         }}
-                                                        onMouseDown={(e) => {
-                                                            if (isKeyTestMode) {
-                                                                e.preventDefault();
-                                                                if (e.button === 0) {
-                                                                    hidService.sendInjectKey(pk.row, pk.col, true);
-                                                                    setHeldTestKeys(prev => new Set(prev).add(physKeyId));
-                                                                } else if (e.button === 2) {
-                                                                    setHeldTestKeys(prev => {
-                                                                        const next = new Set(prev);
-                                                                        if (next.has(physKeyId)) {
-                                                                            next.delete(physKeyId);
-                                                                            hidService.sendInjectKey(pk.row, pk.col, false);
-                                                                        } else {
-                                                                            next.add(physKeyId);
-                                                                            hidService.sendInjectKey(pk.row, pk.col, true);
-                                                                        }
-                                                                        return next;
-                                                                    });
-                                                                }
-                                                                return;
-                                                            }
-                                                            if (e.button !== 0) return;
-                                                            e.preventDefault();
-                                                            e.stopPropagation(); // Don't deselect when clicking a key
-                                                            isDraggingRef.current = false;
-                                                            keysTouchedInDragRef.current = new Set([physKeyId]);
-
-                                                            if (isRowColEditMode) {
-                                                                // Row/Col edit: always single-select
-                                                                setSelectedKeys(new Set([physKeyId]));
-                                                                lastClickedKeyRef.current = physKeyId;
-                                                            } else if (e.ctrlKey || e.metaKey) {
-                                                                // Ctrl+click: toggle key in selection
-                                                                setSelectedKeys(prev => {
-                                                                    const next = new Set(prev);
-                                                                    if (next.has(physKeyId)) next.delete(physKeyId);
-                                                                    else next.add(physKeyId);
-                                                                    return next;
-                                                                });
-                                                                lastClickedKeyRef.current = physKeyId;
-                                                            } else if (e.shiftKey && lastClickedKeyRef.current) {
-                                                                // Shift+click: range select
-                                                                const flat = getFlatKeyOrder();
-                                                                const a = flat.indexOf(lastClickedKeyRef.current);
-                                                                const b = flat.indexOf(physKeyId);
-                                                                if (a !== -1 && b !== -1) {
-                                                                    const start = Math.min(a, b);
-                                                                    const end = Math.max(a, b);
-                                                                    setSelectedKeys(prev => {
-                                                                        const next = new Set(prev);
-                                                                        for (let i = start; i <= end; i++) next.add(flat[i]);
-                                                                        return next;
-                                                                    });
-                                                                }
-                                                            } else {
-                                                                // Plain click: preserve selection if already selected as part of a group,
-                                                                // otherwise reset selection to just this key.
-                                                                if (!selectedKeys.has(physKeyId)) {
-                                                                    setSelectedKeys(new Set([physKeyId]));
-                                                                }
-                                                                lastClickedKeyRef.current = physKeyId;
-                                                            }
-                                                        }}
-                                                        onMouseEnter={(e) => {
-                                                            if (isKeyTestMode) return;
-                                                            if (e.buttons === 1 && !e.shiftKey) {
-                                                                isDraggingRef.current = true;
-                                                                if (e.ctrlKey || e.metaKey) {
-                                                                    // Ctrl+Drag: Toggle keys as you touch them
-                                                                    if (!keysTouchedInDragRef.current.has(physKeyId)) {
-                                                                        keysTouchedInDragRef.current.add(physKeyId);
-                                                                        setSelectedKeys(prev => {
+                                                    >
+                                                        <button
+                                                            className={`keyboard-key ${getKeyClass(code)} ${isSelected ? 'key-selected' : ''} ${isPressed ? 'key-pressed' : ''}`}
+                                                            style={{
+                                                                width: '100%',
+                                                                height: '100%',
+                                                                cursor: isKeyTestMode ? 'crosshair' : 'pointer',
+                                                            }}
+                                                            onMouseDown={(e) => {
+                                                                if (isKeyTestMode) {
+                                                                    e.preventDefault();
+                                                                    if (e.button === 0) {
+                                                                        hidService.sendInjectKey(pk.row, pk.col, true);
+                                                                        setHeldTestKeys(prev => new Set(prev).add(physKeyId));
+                                                                    } else if (e.button === 2) {
+                                                                        setHeldTestKeys(prev => {
                                                                             const next = new Set(prev);
-                                                                            if (next.has(physKeyId)) next.delete(physKeyId);
-                                                                            else next.add(physKeyId);
+                                                                            if (next.has(physKeyId)) {
+                                                                                next.delete(physKeyId);
+                                                                                hidService.sendInjectKey(pk.row, pk.col, false);
+                                                                            } else {
+                                                                                next.add(physKeyId);
+                                                                                hidService.sendInjectKey(pk.row, pk.col, true);
+                                                                            }
                                                                             return next;
                                                                         });
                                                                     }
-                                                                } else if (!isRowColEditMode) {
-                                                                    // Normal Drag: Add to selection
-                                                                    setSelectedKeys(prev => new Set(prev).add(physKeyId));
+                                                                    return;
                                                                 }
-                                                            }
-                                                        }}
-                                                        onMouseUp={(e) => {
-                                                            if (isKeyTestMode && e.button === 0) {
+                                                                if (e.button !== 0) return;
                                                                 e.preventDefault();
-                                                                hidService.sendInjectKey(pk.row, pk.col, false);
-                                                                setHeldTestKeys(prev => {
-                                                                    const next = new Set(prev);
-                                                                    next.delete(physKeyId);
-                                                                    return next;
-                                                                });
-                                                                return;
-                                                            }
-                                                            if (e.button !== 0 || isKeyTestMode) return;
-                                                            // If it wasn't a drag and not ctrl/shift, open modal
-                                                            if (!isDraggingRef.current && !e.ctrlKey && !e.shiftKey && !isRowColEditMode) {
-                                                                setIsModalOpen(true);
-                                                            }
-                                                            isDraggingRef.current = false;
-                                                        }}
-                                                        onMouseLeave={(e) => {
-                                                            if (isKeyTestMode && e.buttons === 1) {
-                                                                e.preventDefault();
-                                                                hidService.sendInjectKey(pk.row, pk.col, false);
-                                                                setHeldTestKeys(prev => {
-                                                                    const next = new Set(prev);
-                                                                    next.delete(physKeyId);
-                                                                    return next;
-                                                                });
-                                                            }
-                                                        }}
-                                                        onContextMenu={(e) => {
-                                                            if (isKeyTestMode) e.preventDefault();
-                                                        }}
-                                                        title={isRowColEditMode ? `R${pk.row} C${pk.col}` : `[${pk.row},${pk.col}] = 0x${(code ?? 0).toString(16).toUpperCase().padStart(4, '0')}`}
-                                                    >
-                                                        <span className="key-label">
-                                                            <span className="key-main-label">
-                                                                {isRowColEditMode ? `R${pk.row} C${pk.col}` : getKeyName(code, macros, customKeys)}
+                                                                e.stopPropagation(); // Don't deselect when clicking a key
+                                                                isDraggingRef.current = false;
+                                                                keysTouchedInDragRef.current = new Set([physKeyId]);
+
+                                                                if (isRowColEditMode) {
+                                                                    // Row/Col edit: always single-select
+                                                                    setSelectedKeys(new Set([physKeyId]));
+                                                                    lastClickedKeyRef.current = physKeyId;
+                                                                } else if (e.ctrlKey || e.metaKey) {
+                                                                    // Ctrl+click: toggle key in selection
+                                                                    setSelectedKeys(prev => {
+                                                                        const next = new Set(prev);
+                                                                        if (next.has(physKeyId)) next.delete(physKeyId);
+                                                                        else next.add(physKeyId);
+                                                                        return next;
+                                                                    });
+                                                                    lastClickedKeyRef.current = physKeyId;
+                                                                } else if (e.shiftKey && lastClickedKeyRef.current) {
+                                                                    // Shift+click: range select
+                                                                    const flat = getFlatKeyOrder();
+                                                                    const a = flat.indexOf(lastClickedKeyRef.current);
+                                                                    const b = flat.indexOf(physKeyId);
+                                                                    if (a !== -1 && b !== -1) {
+                                                                        const start = Math.min(a, b);
+                                                                        const end = Math.max(a, b);
+                                                                        setSelectedKeys(prev => {
+                                                                            const next = new Set(prev);
+                                                                            for (let i = start; i <= end; i++) next.add(flat[i]);
+                                                                            return next;
+                                                                        });
+                                                                    }
+                                                                } else {
+                                                                    // Plain click: preserve selection if already selected as part of a group,
+                                                                    // otherwise reset selection to just this key.
+                                                                    if (!selectedKeys.has(physKeyId)) {
+                                                                        setSelectedKeys(new Set([physKeyId]));
+                                                                    }
+                                                                    lastClickedKeyRef.current = physKeyId;
+                                                                }
+                                                            }}
+                                                            onMouseEnter={(e) => {
+                                                                if (isKeyTestMode) return;
+                                                                if (e.buttons === 1 && !e.shiftKey) {
+                                                                    isDraggingRef.current = true;
+                                                                    if (e.ctrlKey || e.metaKey) {
+                                                                        // Ctrl+Drag: Toggle keys as you touch them
+                                                                        if (!keysTouchedInDragRef.current.has(physKeyId)) {
+                                                                            keysTouchedInDragRef.current.add(physKeyId);
+                                                                            setSelectedKeys(prev => {
+                                                                                const next = new Set(prev);
+                                                                                if (next.has(physKeyId)) next.delete(physKeyId);
+                                                                                else next.add(physKeyId);
+                                                                                return next;
+                                                                            });
+                                                                        }
+                                                                    } else if (!isRowColEditMode) {
+                                                                        // Normal Drag: Add to selection
+                                                                        setSelectedKeys(prev => new Set(prev).add(physKeyId));
+                                                                    }
+                                                                }
+                                                            }}
+                                                            onMouseUp={(e) => {
+                                                                if (isKeyTestMode && e.button === 0) {
+                                                                    e.preventDefault();
+                                                                    hidService.sendInjectKey(pk.row, pk.col, false);
+                                                                    setHeldTestKeys(prev => {
+                                                                        const next = new Set(prev);
+                                                                        next.delete(physKeyId);
+                                                                        return next;
+                                                                    });
+                                                                    return;
+                                                                }
+                                                                if (e.button !== 0 || isKeyTestMode) return;
+                                                                // If it wasn't a drag and not ctrl/shift, open modal
+                                                                if (!isDraggingRef.current && !e.ctrlKey && !e.shiftKey && !isRowColEditMode) {
+                                                                    setIsModalOpen(true);
+                                                                }
+                                                                isDraggingRef.current = false;
+                                                            }}
+                                                            onMouseLeave={(e) => {
+                                                                if (isKeyTestMode && e.buttons === 1) {
+                                                                    e.preventDefault();
+                                                                    hidService.sendInjectKey(pk.row, pk.col, false);
+                                                                    setHeldTestKeys(prev => {
+                                                                        const next = new Set(prev);
+                                                                        next.delete(physKeyId);
+                                                                        return next;
+                                                                    });
+                                                                }
+                                                            }}
+                                                            onContextMenu={(e) => {
+                                                                if (isKeyTestMode) e.preventDefault();
+                                                            }}
+                                                            title={isRowColEditMode ? `R${pk.row} C${pk.col}` : `[${pk.row},${pk.col}] = 0x${(code ?? 0).toString(16).toUpperCase().padStart(4, '0')}`}
+                                                        >
+                                                            <span className="key-label">
+                                                                <span className="key-main-label">
+                                                                    {isRowColEditMode ? `R${pk.row} C${pk.col}` : getKeyName(code, macros, customKeys)}
+                                                                </span>
+                                                                {!isRowColEditMode && getSecondaryKeyName(code) && (
+                                                                    <span className="key-secondary-label">{getSecondaryKeyName(code)}</span>
+                                                                )}
                                                             </span>
-                                                            {!isRowColEditMode && getSecondaryKeyName(code) && (
-                                                                <span className="key-secondary-label">{getSecondaryKeyName(code)}</span>
-                                                            )}
-                                                        </span>
-                                                    </button>
+                                                        </button>
+                                                    </div>
                                                 );
                                             })}
                                         </div>

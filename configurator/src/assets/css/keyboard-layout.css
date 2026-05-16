@@ -417,7 +417,7 @@
 .key-pressed {
   background: linear-gradient(145deg, #2a313c, #1e252e) !important;
   color: var(--accent-color) !important;
-  transform: translateY(1.5px) scale(0.97) !important;
+  transform: translateY(1.5px) scale(0.97);
   border: 1.5px solid var(--accent-color) !important;
   box-shadow: 
     0 0 15px rgba(88, 166, 255, 0.2),
