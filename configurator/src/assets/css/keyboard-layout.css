@@ -4,8 +4,9 @@
 
 .layout-editor {
   text-align: center;
-  margin-top: -1.5rem;
+  margin-top: 1rem;
   /* allows inline-flex toolbar to center via margin:auto */
+  user-select: none;
 }
 
 /* Reset inherited text-align for all direct children except the toolbar */
@@ -252,7 +253,7 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 1.25rem;
+  padding: 2.25rem;
   background: rgba(0, 0, 0, 0.2);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);

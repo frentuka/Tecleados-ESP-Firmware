@@ -19,41 +19,53 @@
   --key-h-fkey: 155; --key-s-fkey: 50%; --key-l-fkey: 32%;
   --key-h-transparent: 215; --key-s-transparent: 15%; --key-l-transparent: 50%;
   --key-h-none: 215; --key-s-none: 15%; --key-l-none: 10%;
+  /* Scrollbar Colors */
+  --scrollbar-thumb: rgba(255, 255, 255, 0.15);
+  --scrollbar-track: transparent;
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.25);
 }
 
-/* Global scrollbar styles */
-/* Main Styles */
+html {
+  color-scheme: dark;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+body {
+  overflow-x: hidden;
+}
+
+/* Global Styles */
 * {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
 
-  /* Firefox */
+  /* Firefox Scrollbar */
   scrollbar-width: thin;
-  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track) !important;
 }
 
 /* WebKit/Chrome/Safari/Edge scrollbar styles */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--scrollbar-track);
+  background: rgba(0, 0, 0, 0.2);
   border-radius: 10px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--scrollbar-thumb);
+  background: #30363d;
   border-radius: 10px;
   border: 2px solid transparent;
-  background-clip: content-box;
+  background-clip: padding-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background-color: var(--scrollbar-thumb-hover);
-  background-clip: content-box;
+  background-color: #484f58;
 }
 
 body {
@@ -404,25 +416,16 @@ h3 {
   flex: 1;
 }
 
-.section-container.active::before {
-  content: "";
-  flex: 15;
-}
-
-.section-container.active::after {
-  content: "";
-  flex: 85;
-}
 
 @keyframes fadeSlideUp {
   from {
     opacity: 0;
-    transform: translateY(10px);
+    transform: scale(0.995);
   }
 
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: scale(1);
   }
 }
 

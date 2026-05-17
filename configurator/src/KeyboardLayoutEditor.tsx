@@ -128,6 +128,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
     const fileInputRef = useRef<HTMLInputElement>(null);
     const lastClickedKeyRef = useRef<string | null>(null);
     const isDraggingRef = useRef(false);
+    const dragStartedInEditorRef = useRef(false);
     const keysTouchedInDragRef = useRef<Set<string>>(new Set());
 
     // Sync rowInput/colInput when selection changes
@@ -323,11 +324,16 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
             syncModifiers(e as unknown as KeyboardEvent);
         };
 
+        const handleMouseUp = () => {
+            dragStartedInEditorRef.current = false;
+        };
+
         window.addEventListener('keydown', handleKeyDown, { capture: true });
         window.addEventListener('keyup', handleKeyUp, { capture: true });
         window.addEventListener('blur', handleBlur);
         window.addEventListener('focus', handleFocus);
         window.addEventListener('mousemove', handleMouseMove);
+        window.addEventListener('mouseup', handleMouseUp);
         document.addEventListener('visibilitychange', handleVisibilityChange);
 
         return () => {
@@ -336,6 +342,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
             window.removeEventListener('blur', handleBlur);
             window.removeEventListener('focus', handleFocus);
             window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('mouseup', handleMouseUp);
             document.removeEventListener('visibilitychange', handleVisibilityChange);
         };
     }, [isKeyTestMode]);
@@ -825,7 +832,10 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
 
                             return (
                                 <div className="keyboard-grid"
-                                    onMouseDown={(e) => { if (e.target === e.currentTarget) setSelectedKeys(new Set()); }}
+                                    onMouseDown={(e) => { 
+                                        if (e.target === e.currentTarget) setSelectedKeys(new Set()); 
+                                        dragStartedInEditorRef.current = true;
+                                    }}
                                     style={{
                                     position: 'relative',
                                     width: `${gridW * 3.2}rem`,
@@ -885,6 +895,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                                                     return;
                                                                 }
                                                                 if (e.button !== 0) return;
+                                                                dragStartedInEditorRef.current = true;
                                                                 e.preventDefault();
                                                                 e.stopPropagation(); // Don't deselect when clicking a key
                                                                 isDraggingRef.current = false;
@@ -928,7 +939,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                                             }}
                                                             onMouseEnter={(e) => {
                                                                 if (isKeyTestMode) return;
-                                                                if (e.buttons === 1 && !e.shiftKey) {
+                                                                if (e.buttons === 1 && !e.shiftKey && dragStartedInEditorRef.current) {
                                                                     isDraggingRef.current = true;
                                                                     if (e.ctrlKey || e.metaKey) {
                                                                         // Ctrl+Drag: Toggle keys as you touch them

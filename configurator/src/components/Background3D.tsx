@@ -341,15 +341,7 @@ function KeyboardModel({ isAutoRotating, setIsAutoRotating }: { isAutoRotating: 
   const autoRotateStrength = useRef(0)
 
   useEffect(() => {
-    const onPointerDown = (e: PointerEvent) => {
-      if (!isConnected || e.button !== 0) return
-      const target = e.target as HTMLElement
-      if (target.closest('button, input, select, textarea, a, .key, .editor-ui')) return
-      isDragging.current = true
-      pointerDownPos.current = { x: e.clientX, y: e.clientY }
-      hasMoved.current = false
-    }
-
+    // Mouse/Pointer events for rotation
     const onPointerMove = (e: PointerEvent) => {
       if (!isDragging.current) return
       const dx = e.clientX - pointerDownPos.current.x
@@ -372,11 +364,9 @@ function KeyboardModel({ isAutoRotating, setIsAutoRotating }: { isAutoRotating: 
       if (!hasMoved.current) setIsAutoRotating(true)
     }
 
-    window.addEventListener('pointerdown', onPointerDown)
     window.addEventListener('pointermove', onPointerMove)
     window.addEventListener('pointerup', onPointerUp)
     return () => {
-      window.removeEventListener('pointerdown', onPointerDown)
       window.removeEventListener('pointermove', onPointerMove)
       window.removeEventListener('pointerup', onPointerUp)
     }
@@ -411,7 +401,17 @@ function KeyboardModel({ isAutoRotating, setIsAutoRotating }: { isAutoRotating: 
   })
 
   return (
-    <group ref={group}>
+    <group 
+      ref={group}
+      onPointerDown={(e) => {
+        if (!isConnected || e.button !== 0) return;
+        // Check if we hit the keyboard model
+        e.stopPropagation();
+        isDragging.current = true;
+        pointerDownPos.current = { x: e.clientX, y: e.clientY };
+        hasMoved.current = false;
+      }}
+    >
       <InstancedKeyboard physicalLayout={physicalLayout} opacity={opacity} />
     </group>
   )

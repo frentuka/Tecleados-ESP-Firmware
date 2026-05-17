@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { LogMessage } from '../types/device';
 import '../assets/css/dev-controls.css';
 
@@ -12,6 +12,7 @@ export default function DevControlsPanel({ logs, onClearLogs }: DevControlsPanel
     const logContainerRef = useRef<HTMLDivElement>(null);
     const logContentRef = useRef<HTMLDivElement>(null);
     const isAtBottomRef = useRef(true);
+    const [isExpanded, setIsExpanded] = useState(false);
 
     // Track scroll position to know if we should auto-scroll
     const handleScroll = useCallback(() => {
@@ -51,21 +52,30 @@ export default function DevControlsPanel({ logs, onClearLogs }: DevControlsPanel
             <div className="devctrl-inner">
 
                 {/* ── Device Logs ── */}
-                <div className="devctrl-logs-section">
+                <div className={`devctrl-logs-section ${isExpanded ? 'is-expanded' : 'is-contracted'}`}>
 
-                    <div className="devctrl-logs-header">
+                    <div className="devctrl-logs-header" onClick={() => setIsExpanded(!isExpanded)} style={{ cursor: 'pointer' }}>
                         <div className="devctrl-panel-title-row">
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.6 }}>
-                                <line x1="8" y1="6" x2="21" y2="6" />
-                                <line x1="8" y1="12" x2="21" y2="12" />
-                                <line x1="8" y1="18" x2="21" y2="18" />
-                                <line x1="3" y1="6" x2="3.01" y2="6" />
-                                <line x1="3" y1="12" x2="3.01" y2="12" />
-                                <line x1="3" y1="18" x2="3.01" y2="18" />
+                            <svg 
+                                width="12" 
+                                height="12" 
+                                viewBox="0 0 24 24" 
+                                fill="none" 
+                                stroke="currentColor" 
+                                strokeWidth="3" 
+                                strokeLinecap="round" 
+                                strokeLinejoin="round" 
+                                style={{ 
+                                    transition: 'transform 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
+                                    transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                                    opacity: 0.8
+                                }}
+                            >
+                                <polyline points="9 18 15 12 9 6" />
                             </svg>
                             <span className="devctrl-panel-title">Device Logs</span>
                         </div>
-                        <div className="devctrl-logs-header-actions">
+                        <div className="devctrl-logs-header-actions" onClick={(e) => e.stopPropagation()}>
                             <span className="devctrl-log-count">{logs.length} entries</span>
                             <button className="btn btn-danger btn-sm" onClick={onClearLogs} style={{ marginLeft: '1rem' }}>
                                 Clear Logs

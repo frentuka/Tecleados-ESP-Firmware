@@ -269,6 +269,11 @@
   justify-content: space-between;
   padding: 1rem 1.25rem;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  transition: background 0.2s;
+}
+
+.devctrl-logs-header:hover {
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .devctrl-log-count {
@@ -285,11 +290,19 @@
   padding: 0.75rem 1.25rem;
   font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', 'Courier New', monospace;
   font-size: 0.8rem;
-  height: 300px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 0;
+  transition: height 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.is-contracted .devctrl-log-container {
+  height: 80px;
+}
+
+.is-expanded .devctrl-log-container {
+  height: 450px;
 }
 
 .devctrl-log-entry {
