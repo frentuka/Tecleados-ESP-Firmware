@@ -206,7 +206,20 @@ export class DeviceController {
         );
     }
 
-    public async splitGetBench(): Promise<{active: boolean, min: number, avg: number, max: number, lost: number} | null> {
+    public async splitGetBench(): Promise<{
+        active: boolean;
+        min: number;
+        avg: number;
+        max: number;
+        lost: number;
+        sent?: number;
+        local_scan_hz?: number;
+        local_floor_hz?: number;
+        local_peak_hz?: number;
+        remote_scan_hz?: number;
+        remote_floor_hz?: number;
+        remote_peak_hz?: number;
+    } | null> {
         if (!this.isConnected()) return null;
         const resp = await this.sendCommand(
             new Uint8Array([MODULE_SPLIT, SPLIT_CMD_GET_BENCH]), 1000

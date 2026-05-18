@@ -46,3 +46,38 @@ void kb_manager_set_scan_divisor(uint8_t divisor);
  * @param bitmap  KB_MATRIX_BITMAP_BYTES byte array, or NULL to zero the remote matrix.
  */
 void kb_manager_set_remote_matrix(const uint8_t *bitmap);
+
+/**
+ * @brief Snapshot of the keyboard scanner's achieved polling rate.
+ *
+ * Updated once per second by the kb_manager task.  Read atomically by
+ * kb_manager_get_poll_rate() using the module-level spinlock.
+ */
+typedef struct {
+    uint32_t scan_hz;         /**< Average matrix scans per second over the last 1-second window. */
+    uint32_t floor_scan_hz;   /**< Floor scan rate: 1 / max_scan_interval (Hz). Worst-case in window. */
+    uint32_t peak_scan_hz;    /**< Peak scan rate: 1 / min_scan_interval (Hz). Best-case in window. */
+    uint32_t peak_report_hz;  /**< Peak HID report rate (Hz). Zero on slave half. */
+} kb_poll_rate_snapshot_t;
+
+/**
+ * @brief Read the latest polling-rate snapshot.
+ *
+ * Thread-safe; may be called from any task context.
+ *
+ * @param[out] out  Filled with the most recent 1-second averages.
+ *                  Both fields are 0 until the first full second window elapses.
+ */
+void kb_manager_get_poll_rate(kb_poll_rate_snapshot_t *out);
+
+/**
+ * @brief Force the scan task to run at maximum rate (bypass idle interrupt sleep).
+ *
+ * When true the scan loop busy-waits (1ms ticks) instead of sleeping until a
+ * key-press interrupt fires.  Use during poll-rate benchmarks so the measured
+ * rate reflects full-speed scanning, not the idle rate (~10 Hz).
+ * Must be called from a task context; safe to call concurrently.
+ *
+ * @param active  true = force full-rate; false = return to normal idle sleep.
+ */
+void kb_manager_set_force_active(bool active);

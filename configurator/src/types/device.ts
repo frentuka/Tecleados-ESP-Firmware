@@ -51,12 +51,14 @@ export type RawPacketCallback = (data: Uint8Array, direction: 'rx' | 'tx') => vo
 export type ConnectionCallback = (connected: boolean) => void;
 export type StatusUpdateCallback = (status: DeviceStatus) => void;
 
+import type React from 'react';
+
 // ── Notification types ──────────────────────────────────────────────────
 export type NotificationType = 'info' | 'warning' | 'error' | 'success';
 
 export interface ConnectionNotification {
     type: NotificationType;
-    message: string;
+    message: string | React.ReactNode;
     title?: string;
     duration?: number;
 }

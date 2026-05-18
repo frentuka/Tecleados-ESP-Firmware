@@ -1,10 +1,12 @@
 import { create } from 'zustand';
 import type { ConnectionNotification, NotificationType } from '../types/device';
 
+import type React from 'react';
+
 interface NotificationState {
     notification: ConnectionNotification | null;
     setNotification: (notification: ConnectionNotification | null) => void;
-    showNotification: (message: string, type?: NotificationType, title?: string, duration?: number) => void;
+    showNotification: (message: string | React.ReactNode, type?: NotificationType, title?: string, duration?: number) => void;
     clearNotification: () => void;
 }
 

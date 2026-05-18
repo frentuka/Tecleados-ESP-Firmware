@@ -345,6 +345,18 @@ static void tick_connected(TickType_t now)
         tick_heartbeat(now);
     } else if (role == SPLIT_ROLE_MASTER) {
         split_bench_tick(now);
+
+        /* Auto-request poll-rate snapshot once after the settle period, so the
+         * configurator has data ready before the user clicks Benchmark.
+         * One-shot: s_last_poll_rate_req stays non-zero forever after the first fire. */
+        static TickType_t s_last_poll_rate_req = 0;
+        if (s_last_poll_rate_req == 0) {
+            TickType_t since_connect = now - split_session_connected_at();
+            if (since_connect >= pdMS_TO_TICKS(SPLIT_CONFIG_SYNC_SETTLE_MS + 500)) {
+                split_bench_request_poll_rate();
+                s_last_poll_rate_req = now;
+            }
+        }
     }
 }
 

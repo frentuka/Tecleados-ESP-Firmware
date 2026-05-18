@@ -245,6 +245,8 @@ function InstancedKeyboard({ physicalLayout, opacity }: { physicalLayout: any[] 
   }, [clusterData]);
 
   useFrame((_, delta) => {
+    if (document.hidden) return;
+    const clampedDelta = Math.min(delta, 0.1);
     const store = useLayoutStore.getState();
     const { pressedCodes, heldTestKeys, layers, activeLayer } = store;
     const tempMatrix = new THREE.Matrix4();
@@ -270,10 +272,10 @@ function InstancedKeyboard({ physicalLayout, opacity }: { physicalLayout: any[] 
       const hex = getKeyColor(code, finalLMult, isPressed ? 1.0 : 0.8);
       
       info.targetColor.set(hex);
-      info.currentColor.lerp(info.targetColor, delta * 12);
+      info.currentColor.lerp(info.targetColor, clampedDelta * 12);
       
       const targetY = isPressed ? -0.15 : 0;
-      info.currentY = THREE.MathUtils.lerp(info.currentY, targetY, delta * 20);
+      info.currentY = THREE.MathUtils.lerp(info.currentY, targetY, clampedDelta * 20);
 
       const meshKey = `${info.clusterIdx}-${info.size}`;
       const mesh = instancedMeshesRef.current.get(meshKey);
@@ -373,15 +375,17 @@ function KeyboardModel({ isAutoRotating, setIsAutoRotating }: { isAutoRotating: 
   }, [isConnected, setIsAutoRotating])
 
   useFrame((state, delta) => {
+    if (document.hidden) return;
+    const clampedDelta = Math.min(delta, 0.1);
     if (group.current) {
       const targetStrength = isAutoRotating ? 1 : 0;
       const lerpSpeed = targetStrength > autoRotateStrength.current ? 0.1 : 8.0;
-      autoRotateStrength.current = THREE.MathUtils.lerp(autoRotateStrength.current, targetStrength, delta * lerpSpeed);
+      autoRotateStrength.current = THREE.MathUtils.lerp(autoRotateStrength.current, targetStrength, clampedDelta * lerpSpeed);
 
       if (autoRotateStrength.current > 0.001) {
-        targetRotation.current.y += delta * 0.1 * autoRotateStrength.current;
+        targetRotation.current.y += clampedDelta * 0.1 * autoRotateStrength.current;
         const idleX = Math.sin(state.clock.elapsedTime * 0.2) * 0.1 + 0.2;
-        targetRotation.current.x = THREE.MathUtils.lerp(targetRotation.current.x, idleX, delta * 0.2 * autoRotateStrength.current);
+        targetRotation.current.x = THREE.MathUtils.lerp(targetRotation.current.x, idleX, clampedDelta * 0.2 * autoRotateStrength.current);
       }
       
       const lerpFactor = hasMoved.current && isDragging.current ? 0.25 : 0.08
@@ -396,8 +400,8 @@ function KeyboardModel({ isAutoRotating, setIsAutoRotating }: { isAutoRotating: 
     }
 
     const hasData = physicalLayout?.length && layers && Object.keys(layers).length > 0;
-    targetFade.current = (isConnected && hasData) ? Math.min(1, targetFade.current + delta * 0.4) : 0;
-    setOpacity(THREE.MathUtils.lerp(opacity, targetFade.current, delta * 3));
+    targetFade.current = (isConnected && hasData) ? Math.min(1, targetFade.current + clampedDelta * 0.4) : 0;
+    setOpacity(THREE.MathUtils.lerp(opacity, targetFade.current, clampedDelta * 3));
   })
 
   return (

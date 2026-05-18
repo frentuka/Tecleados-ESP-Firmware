@@ -305,3 +305,178 @@
     justify-content: flex-start;
   }
 }
+
+/* ═══════════════════════════════════════════════
+   BENCHMARK RESULTS CARD
+   (shared between SplitDashboard and DeviceDashboard)
+   ═══════════════════════════════════════════════ */
+
+.split-bench-card {
+  background: rgba(15, 20, 30, 0.7);
+  border: 1px solid rgba(88, 166, 255, 0.18);
+  border-radius: 14px;
+  overflow: hidden;
+  backdrop-filter: blur(12px);
+  animation: fadeSlideUp 0.3s ease-out;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.split-bench-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.25rem;
+  background: rgba(88, 166, 255, 0.07);
+  border-bottom: 1px solid rgba(88, 166, 255, 0.1);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent-color);
+}
+
+.split-bench-card-header svg {
+  opacity: 0.7;
+}
+
+.split-bench-card-body {
+  display: flex;
+  gap: 0;
+}
+
+.split-bench-divider {
+  width: 1px;
+  background: rgba(255, 255, 255, 0.06);
+  flex-shrink: 0;
+}
+
+.split-bench-section {
+  flex: 1;
+  padding: 1rem 1.25rem;
+  min-width: 0;
+}
+
+.split-bench-section-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+  opacity: 0.6;
+  margin-bottom: 0.85rem;
+}
+
+/* ── Category title (Delay / Polling Rate) ──── */
+.split-bench-cat-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.66rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--accent-color);
+  opacity: 0.75;
+  margin-bottom: 0.8rem;
+}
+
+/* ── Delay four-metric row ───────────────────── */
+.split-bench-delay-grid {
+  display: flex;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+}
+
+.split-bench-delay-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  min-width: 46px;
+}
+
+.split-bench-delay-label {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  opacity: 0.5;
+}
+
+.split-bench-delay-value {
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.split-bench-delay-value.accent { color: var(--accent-color); }
+.split-bench-delay-value.ok     { color: var(--success-color); }
+.split-bench-delay-value.warn   { color: var(--danger-color); }
+
+/* ── Poll-rate table grid ────────────────────── */
+.split-bench-poll-grid {
+  display: grid;
+  grid-template-columns: auto 1fr 1fr;
+  gap: 0.2rem 0.75rem;
+  align-items: center;
+}
+
+.split-bench-poll-header {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  opacity: 0.45;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  text-align: center;
+}
+
+.split-bench-poll-rowlabel {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  opacity: 0.5;
+  padding-right: 0.5rem;
+  text-align: left;
+}
+
+.split-bench-poll-cell {
+  font-size: 0.88rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+  text-align: center;
+  padding: 0.12rem 0;
+}
+
+.split-bench-poll-cell.accent { color: var(--accent-color); }
+.split-bench-poll-cell.bright {
+  color: #fff;
+  text-shadow: 0 0 12px rgba(88, 166, 255, 0.4);
+}
+
+
+/* Responsive stacking */
+@media (max-width: 580px) {
+  .split-bench-card-body {
+    flex-direction: column;
+  }
+
+  .split-bench-divider {
+    width: auto;
+    height: 1px;
+  }
+
+  .split-bench-metrics {
+    gap: 1rem;
+  }
+}
+

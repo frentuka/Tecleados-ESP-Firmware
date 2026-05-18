@@ -99,6 +99,11 @@ const SplitDashboard: React.FC<SplitDashboardProps> = ({ isConnected, deviceStat
     const [testModeActive, setTestModeActive] = useState(false);
     const [remoteMatrix, setRemoteMatrix] = useState<Uint8Array | null>(null);
     const [isBenchmarking, setIsBenchmarking] = useState(false);
+    const [benchResult, setBenchResult] = useState<{
+        min: number; avg: number; max: number; lost: number; sent: number;
+        local_scan_hz: number; local_floor_hz: number; local_peak_hz: number;
+        remote_scan_hz: number; remote_floor_hz: number; remote_peak_hz: number;
+    } | null>(null);
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     const splitState = deviceStatus?.split_state ?? SPLIT_STATE_DISABLED;
@@ -206,23 +211,49 @@ const SplitDashboard: React.FC<SplitDashboardProps> = ({ isConnected, deviceStat
 
     const handleRunBenchmark = useCallback(async () => {
         const ok = await hidService.splitRunBenchmark();
-        if (ok) {
-            setIsBenchmarking(true);
-            showNotification('Running benchmark...', 'info');
-            const bRef = setInterval(async () => {
-                const res = await hidService.splitGetBench();
-                if (res && (!res.active && res.min > 0)) {
-                    clearInterval(bRef);
-                    setIsBenchmarking(false);
-                    const resultText = `Min: ${(res.min/1000).toFixed(2)}ms  •  Avg: ${(res.avg/1000).toFixed(2)}ms  •  Max: ${(res.max/1000).toFixed(2)}ms  •  Lost: ${res.lost}`;
-                    showNotification(resultText, 'success', 'Benchmark Results', 8000);
-                    onLog(`Split: Benchmark Results -> ${resultText}`);
-                }
-            }, 500);
-        } else {
+        if (!ok) {
             onLog('Split: Benchmark start failed');
             showNotification('Failed to start benchmark', 'error');
+            return;
         }
+        setIsBenchmarking(true);
+        showNotification('Running benchmark...', 'info');
+
+        /* Sequential poll — waits for each response before scheduling the next,
+         * preventing concurrent HID requests that can confuse the transport. */
+        const deadline = Date.now() + 8_000;  /* RTT 1s + 2s dwell + margin */
+        const poll = async (): Promise<void> => {
+            if (Date.now() > deadline) {
+                setIsBenchmarking(false);
+                showNotification('Benchmark timed out', 'error');
+                onLog('Split: Benchmark timed out');
+                return;
+            }
+            const res = await hidService.splitGetBench();
+            if (res && !res.active && res.min > 0) {
+                const finalResult = {
+                    min:             res.min,
+                    avg:             res.avg,
+                    max:             res.max,
+                    lost:            res.lost,
+                    sent:            res.sent            ?? 20,
+                    local_scan_hz:   res.local_scan_hz   ?? 0,
+                    local_floor_hz:  res.local_floor_hz  ?? 0,
+                    local_peak_hz:   res.local_peak_hz   ?? 0,
+                    remote_scan_hz:  res.remote_scan_hz  ?? 0,
+                    remote_floor_hz: res.remote_floor_hz ?? 0,
+                    remote_peak_hz:  res.remote_peak_hz  ?? 0,
+                };
+                setIsBenchmarking(false);
+                setBenchResult(finalResult);
+                showNotification(<BenchResultCard result={finalResult} />, 'success', 'Benchmark Complete', 20000);
+                const rttText = `Min: ${(res.min/1000).toFixed(2)}ms • Avg: ${(res.avg/1000).toFixed(2)}ms • Max: ${(res.max/1000).toFixed(2)}ms`;
+                onLog(`Split: Benchmark -> ${rttText} | Lost: ${res.lost}/${res.sent ?? 20}`);
+            } else {
+                setTimeout(poll, 400);
+            }
+        };
+        setTimeout(poll, 400);
     }, [onLog, showNotification]);
 
     // ── Render ────────────────────────────────────────────────────────────
@@ -376,6 +407,11 @@ const SplitDashboard: React.FC<SplitDashboardProps> = ({ isConnected, deviceStat
                 </div>
             )}
 
+            {/* ── Benchmark Results Card ── */}
+            {benchResult && (
+                <BenchResultCard result={benchResult} />
+            )}
+
             <style>{`
                 @keyframes split-pulse {
                     0%   { opacity: 1; }
@@ -388,3 +424,167 @@ const SplitDashboard: React.FC<SplitDashboardProps> = ({ isConnected, deviceStat
 };
 
 export default SplitDashboard;
+
+// ── BenchResultCard ───────────────────────────────────────────────────────────
+
+interface BenchResultCardProps {
+    result: {
+        min: number; avg: number; max: number; lost: number; sent: number;
+        local_scan_hz: number; local_floor_hz: number; local_peak_hz: number;
+        remote_scan_hz: number; remote_floor_hz: number; remote_peak_hz: number;
+    };
+}
+
+function BenchResultCard({ result }: BenchResultCardProps) {
+    const ms  = (us: number) => (us / 1000).toFixed(2);
+    const hz  = (v: number)  => v > 0 ? `${v} Hz` : '—';
+    const lostOk = result.lost === 0;
+
+    return (
+        <div className="split-bench-card">
+            <div className="split-bench-card-header">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                </svg>
+                <span>Benchmark Results</span>
+            </div>
+
+            <div className="split-bench-card-body">
+
+                {/* ── Delay ─────────────────────────────────────────── */}
+                <div className="split-bench-section">
+                    <div className="split-bench-cat-title">
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                        Delay (RTT/2)
+                    </div>
+                    <div className="split-bench-delay-grid">
+                        <div className="split-bench-delay-item">
+                            <div className="split-bench-delay-label">Min</div>
+                            <div className="split-bench-delay-value accent">{ms(result.min)}<span className="split-bench-unit">ms</span></div>
+                        </div>
+                        <div className="split-bench-delay-item">
+                            <div className="split-bench-delay-label">Avg</div>
+                            <div className="split-bench-delay-value">{ms(result.avg)}<span className="split-bench-unit">ms</span></div>
+                        </div>
+                        <div className="split-bench-delay-item">
+                            <div className="split-bench-delay-label">Max</div>
+                            <div className="split-bench-delay-value">{ms(result.max)}<span className="split-bench-unit">ms</span></div>
+                        </div>
+                        <div className="split-bench-delay-item">
+                            <div className="split-bench-delay-label">Lost</div>
+                            <div className={`split-bench-delay-value ${lostOk ? 'ok' : 'warn'}`}>
+                                {result.lost}<span className="split-bench-unit">/{result.sent}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="split-bench-divider" />
+
+                {/* ── Polling Rate ───────────────────────────────────── */}
+                <div className="split-bench-section">
+                    <div className="split-bench-cat-title">
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                        Polling Rate
+                    </div>
+                    <div className="split-bench-poll-grid">
+                        {/* Header row */}
+                        <div className="split-bench-poll-header" />
+                        <div className="split-bench-poll-header">Master</div>
+                        <div className="split-bench-poll-header">Slave</div>
+                        {/* Floor row */}
+                        <div className="split-bench-poll-rowlabel">Floor</div>
+                        <div className="split-bench-poll-cell">{hz(result.local_floor_hz)}</div>
+                        <div className="split-bench-poll-cell">{hz(result.remote_floor_hz)}</div>
+                        {/* Avg row */}
+                        <div className="split-bench-poll-rowlabel">Avg</div>
+                        <div className="split-bench-poll-cell accent">{hz(result.local_scan_hz)}</div>
+                        <div className="split-bench-poll-cell accent">{hz(result.remote_scan_hz)}</div>
+                        {/* Peak row */}
+                        <div className="split-bench-poll-rowlabel">Peak</div>
+                        <div className="split-bench-poll-cell bright">{hz(result.local_peak_hz)}</div>
+                        <div className="split-bench-poll-cell bright">{hz(result.remote_peak_hz)}</div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    );
+}
+
+
+    return (
+        <div className="split-bench-card">
+            <div className="split-bench-card-header">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                </svg>
+                <span>Benchmark Results</span>
+            </div>
+
+            <div className="split-bench-card-body">
+                {/* RTT Section */}
+                <div className="split-bench-section">
+                    <div className="split-bench-section-title">Link Latency</div>
+                    <div className="split-bench-metrics">
+                        <div className="split-bench-metric">
+                            <span className="split-bench-metric-label">Min</span>
+                            <span className="split-bench-metric-value accent">{fmt_ms(result.min)}<span className="split-bench-unit">ms</span></span>
+                        </div>
+                        <div className="split-bench-metric">
+                            <span className="split-bench-metric-label">Avg</span>
+                            <span className="split-bench-metric-value">{fmt_ms(result.avg)}<span className="split-bench-unit">ms</span></span>
+                        </div>
+                        <div className="split-bench-metric">
+                            <span className="split-bench-metric-label">Max</span>
+                            <span className="split-bench-metric-value">{fmt_ms(result.max)}<span className="split-bench-unit">ms</span></span>
+                        </div>
+                        <div className="split-bench-metric">
+                            <span className="split-bench-metric-label">Lost</span>
+                            <span className={`split-bench-metric-value ${result.lost > 0 ? 'warn' : 'ok'}`}>
+                                {result.lost}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="split-bench-divider" />
+
+                {/* Poll Rate Section */}
+                <div className="split-bench-section">
+                    <div className="split-bench-section-title">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.6 }}>
+                            <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+                        </svg>
+                        Polling Rate
+                    </div>
+                    <div className="split-bench-poll-grid">
+                        <div className="split-bench-half-col">
+                            <div className="split-bench-half-label">Master</div>
+                            <div className="split-bench-poll-row">
+                                <span className="split-bench-poll-key">Scan</span>
+                                <span className="split-bench-poll-val accent">{fmt_hz(result.local_scan_hz)}</span>
+                            </div>
+                            <div className="split-bench-poll-row">
+                                <span className="split-bench-poll-key">Peak</span>
+                                <span className="split-bench-poll-val">{fmt_hz(result.local_peak_hz)}</span>
+                            </div>
+                        </div>
+                        <div className="split-bench-half-col">
+                            <div className="split-bench-half-label">Slave</div>
+                            <div className="split-bench-poll-row">
+                                <span className="split-bench-poll-key">Scan</span>
+                                <span className="split-bench-poll-val accent">{fmt_hz(result.remote_scan_hz)}</span>
+                            </div>
+                            <div className="split-bench-poll-row">
+                                <span className="split-bench-poll-key">Peak</span>
+                                <span className="split-bench-poll-val">{fmt_hz(result.remote_peak_hz)}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+

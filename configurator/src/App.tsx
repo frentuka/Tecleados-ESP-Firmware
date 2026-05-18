@@ -170,7 +170,7 @@ function App() {
       return;
     }
 
-    if (notification.message === 'COPIED') return;
+    if (typeof notification.message === 'string' && notification.message === 'COPIED') return;
 
     // 2. Handle replacement (Visible but content is wrong)
     if (notificationVisible && displayedNotification && displayedNotification.message !== notification.message) {
@@ -197,7 +197,7 @@ function App() {
       const startDismissTimer = () => {
         if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
 
-        const isLinuxFix = notification.message === 'PERMISSION_DENIED' || notification.message.includes('System lock');
+        const isLinuxFix = typeof notification.message === 'string' && (notification.message === 'PERMISSION_DENIED' || notification.message.includes('System lock'));
         const isSuccess = notification.type === 'success';
         const defaultDuration = isLinuxFix ? 20000 : (isSuccess ? 2500 : 6000);
         const duration = notification.duration ?? defaultDuration;
@@ -548,7 +548,7 @@ function App() {
       )}
 
       {/* Global Floating Notifications */}
-      {(displayedNotification?.message === 'PERMISSION_DENIED' || displayedNotification?.message.includes('System lock')) && HIDTransport.isLinux() && (
+      {((typeof displayedNotification?.message === 'string' && displayedNotification.message === 'PERMISSION_DENIED') || (typeof displayedNotification?.message === 'string' && displayedNotification.message.includes('System lock'))) && HIDTransport.isLinux() && (
         <div
           className={`permissions-help ${notificationVisible ? 'visible' : ''}`}
           onMouseEnter={handleMouseEnter}
@@ -604,47 +604,47 @@ function App() {
       )}
 
       {displayedNotification &&
-        displayedNotification.message !== 'PERMISSION_DENIED' &&
-        !displayedNotification.message.includes('System lock') &&
-        displayedNotification.message !== 'COPIED' && (
+        !(typeof displayedNotification.message === 'string' && displayedNotification.message === 'PERMISSION_DENIED') &&
+        !(typeof displayedNotification.message === 'string' && displayedNotification.message.includes('System lock')) &&
+        !(typeof displayedNotification.message === 'string' && displayedNotification.message === 'COPIED') && (
           <div
-            className={`notification-toast ${displayedNotification.type} ${notificationVisible ? 'visible' : ''}`}
+            className={`notification-toast ${displayedNotification.type} ${notificationVisible ? 'visible' : ''} ${displayedNotification.title === 'Benchmark Complete' ? 'bench-toast' : ''}`}
             onMouseEnter={handleMouseEnter}
             onMouseLeave={handleMouseLeave}
           >
-            {displayedNotification.type === 'error' && (
+            {displayedNotification.title !== 'Benchmark Complete' && displayedNotification.type === 'error' && (
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="12" r="10"></circle>
                 <line x1="12" y1="8" x2="12" y2="12"></line>
                 <line x1="12" y1="16" x2="12.01" y2="16"></line>
               </svg>
             )}
-            {displayedNotification.type === 'warning' && (
+            {displayedNotification.title !== 'Benchmark Complete' && displayedNotification.type === 'warning' && (
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
                 <line x1="12" y1="9" x2="12" y2="13"></line>
                 <line x1="12" y1="17" x2="12.01" y2="17"></line>
               </svg>
             )}
-            {displayedNotification.type === 'info' && (
+            {displayedNotification.title !== 'Benchmark Complete' && displayedNotification.type === 'info' && (
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="12" r="10"></circle>
                 <line x1="12" y1="16" x2="12" y2="12"></line>
                 <line x1="12" y1="8" x2="12.01" y2="8"></line>
               </svg>
             )}
-            {displayedNotification.type === 'success' && (
+            {displayedNotification.title !== 'Benchmark Complete' && displayedNotification.type === 'success' && (
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="12" r="10"></circle>
                 <polyline points="9 11 12 14 22 4"></polyline>
                 <path d="M22 12A10 10 0 1 1 12 2"></path>
               </svg>
             )}
-            <div className="notification-body">
-              {displayedNotification.title && <div className="notification-title">{displayedNotification.title}</div>}
+            <div className={displayedNotification.title === 'Benchmark Complete' ? 'notification-body-bench' : 'notification-body'}>
+              {displayedNotification.title && displayedNotification.title !== 'Benchmark Complete' && <div className="notification-title">{displayedNotification.title}</div>}
               <div className="notification-message">{displayedNotification.message}</div>
             </div>
-            {displayedNotification.message.includes('System lock') && (
+            {typeof displayedNotification.message === 'string' && displayedNotification.message.includes('System lock') && (
               <button
                 className="btn-notification-action"
                 onClick={(e) => {

@@ -175,8 +175,13 @@ The protocol ([split_protocol.h]) uses a standardized header for all over-the-ai
 | `0x60` | `BLE_CMD`                         | Slave → Master: forward a BLE command from USB. |
 | `0x61` | `BLE_STATUS`                      | Master → Slave: push live BLE state. |
 
-### Heartbeat RTT Measurement
-The slave sends `HEARTBEAT` with `sent_us = esp_timer_get_time()`. The master **echoes the exact same `sent_us` value back** in its own heartbeat reply. When the slave receives the echo, it computes `RTT = now_us - sent_us` and stores `latency_us = RTT / 2`.
+### Heartbeat RTT & Link Benchmarking
+- **Heartbeat Latency**: The slave sends `HEARTBEAT` with `sent_us = esp_timer_get_time()`. The master **echoes the exact same `sent_us` value back** in its own heartbeat reply. When the slave receives the echo, it computes `RTT = now_us - sent_us` and stores `latency_us = RTT / 2`.
+- **Delay (RTT/2) Benchmark**: Measures true one-way connection propagation delay over a sequence of ~20 high-speed packet exchanges, recording min, average, and maximum delays as RTT/2.
+- **Maximum Polling Rate Benchmark**: Stress tests both keyboard matrix schedulers simultaneously during a 2-second "full blast" dwell period. Both Master and Slave track their low-level matrix scan frequency, capturing:
+  * **Floor HZ**: The lowest recorded scan frequency under load.
+  * **Avg HZ**: The average scan frequency over the test duration.
+  * **Peak HZ**: The peak achieved polling rate frequency.
 
 ---
 
@@ -239,6 +244,12 @@ graph LR
 - **PSRAM for Blobs**: All configuration and reassembly buffers are now moved to PSRAM to avoid large internal heap spikes.
 
 ---
+
+## Recent Changes (2026-05)
+
+- **One-Way Delay Benchmark (RTT/2)**: Refactored connection delay calculation to divide the measured RTT by 2, representing accurate single-transport physical propagation timing instead of two-way ping. Configured test sequence to collect ~20 packets.
+- **Maximum Polling Rate Benchmarking**: Added real-time tracking of matrix scanning frequency on both Master and Slave devices. Under full-blast 2-second stress test dwell periods, devices measure `floor_hz`, `avg_hz`, and `peak_hz` performance metrics to gauge matrix scheduler stability under load.
+- **Rich Floating Glassmorphic Notifications**: Upgraded Configurator frontend to render complete double-column benchmark results directly inside a 20-second dismissible floating notification toast, leveraging full backdrop blur (`blur(25px)`) and responsive layouts.
 
 ## Recent Changes (2026-04)
 

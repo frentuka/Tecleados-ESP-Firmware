@@ -54,6 +54,8 @@ typedef enum split_msg_type : uint8_t {
     SPLIT_MSG_PING            = 0x50,  // RTT benchmark probe  (Master → Slave)
     SPLIT_MSG_PONG            = 0x51,  // RTT benchmark reply  (Slave  → Master)
     SPLIT_MSG_TEST_BEEP       = 0x52,  // Trigger RGB beep on both devices
+    SPLIT_MSG_POLL_RATE_REQ   = 0x53,  // Poll-rate req        (Master → Slave)
+    SPLIT_MSG_POLL_RATE_RESP  = 0x54,  // Poll-rate response   (Slave  → Master)
 
     // BLE proxy (0x6_)
     SPLIT_MSG_BLE_CMD         = 0x60,  // Slave → Master: forward a BLE command from USB
@@ -195,6 +197,18 @@ typedef struct __attribute__((packed)) split_ping_payload {
     uint8_t  _pad[3];       // Alignment padding
     uint32_t sent_us;       // esp_timer_get_time() low 32 bits at send time
 } split_ping_payload_t;
+
+/** SPLIT_MSG_POLL_RATE_REQ — master requests a poll-rate snapshot from the slave.
+ *  No payload. */
+
+/** SPLIT_MSG_POLL_RATE_RESP — slave's poll-rate snapshot in response to REQ.
+ *  Master sends REQ; slave replies with this payload. */
+typedef struct __attribute__((packed)) split_poll_rate_payload {
+    uint32_t scan_hz;         // Avg matrix scan rate over last 1-second window
+    uint32_t floor_scan_hz;   // Floor (worst-case) scan rate: 1 / max_scan_interval
+    uint32_t peak_scan_hz;    // Peak (best-case) scan rate: 1 / min_scan_interval
+    uint32_t peak_report_hz;  // Peak HID report rate (Hz); 0 on slave half
+} split_poll_rate_payload_t;
 
 /* =========================================================================
  * Serialization helpers (implemented in split_protocol.c)

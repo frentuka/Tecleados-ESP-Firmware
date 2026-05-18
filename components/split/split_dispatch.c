@@ -455,6 +455,35 @@ void split_dispatch_on_message(const uint8_t *src_mac,
         }
         break;
 
+    /* ---- Poll-rate measurement ---- */
+    case SPLIT_MSG_POLL_RATE_REQ:
+        /* SLAVE: read own kb_manager snapshot and send it back. */
+        if (split_session_get_state() == SPLIT_STATE_CONNECTED &&
+            split_session_get_role()  == SPLIT_ROLE_SLAVE) {
+            kb_poll_rate_snapshot_t snap = {0};
+            kb_manager_get_poll_rate(&snap);
+            split_poll_rate_payload_t resp = {
+                .scan_hz        = snap.scan_hz,
+                .floor_scan_hz  = snap.floor_scan_hz,
+                .peak_scan_hz   = snap.peak_scan_hz,
+                .peak_report_hz = snap.peak_report_hz,
+            };
+            split_transport_send(peer_mac, SPLIT_PROTO_SPLIT,
+                                 SPLIT_MSG_POLL_RATE_RESP, split_session_next_seq(),
+                                 (const uint8_t *)&resp, sizeof(resp));
+            ESP_LOGD(TAG, "POLL_RATE_REQ: replied scan=%lu Hz peak=%lu Hz",
+                     (unsigned long)snap.scan_hz, (unsigned long)snap.peak_report_hz);
+        }
+        break;
+
+    case SPLIT_MSG_POLL_RATE_RESP:
+        /* MASTER: store slave's snapshot in bench state. */
+        if (split_session_get_state() == SPLIT_STATE_CONNECTED &&
+            split_session_get_role()  == SPLIT_ROLE_MASTER) {
+            split_bench_handle_poll_rate_resp(payload, len);
+        }
+        break;
+
     case SPLIT_MSG_TEST_BEEP:
         if (split_session_get_state() == SPLIT_STATE_CONNECTED) {
             esp_event_post(SPLIT_EVENTS, SPLIT_EVENT_TEST_BEEP, NULL, 0, 0);

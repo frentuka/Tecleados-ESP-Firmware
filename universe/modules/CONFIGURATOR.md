@@ -319,11 +319,11 @@ All shared state lives in `stores/layoutStore.ts` (Zustand). Clearing the layout
 A Zustand-based notification store (`stores/notificationStore.ts`) provides a unified, non-intrusive user feedback mechanism used across all dashboards. It replaces all `alert()` calls and ad-hoc local error states.
 
 ```typescript
-showNotification(message: string, type?: NotificationType): void
+showNotification(message: string | React.ReactNode, type?: NotificationType): void
 // NotificationType: 'info' | 'warning' | 'error' | 'success'
 ```
 
-Any component calls `useNotificationStore().showNotification(...)` without prop drilling. `App.tsx` renders the resulting toast and manages auto-dismiss timers:
+Any component calls `useNotificationStore().showNotification(...)` without prop drilling. It supports displaying rich, interactive custom widgets (such as the detailed double-column **Benchmark Results Card** for link delay and polling rate measurements) directly inside dismissible floating overlays. `App.tsx` renders the resulting toast and manages auto-dismiss timers:
 
 | Type      | Auto-dismiss | Use case |
 |-----------|-------------|----------|
