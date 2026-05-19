@@ -425,6 +425,84 @@ function KeyboardModel({ isAutoRotating, setIsAutoRotating }: { isAutoRotating: 
   )
 }
 
+function FloatingParticles({ count = 80 }) {
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+  
+  // Initialize floating cyber particles
+  const particles = useMemo(() => {
+    const data = [];
+    for (let i = 0; i < count; i++) {
+      data.push({
+        x: (Math.random() - 0.5) * 35,
+        y: (Math.random() - 0.5) * 15 - 2, // Centered near the keyboard height
+        z: (Math.random() - 0.5) * 30,
+        speedX: (Math.random() - 0.5) * 0.04,
+        speedY: (Math.random() * 0.08) + 0.03, // Slow drift upwards
+        speedZ: (Math.random() - 0.5) * 0.04,
+        rotSpeed: (Math.random() - 0.5) * 0.4,
+        scale: Math.random() * 0.06 + 0.02,
+        rot: Math.random() * Math.PI,
+        seed: Math.random() * 100
+      });
+    }
+    return data;
+  }, [count]);
+
+  const tempObject = useMemo(() => new THREE.Object3D(), []);
+
+  useEffect(() => {
+    if (!meshRef.current) return;
+    const colorCyan = new THREE.Color('#58a6ff');
+    const colorPurple = new THREE.Color('#a371f7');
+    for (let i = 0; i < count; i++) {
+      // Alternate between cyber blue and purple theme colors
+      meshRef.current.setColorAt(i, i % 2 === 0 ? colorCyan : colorPurple);
+    }
+    if (meshRef.current.instanceColor) {
+      meshRef.current.instanceColor.needsUpdate = true;
+    }
+  }, [count]);
+
+  useFrame((state) => {
+    if (!meshRef.current) return;
+    const t = state.clock.elapsedTime;
+
+    particles.forEach((p, idx) => {
+      // Drift upward and sway gently
+      p.y += p.speedY * 0.1;
+      p.x += Math.sin(t * 0.4 + p.seed) * 0.006;
+      p.rot += p.rotSpeed * 0.005;
+
+      // Wrap around when particle escapes top bounds
+      if (p.y > 12) {
+        p.y = -10;
+        p.x = (Math.random() - 0.5) * 35;
+        p.z = (Math.random() - 0.5) * 30;
+      }
+
+      tempObject.position.set(p.x, p.y, p.z);
+      tempObject.rotation.set(p.rot, p.rot, p.rot);
+      tempObject.scale.set(p.scale, p.scale, p.scale);
+      tempObject.updateMatrix();
+      meshRef.current!.setMatrixAt(idx, tempObject.matrix);
+    });
+
+    meshRef.current.instanceMatrix.needsUpdate = true;
+  });
+
+  return (
+    <instancedMesh
+      ref={meshRef}
+      args={[new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({
+        roughness: 0.1,
+        metalness: 0.9,
+        transparent: true,
+        opacity: 0.55
+      }), count]}
+    />
+  );
+}
+
 export default function Background3D() {
   const isConnected = useLayoutStore(state => state.isConnected);
   const [isAutoRotating, setIsAutoRotating] = useState(true);
@@ -454,6 +532,12 @@ export default function Background3D() {
           <spotLight position={[15, 8, -15]} angle={0.3} penumbra={1} intensity={3.5} color="#e0eaff" />
           <pointLight position={[-10, -10, -10]} intensity={0.8} color="#2a61a8" />
           <pointLight position={[10, -10, 10]} intensity={0.8} color="#6436b5" />
+
+          {/* Floating cyber particles */}
+          <FloatingParticles count={90} />
+
+          {/* Precision Blueprint Grid */}
+          <gridHelper args={[60, 60, '#2a61a8', '#161b22']} position={[0, -7.9, 0]} transparent opacity={0.12} />
 
           <group position={[0, -3.5, 0]}>
             <KeyboardModel isAutoRotating={isAutoRotating} setIsAutoRotating={setIsAutoRotating} />

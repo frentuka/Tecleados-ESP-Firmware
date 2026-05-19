@@ -250,11 +250,35 @@ Injected keys pass through the full keyboard pipeline (layers, macros, custom ke
 
 ---
 
-## 3D Animated Background (`Background3D.tsx`)
+## 3D & Ambient Background Environment (`Background3D.tsx` / `App.tsx` / `index.css`)
 
-The configurator renders a **procedurally generated, real-time 3D representation** of the currently connected keyboard as a full-page background using **React Three Fiber** (a React renderer for Three.js). It is visually distinct from the 2D editor and requires no external 3D assets — every mesh is generated at runtime from layout data.
+The configurator features a highly immersive, multi-layered background environment combining a **procedurally generated real-time 3D keyboard canvas** with **interactive CSS ambient glows and technical details**. It requires no external assets and relies entirely on runtime generation for lightweight execution.
 
-### Rendering Pipeline
+### 1. Interactive Cyber Ambient Spotlights (CSS Glow Layer)
+To add deep atmospheric lighting that feels reactive and premium, the HTML layer hosts floating spotlights:
+- **Left Spotlight (`.spotlight-left`)**: Cyan/blue radial gradient (`hsla(210, 100%, 65%, 0.16)`) positioned in the top-left corner.
+- **Right Spotlight (`.spotlight-right`)**: Purple/magenta radial gradient (`hsla(270, 95%, 70%, 0.15)`) positioned in the top-right corner.
+- **Dynamic Mouse Tracking**: A window `mousemove` listener maps cursor coords to CSS variables (`--mouse-x`, `--mouse-y`), translating the spotlights dynamically in opposite directions (`translate(calc(var(--mouse-x) * 35px), calc(var(--mouse-y) * 25px))`) for an organic, interactive parallax breathing effect.
+- **Breathing Animations**: Independent keyframe animations (`spotlight-pulse-left` and `spotlight-pulse-right` at 25s and 30s) slowly warp scale and opacity to make the background feel alive.
+
+### 2. High-Tech Corner Framing Brackets
+Subtle, razor-sharp technical accents sit at the extreme top corners inside the window, framing the main header and accentuating the "custom hardware engineering" feel:
+- **Tech Brackets (`.tech-corner-tl` / `tr`)**: Absolute-positioned fine borders outlining the top left and top right headers.
+- **Glowing Accent Lines (`.tech-line-left` / `right`)**: Fading linear-gradient hair-lines extending from the brackets to guide the eye across the customizer layout.
+- **Pointer Isolation**: Both ambient spotlights and tech details containers utilize `pointer-events: none` and careful `z-index` values (`-5` and `1005` respectively) to allow seamless clicks and drag-rotation on empty canvas spaces to pass through completely unimpeded.
+
+### 3. Precision Blueprint Grid (3D Layer)
+A horizontal visual helper grid (`gridHelper`) lies on the 3D scene floor at `y = -7.9`, exactly beneath the keyboard:
+- Styled with thin, low-opacity HSL colored line intersections (`#2a61a8` and `#161b22`) at `0.12` opacity.
+- Creates an engineering blueprint grid that aligns with the custom physical layout and gives the keyboard model a solid spatial grounding.
+
+### 4. Floating Cyber Particles (3D Layer)
+An optimized instanced mesh particle system (`FloatingParticles` component) renders ~90 neon data blocks drifting through the dark void:
+- **Geometry**: High-performance `instancedMesh` sharing a single BoxGeometry and standard material with low roughness and high metalness.
+- **Coloration**: Alternates between cyber blue (`#58a6ff`) and glowing purple (`#a371f7`).
+- **Drift Loop**: Particles drift upwards on the Y-axis and sway horizontally using a custom sine-wave phase offsets based on a randomized seed. When a particle escapes the top bound (`y > 12`), it wraps around to the bottom boundary (`y = -10`) with randomized X and Z offsets to prevent clustering.
+
+### 5. 3D Model Rendering Pipeline
 
 1. **Hardcoded fallback** — when no physical layout is loaded, a static 65% keyboard with pre-assigned key colours is displayed (keyed to a standard 65% layout's modifier positions).
 2. **Dynamic generation** — when a physical layout is loaded from the device, the renderer derives all geometry from the `PhysKey[][]` data in `layoutStore`.

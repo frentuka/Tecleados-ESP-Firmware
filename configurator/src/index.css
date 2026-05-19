@@ -1029,3 +1029,123 @@ a,
 .dd-section {
   pointer-events: auto;
 }
+
+/* ── Interactive Cyber Ambient Spotlights (CSS Glows) ── */
+.ambient-spotlights {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: -5; /* Placed exactly between the Three.js Canvas (zIndex -10) and interactive content */
+  overflow: hidden;
+}
+
+.spotlight {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(150px);
+  mix-blend-mode: screen;
+  opacity: 0.16;
+  transition: transform 0.3s cubic-bezier(0.1, 0.8, 0.25, 1);
+  will-change: transform;
+}
+
+.spotlight-left {
+  top: -25vh;
+  left: -20vw;
+  width: 75vw;
+  height: 75vw;
+  background: radial-gradient(circle, hsla(210, 100%, 65%, 0.16) 0%, hsla(210, 100%, 65%, 0) 70%);
+  /* Shift slightly following mouse movement */
+  transform: translate(calc(var(--mouse-x, 0) * 35px), calc(var(--mouse-y, 0) * 25px));
+  animation: spotlight-pulse-left 25s ease-in-out infinite alternate;
+}
+
+.spotlight-right {
+  top: -25vh;
+  right: -20vw;
+  width: 75vw;
+  height: 75vw;
+  background: radial-gradient(circle, hsla(270, 95%, 70%, 0.15) 0%, hsla(270, 95%, 70%, 0) 70%);
+  /* Shift slightly following mouse movement in opposite direction */
+  transform: translate(calc(var(--mouse-x, 0) * -35px), calc(var(--mouse-y, 0) * 25px));
+  animation: spotlight-pulse-right 30s ease-in-out infinite alternate;
+}
+
+@keyframes spotlight-pulse-left {
+  0% {
+    opacity: 0.12;
+    transform: translate(calc(var(--mouse-x, 0) * 35px), calc(var(--mouse-y, 0) * 25px)) scale(0.95);
+  }
+  100% {
+    opacity: 0.18;
+    transform: translate(calc(var(--mouse-x, 0) * 35px + 15px), calc(var(--mouse-y, 0) * 25px - 10px)) scale(1.05);
+  }
+}
+
+@keyframes spotlight-pulse-right {
+  0% {
+    opacity: 0.15;
+    transform: translate(calc(var(--mouse-x, 0) * -35px), calc(var(--mouse-y, 0) * 25px)) scale(1.05);
+  }
+  100% {
+    opacity: 0.10;
+    transform: translate(calc(var(--mouse-x, 0) * -35px - 15px), calc(var(--mouse-y, 0) * 25px + 10px)) scale(0.95);
+  }
+}
+
+/* ── Decorative Corner Cyber Brackets and Tech lines ── */
+.tech-details {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 1005; /* Above main-header (zIndex 1000) for sleek layering, but completely non-interactive */
+}
+
+.tech-corner {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border: 1px solid rgba(88, 166, 255, 0.25);
+  opacity: 0.7;
+  transition: all 0.3s ease;
+}
+
+.tech-corner-tl {
+  top: 26px;
+  left: 20px;
+  border-right: none;
+  border-bottom: none;
+}
+
+.tech-corner-tr {
+  top: 26px;
+  right: 20px;
+  border-left: none;
+  border-bottom: none;
+}
+
+.tech-line {
+  position: absolute;
+  height: 1px;
+  opacity: 0.4;
+}
+
+.tech-line-left {
+  top: 26px;
+  left: 44px;
+  width: 80px;
+  background: linear-gradient(90deg, rgba(88, 166, 255, 0.4), transparent);
+}
+
+.tech-line-right {
+  top: 26px;
+  right: 44px;
+  width: 80px;
+  background: linear-gradient(270deg, rgba(163, 113, 247, 0.4), transparent);
+}

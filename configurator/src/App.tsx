@@ -334,6 +334,19 @@ function App() {
     return () => hidService.offLogReceived(handleLogReceived);
   }, [handleLogReceived]);
 
+  // Track mouse coordinates to power dynamic, interactive background spotlights
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      const x = (e.clientX / window.innerWidth) * 2 - 1; // Normalize to [-1, 1]
+      const y = (e.clientY / window.innerHeight) * 2 - 1; // Normalize to [-1, 1]
+      document.documentElement.style.setProperty('--mouse-x', x.toFixed(3));
+      document.documentElement.style.setProperty('--mouse-y', y.toFixed(3));
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    return () => window.removeEventListener('mousemove', handleMouseMove);
+  }, []);
+
   const handleConnect = async () => {
     setNotification(null);
     const result = await hidService.requestDevice();
@@ -384,6 +397,21 @@ function App() {
   return (
     <div className="app-container">
       <Background3D />
+      
+      {/* Decorative Interactive Corner Ambient Spotlights */}
+      <div className="ambient-spotlights">
+        <div className="spotlight spotlight-left"></div>
+        <div className="spotlight spotlight-right"></div>
+      </div>
+
+      {/* Futuristic tech details in top corners */}
+      <div className="tech-details">
+        <div className="tech-corner tech-corner-tl"></div>
+        <div className="tech-corner tech-corner-tr"></div>
+        <div className="tech-line tech-line-left"></div>
+        <div className="tech-line tech-line-right"></div>
+      </div>
+
       <header className="main-header">
         <div className="header-left">
           <div className="header-brand">
