@@ -312,6 +312,19 @@ The 3D canvas is hidden when no keyboard is connected and revealed on connection
 
 All shared state lives in `stores/layoutStore.ts` (Zustand). Clearing the layout store on disconnect (setting `physicalLayout → null`, `layers → [null,…]`) is what triggers the fade-out.
 
+### 2D/3D Interaction & Pointer Isolation
+
+To prevent conflicts between the 2D layout editor (dragging to select keys) and the 3D canvas background (dragging to rotate the keyboard model), the application implements a strict pointer-events isolation system:
+
+1. **CSS Pointer Isolation (`index.css`)**:
+   - Transparent structural layout wrappers and page dashboard containers (`.app-layout`, `.app-main-content`, `.app-sections-area`, `.section-container`, `.macros-ckeys-split-view`, `.layout-editor`, `.macros-dashboard`, `.custom-keys-dashboard`, `.dd-page`, etc.) are styled with `pointer-events: none`. This allows clicks on any empty space around the dashboards to pass directly through the DOM layers to the 3D Canvas.
+   - All interactive 2D UI components, dashboards, columns, controls, modals, and settings blocks (`.main-header`, `.layout-toolbar`, `.keyboard-grid`, `.glass-panel`, `.modal-overlay`, `.devctrl-page`, `.list-column`, `.dd-page-header`, `.dd-sections`, `.dd-section`, etc., along with standard buttons, links, and inputs) have `pointer-events: auto` explicitly set. They fully intercept all mouse interactions, preventing rotation triggers when editing layouts.
+
+2. **Canvas-Wide Drag Rotation (`Background3D.tsx`)**:
+   - A native `pointerdown` listener is bound directly to the `window` within `useEffect` inside the `KeyboardModel` component.
+   - To prevent conflict with 2D dashboard interactivity, the handler utilizes a highly comprehensive `.closest()` selector filter. If a click starts on any interactive panel, column, modal, dropdown, header, button, input, or keyboard grid, the handler immediately aborts.
+   - Any drag starting on the empty background space or around the 3D keyboard model initiates the rotation seamlessly, providing a robust, responsive, and cross-browser customizer experience without any dependency on standard DOM hit-testing constraints.
+
 ---
 
 ## Global Notification System

@@ -989,3 +989,43 @@ h3 {
   box-shadow: none !important;
   border-radius: 0 !important;
 }
+
+/* ── 2D/3D Interactive Pointer Isolation ── */
+/* Allow clicks to pass through transparent app layouts to the 3D background */
+.app-layout,
+.app-main-content,
+.app-sections-area,
+.section-container,
+.macros-ckeys-split-view,
+.layout-editor,
+.macros-dashboard,
+.custom-keys-dashboard,
+.dd-page {
+  pointer-events: none;
+}
+
+/* Re-enable pointer events for all interactive dashboard controls, modals, and elements */
+.main-header,
+.layout-toolbar,
+.keyboard-grid,
+.rowcol-edit-panel,
+.layout-actions,
+.selection-actions-overlay,
+.modal-overlay,
+.modal-content,
+.glass-panel,
+.devctrl-page,
+.permissions-help,
+.btn,
+.btn-new-action,
+button,
+input,
+select,
+textarea,
+a,
+.list-column,
+.dd-page-header,
+.dd-sections,
+.dd-section {
+  pointer-events: auto;
+}

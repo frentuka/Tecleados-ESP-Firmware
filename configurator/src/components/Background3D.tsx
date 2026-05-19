@@ -1,4 +1,4 @@
-import { Canvas, useFrame, useThree } from '@react-three/fiber'
+import { Canvas, useFrame } from '@react-three/fiber'
 import { useRef, useMemo, useState, useEffect } from 'react'
 import * as THREE from 'three'
 import { Environment, Float, ContactShadows } from '@react-three/drei'
@@ -344,6 +344,18 @@ function KeyboardModel({ isAutoRotating, setIsAutoRotating }: { isAutoRotating: 
 
   useEffect(() => {
     // Mouse/Pointer events for rotation
+    const onPointerDown = (e: PointerEvent) => {
+      if (!isConnected || e.button !== 0) return
+      
+      // Filter out any clicks starting on interactive 2D UI panels, buttons, inputs, and modals
+      const target = e.target as HTMLElement
+      if (target.closest('button, input, select, textarea, a, .keyboard-grid, .keyboard-key, .glass-panel, .list-column, .main-header, .selection-actions-overlay, .rowcol-edit-panel, .layout-actions, .devctrl-page, .modal-content, .permissions-help, .dd-sections, .dd-section, .dd-page-header, .dropdown-menu')) return
+
+      isDragging.current = true
+      pointerDownPos.current = { x: e.clientX, y: e.clientY }
+      hasMoved.current = false
+    }
+
     const onPointerMove = (e: PointerEvent) => {
       if (!isDragging.current) return
       const dx = e.clientX - pointerDownPos.current.x
@@ -366,9 +378,11 @@ function KeyboardModel({ isAutoRotating, setIsAutoRotating }: { isAutoRotating: 
       if (!hasMoved.current) setIsAutoRotating(true)
     }
 
+    window.addEventListener('pointerdown', onPointerDown)
     window.addEventListener('pointermove', onPointerMove)
     window.addEventListener('pointerup', onPointerUp)
     return () => {
+      window.removeEventListener('pointerdown', onPointerDown)
       window.removeEventListener('pointermove', onPointerMove)
       window.removeEventListener('pointerup', onPointerUp)
     }
@@ -405,17 +419,7 @@ function KeyboardModel({ isAutoRotating, setIsAutoRotating }: { isAutoRotating: 
   })
 
   return (
-    <group 
-      ref={group}
-      onPointerDown={(e) => {
-        if (!isConnected || e.button !== 0) return;
-        // Check if we hit the keyboard model
-        e.stopPropagation();
-        isDragging.current = true;
-        pointerDownPos.current = { x: e.clientX, y: e.clientY };
-        hasMoved.current = false;
-      }}
-    >
+    <group ref={group}>
       <InstancedKeyboard physicalLayout={physicalLayout} opacity={opacity} />
     </group>
   )
