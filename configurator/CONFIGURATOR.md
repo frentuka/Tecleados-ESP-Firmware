@@ -581,11 +581,35 @@ Defined in `types/protocol.ts` and `KeyDefinitions.ts`:
 
 ---
 
-## 14. 3D Animated Background
+## 14. 3D & Ambient Background Environment (`Background3D.tsx` / `App.tsx` / `index.css`)
 
-The configurator renders a **procedurally generated, real-time 3D keyboard** as a full-page background. It is driven by React Three Fiber and Three.js. No external 3D assets are required — all geometry is computed at runtime from layout data.
+The configurator features a highly immersive, multi-layered background environment combining a **procedurally generated real-time 3D keyboard canvas** with **interactive CSS ambient glows and technical details**. It requires no external assets and relies entirely on runtime generation for lightweight execution.
 
-### How it works
+### 1. Interactive Cyber Ambient Spotlights (CSS Glow Layer)
+To add deep atmospheric lighting that feels reactive and premium, the HTML layer hosts floating spotlights:
+- **Left Spotlight (`.spotlight-left`)**: Cyan/blue radial gradient (`hsla(210, 100%, 65%, 0.16)`) positioned in the top-left corner.
+- **Right Spotlight (`.spotlight-right`)**: Purple/magenta radial gradient (`hsla(270, 95%, 70%, 0.15)`) positioned in the top-right corner.
+- **Dynamic Mouse Tracking**: A window `mousemove` listener maps cursor coords to CSS variables (`--mouse-x`, `--mouse-y`), translating the spotlights dynamically in opposite directions (`translate(calc(var(--mouse-x) * 35px), calc(var(--mouse-y) * 25px))`) for an organic, interactive parallax breathing effect.
+- **Breathing Animations**: Independent keyframe animations (`spotlight-pulse-left` and `spotlight-pulse-right` at 25s and 30s) slowly warp scale and opacity to make the background feel alive.
+
+### 2. High-Tech Corner Framing Brackets
+Subtle, razor-sharp technical accents sit at the extreme top corners inside the window, framing the main header and accentuating the "custom hardware engineering" feel:
+- **Tech Brackets (`.tech-corner-tl` / `tr`)**: Absolute-positioned fine borders outlining the top left and top right headers.
+- **Glowing Accent Lines (`.tech-line-left` / `right`)**: Fading linear-gradient hair-lines extending from the brackets to guide the eye across the customizer layout.
+- **Pointer Isolation**: Both ambient spotlights and tech details containers utilize `pointer-events: none` and careful `z-index` values (`-5` and `1005` respectively) to allow seamless clicks and drag-rotation on empty canvas spaces to pass through completely unimpeded.
+
+### 3. Precision Blueprint Grid (3D Layer)
+A horizontal visual helper grid (`gridHelper`) lies on the 3D scene floor at `y = -7.9`, exactly beneath the keyboard:
+- Styled with thin, low-opacity HSL colored line intersections (`#2a61a8` and `#161b22`) at `0.12` opacity.
+- Creates an engineering blueprint grid that aligns with the custom physical layout and gives the keyboard model a solid spatial grounding.
+
+### 4. Floating Cyber Particles (3D Layer)
+An optimized instanced mesh particle system (`FloatingParticles` component) renders ~90 neon data blocks drifting through the dark void:
+- **Geometry**: High-performance `instancedMesh` sharing a single BoxGeometry and standard material with low roughness and high metalness.
+- **Coloration**: Alternates between cyber blue (`#58a6ff`) and glowing purple (`#a371f7`).
+- **Drift Loop**: Particles drift upwards on the Y-axis and sway horizontally using a custom sine-wave phase offsets based on a randomized seed. When a particle escapes the top bound (`y > 12`), it wraps around to the bottom boundary (`y = -10`) with randomized X and Z offsets to prevent clustering.
+
+### 5. 3D Model Rendering Pipeline
 
 1. **Geometry source** — `Background3D.tsx` reads `physicalLayout` from `layoutStore`. If no layout is loaded, it renders a hardcoded 65% keyboard with realistic key colour assignments.
 2. **Key colouring** — each keycap is coloured according to the action code stored in the active layer at the key's `{row, col}` position, using `getKeyClass()` from `KeyDefinitions.ts`:
@@ -593,7 +617,7 @@ The configurator renders a **procedurally generated, real-time 3D keyboard** as 
    | Key class | Colour |
    |---|---|
    | Standard alphanumerics | Dark charcoal (`#111111`) |
-   | Modifiers + action keys (Ctrl, Shift, Enter, Esc, Caps, Menu, arrows) | Deep blue (`#2a61a8`) |
+   | Modifiers + action keys (Ctrl, Shift, Alt, Enter, Esc, Caps, Menu, arrows) | Deep blue (`#2a61a8`) |
    | F1–F12 | Forest green (`#2a7a3b`) |
    | System actions, macros, custom keys | Deep purple (`#6436b5`) |
    | Unassigned / transparent | Near-black (`#080b0f`) |
@@ -609,3 +633,27 @@ The `isConnected` flag is stored in `layoutStore` and set by `App.tsx`'s connect
 - **Fade-in on connect**: `opacity 0 → 1` + `translateY(40px → 0)` over 2.5 s (CSS, spring easing).
 - **Key colour fade-in**: keycap `opacity` is animated per-frame via `useFrame` over ~2.5 s so colours bloom in gradually.
 - **Fade-out on disconnect**: the layout store is cleared (`physicalLayout → null`, `layers → [null,…]`), reversing both animations and sinking the model out of view.
+
+### State Wiring
+
+| State | Source | Consumer |
+|---|---|---|
+| `physicalLayout` | `KeyboardLayoutEditor` (on device load / KLE import) | `Background3D` (geometry generation) |
+| `layers` / `activeLayer` | `KeyboardLayoutEditor` (on device load) | `Background3D` (key colouring) |
+| `isConnected` | `App.tsx` (connection handler) | `Background3D` (fade in/out) |
+
+All shared state lives in `stores/layoutStore.ts` (Zustand). Clearing the layout store on disconnect (setting `physicalLayout → null`, `layers → [null,…]`) is what triggers the fade-out.
+
+### 2D/3D Interaction & Pointer Isolation
+
+To prevent conflicts between the 2D layout editor (dragging to select keys) and the 3D canvas background (dragging to rotate the keyboard model), the application implements a strict pointer-events isolation system:
+
+1. **CSS Pointer Isolation (`index.css`)**:
+   - Transparent structural layout wrappers and page dashboard containers (`.app-layout`, `.app-main-content`, `.app-sections-area`, `.section-container`, `.macros-ckeys-split-view`, `.layout-editor`, `.macros-dashboard`, `.custom-keys-dashboard`, `.dd-page`, etc.) are styled with `pointer-events: none`. This allows clicks on any empty space around the dashboards to pass directly through the DOM layers to the 3D Canvas.
+   - All interactive 2D UI components, dashboards, columns, controls, modals, and settings blocks (`.main-header`, `.layout-toolbar`, `.keyboard-grid`, `.glass-panel`, `.modal-overlay`, `.devctrl-page`, `.list-column`, `.dd-page-header`, `.dd-sections`, `.dd-section`, etc., along with standard buttons, links, and inputs) have `pointer-events: auto` explicitly set. They fully intercept all mouse interactions, preventing rotation triggers when editing layouts.
+
+2. **Canvas-Wide Drag Rotation (`Background3D.tsx`)**:
+   - A native `pointerdown` listener is bound directly to the `window` within `useEffect` inside the `KeyboardModel` component.
+   - To prevent conflict with 2D dashboard interactivity, the handler utilizes a highly comprehensive `.closest()` selector filter. If a click starts on any interactive panel, column, modal, dropdown, header, button, input, or keyboard grid, the handler immediately aborts.
+   - Any drag starting on the empty background space or around the 3D keyboard model initiates the rotation seamlessly, providing a robust, responsive, and cross-browser customizer experience without any dependency on standard DOM hit-testing constraints.
+
