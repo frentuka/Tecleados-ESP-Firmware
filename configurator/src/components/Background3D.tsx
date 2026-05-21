@@ -1,7 +1,7 @@
 import { Canvas, useFrame } from '@react-three/fiber'
 import { useRef, useMemo, useState, useEffect } from 'react'
 import * as THREE from 'three'
-import { Environment, Float, ContactShadows } from '@react-three/drei'
+import { Environment, ContactShadows } from '@react-three/drei'
 import { useLayoutStore } from '../stores/layoutStore'
 import { getKeyColor, getCategoryFromCode, KEY_BASE_COLORS } from '../utils/keyColors'
 import { getKeycapGeometry } from '../utils/keycapGeometry'
@@ -12,20 +12,20 @@ const createNoiseNormalMap = (size = 256, intensity = 30, repeat = 1) => {
   canvas.height = size;
   const ctx = canvas.getContext('2d');
   if (!ctx) return null;
-  
+
   ctx.fillStyle = '#8080ff';
   ctx.fillRect(0, 0, size, size);
-  
+
   const imageData = ctx.getImageData(0, 0, size, size);
   const data = imageData.data;
-  
+
   for (let i = 0; i < data.length; i += 4) {
     const noiseX = (Math.random() - 0.5) * intensity;
     const noiseY = (Math.random() - 0.5) * intensity;
     data[i] = 128 + noiseX;
-    data[i+1] = 128 + noiseY;
+    data[i + 1] = 128 + noiseY;
   }
-  
+
   ctx.putImageData(imageData, 0, 0);
   const texture = new THREE.CanvasTexture(canvas);
   texture.wrapS = THREE.RepeatWrapping;
@@ -57,6 +57,7 @@ const CASE_MATERIAL = new THREE.MeshStandardMaterial({
 function InstancedKeyboard({ physicalLayout, opacity }: { physicalLayout: any[] | null, opacity: number }) {
   const instancedMeshesRef = useRef<Map<string, THREE.InstancedMesh>>(new Map());
   const keyInstancesRef = useRef<{
+    clusterIdx: number,
     size: string,
     idx: number,
     row: number,
@@ -74,12 +75,12 @@ function InstancedKeyboard({ physicalLayout, opacity }: { physicalLayout: any[] 
   const gap = 0.08;
   const totalUnit = unitSize + gap;
 
-  const { instancedData, clusterData } = useMemo(() => {
-    if (!physicalLayout || physicalLayout.length === 0) return { instancedData: new Map(), clusterData: [] };
+  const { clusterData } = useMemo(() => {
+    if (!physicalLayout || physicalLayout.length === 0) return { clusterData: [] };
 
     // 1. Detect split and bounds
     const usedCols = new Set<number>();
-    physicalLayout.forEach(row => row.forEach(pk => usedCols.add(pk.col)));
+    physicalLayout.forEach(row => row.forEach((pk: any) => usedCols.add(pk.col)));
     const cols = Array.from(usedCols).sort((a, b) => a - b);
     let maxGap = 0;
     let splitThreshold = 100;
@@ -100,9 +101,9 @@ function InstancedKeyboard({ physicalLayout, opacity }: { physicalLayout: any[] 
 
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     physicalLayout.forEach(row => {
-      row.forEach(pk => {
+      row.forEach((pk: any) => {
         if (pk.r && pk.rx !== undefined && pk.ry !== undefined) {
-          [ [pk.x, pk.y], [pk.x + (pk.w || 1), pk.y], [pk.x, pk.y + (pk.h || 1)], [pk.x + (pk.w || 1), pk.y + (pk.h || 1)] ].forEach(([cx, cy]) => {
+          [[pk.x, pk.y], [pk.x + (pk.w || 1), pk.y], [pk.x, pk.y + (pk.h || 1)], [pk.x + (pk.w || 1), pk.y + (pk.h || 1)]].forEach(([cx, cy]) => {
             const [rx, ry] = rotatePoint(cx, cy, pk.rx!, pk.ry!, pk.r!);
             minX = Math.min(minX, rx); maxX = Math.max(maxX, rx);
             minY = Math.min(minY, ry); maxY = Math.max(maxY, ry);
@@ -113,19 +114,18 @@ function InstancedKeyboard({ physicalLayout, opacity }: { physicalLayout: any[] 
         }
       });
     });
-    
+
     const widthU = maxX - minX, heightU = maxY - minY;
     const startX = -(widthU / 2) * totalUnit, startZ = -(heightU / 2) * totalUnit;
 
     const clusters = isSplit ? [[], []] : [physicalLayout.flat()];
     if (isSplit) {
-      physicalLayout.forEach(row => row.forEach(pk => {
+      physicalLayout.forEach(row => row.forEach((pk: any) => {
         if (pk.col < splitThreshold) (clusters[0] as any[]).push(pk);
         else (clusters[1] as any[]).push(pk);
       }));
     }
 
-    const sizesMaps: Map<string, any[]>[] = [];
     const clusterGeos: any[] = [];
 
     clusters.forEach((cluster, idx) => {
@@ -133,7 +133,7 @@ function InstancedKeyboard({ physicalLayout, opacity }: { physicalLayout: any[] 
       let cMinX = Infinity, cMaxX = -Infinity, cMinY = Infinity, cMaxY = -Infinity;
       cluster.forEach((pk: any) => {
         if (pk.r && pk.rx !== undefined && pk.ry !== undefined) {
-          [ [pk.x, pk.y], [pk.x + (pk.w || 1), pk.y], [pk.x, pk.y + (pk.h || 1)], [pk.x + (pk.w || 1), pk.y + (pk.h || 1)] ].forEach(([cx, cy]) => {
+          [[pk.x, pk.y], [pk.x + (pk.w || 1), pk.y], [pk.x, pk.y + (pk.h || 1)], [pk.x + (pk.w || 1), pk.y + (pk.h || 1)]].forEach(([cx, cy]) => {
             const [rx, ry] = rotatePoint(cx, cy, pk.rx!, pk.ry!, pk.r!);
             cMinX = Math.min(cMinX, rx); cMaxX = Math.max(cMaxX, rx);
             cMinY = Math.min(cMinY, ry); cMaxY = Math.max(cMaxY, ry);
@@ -173,7 +173,7 @@ function InstancedKeyboard({ physicalLayout, opacity }: { physicalLayout: any[] 
         const pivotLocalX = pivotWorldX - worldX;
         const pivotLocalZ = pivotWorldZ - worldZ;
 
-        [[-keyWidth/2, -keyDepth/2], [keyWidth/2, -keyDepth/2], [-keyWidth/2, keyDepth/2], [keyWidth/2, keyDepth/2]].forEach(([cx, cz]) => {
+        [[-keyWidth / 2, -keyDepth / 2], [keyWidth / 2, -keyDepth / 2], [-keyWidth / 2, keyDepth / 2], [keyWidth / 2, keyDepth / 2]].forEach(([cx, cz]) => {
           const pt = new THREE.Vector3(relX + cx, 0, relZ + cz);
           pt.applyAxisAngle(new THREE.Vector3(0, 1, 0), rotY);
           pt.add(new THREE.Vector3(pivotLocalX, 0, pivotLocalZ));
@@ -221,10 +221,9 @@ function InstancedKeyboard({ physicalLayout, opacity }: { physicalLayout: any[] 
         shape,
         sizesMap: currentSizeMap
       });
-      sizesMaps.push(currentSizeMap);
     });
 
-    return { instancedData: sizesMaps, clusterData: clusterGeos };
+    return { clusterData: clusterGeos };
   }, [physicalLayout]);
 
   useEffect(() => {
@@ -270,10 +269,10 @@ function InstancedKeyboard({ physicalLayout, opacity }: { physicalLayout: any[] 
       const lBoost = baseL > 50 ? 12 : 20;
       const finalLMult = isPressed ? Math.min(100, (baseL * 0.5) + lBoost) / baseL : 0.5;
       const hex = getKeyColor(code, finalLMult, isPressed ? 1.0 : 0.8);
-      
+
       info.targetColor.set(hex);
       info.currentColor.lerp(info.targetColor, clampedDelta * 12);
-      
+
       const targetY = isPressed ? -0.15 : 0;
       info.currentY = THREE.MathUtils.lerp(info.currentY, targetY, clampedDelta * 20);
 
@@ -283,7 +282,7 @@ function InstancedKeyboard({ physicalLayout, opacity }: { physicalLayout: any[] 
         tempPos.copy(info.pivot);
         tempPos.y += info.currentY;
         tempQuat.setFromEuler(new THREE.Euler(0, info.rotY, 0));
-        
+
         const rel = new THREE.Vector3(info.relX, 0, info.relZ);
         rel.applyQuaternion(tempQuat);
         tempPos.add(rel);
@@ -309,12 +308,12 @@ function InstancedKeyboard({ physicalLayout, opacity }: { physicalLayout: any[] 
 
   return (
     <>
-      {clusterData.map(c => (
+      {clusterData.map((c: any) => (
         <group key={c.id} position={c.position} rotation={c.rotation}>
           <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0.2, 0]} castShadow receiveShadow material={CASE_MATERIAL}>
             <extrudeGeometry args={[c.shape, { depth: 0.45, bevelEnabled: true, bevelSize: 0.05, bevelThickness: 0.05, bevelSegments: 4 }]} />
           </mesh>
-          {Array.from(c.sizesMap.entries()).map(([sizeKey, keys]) => (
+          {Array.from((c.sizesMap as Map<string, any[]>).entries()).map(([sizeKey, keys]) => (
             <instancedMesh
               key={`${c.id}-${sizeKey}`}
               ref={el => { if (el) instancedMeshesRef.current.set(`${c.idx}-${sizeKey}`, el); }}
@@ -346,7 +345,7 @@ function KeyboardModel({ isAutoRotating, setIsAutoRotating }: { isAutoRotating: 
     // Mouse/Pointer events for rotation
     const onPointerDown = (e: PointerEvent) => {
       if (!isConnected || e.button !== 0) return
-      
+
       // Filter out any clicks starting on interactive 2D UI panels, buttons, inputs, and modals
       const target = e.target as HTMLElement
       if (target.closest('button, input, select, textarea, a, .keyboard-grid, .keyboard-key, .glass-panel, .list-column, .main-header, .selection-actions-overlay, .rowcol-edit-panel, .layout-actions, .devctrl-page, .modal-content, .permissions-help, .dd-sections, .dd-section, .dd-page-header, .dropdown-menu')) return
@@ -401,7 +400,7 @@ function KeyboardModel({ isAutoRotating, setIsAutoRotating }: { isAutoRotating: 
         const idleX = Math.sin(state.clock.elapsedTime * 0.2) * 0.1 + 0.2;
         targetRotation.current.x = THREE.MathUtils.lerp(targetRotation.current.x, idleX, clampedDelta * 0.2 * autoRotateStrength.current);
       }
-      
+
       const lerpFactor = hasMoved.current && isDragging.current ? 0.25 : 0.08
       group.current.rotation.x = THREE.MathUtils.lerp(group.current.rotation.x, targetRotation.current.x, lerpFactor)
       group.current.rotation.y = THREE.MathUtils.lerp(group.current.rotation.y, targetRotation.current.y, lerpFactor)
@@ -425,94 +424,17 @@ function KeyboardModel({ isAutoRotating, setIsAutoRotating }: { isAutoRotating: 
   )
 }
 
-function FloatingParticles({ count = 80 }) {
-  const meshRef = useRef<THREE.InstancedMesh>(null);
-  
-  // Initialize floating cyber particles
-  const particles = useMemo(() => {
-    const data = [];
-    for (let i = 0; i < count; i++) {
-      data.push({
-        x: (Math.random() - 0.5) * 35,
-        y: (Math.random() - 0.5) * 15 - 2, // Centered near the keyboard height
-        z: (Math.random() - 0.5) * 30,
-        speedX: (Math.random() - 0.5) * 0.04,
-        speedY: (Math.random() * 0.08) + 0.03, // Slow drift upwards
-        speedZ: (Math.random() - 0.5) * 0.04,
-        rotSpeed: (Math.random() - 0.5) * 0.4,
-        scale: Math.random() * 0.06 + 0.02,
-        rot: Math.random() * Math.PI,
-        seed: Math.random() * 100
-      });
-    }
-    return data;
-  }, [count]);
-
-  const tempObject = useMemo(() => new THREE.Object3D(), []);
-
-  useEffect(() => {
-    if (!meshRef.current) return;
-    const colorCyan = new THREE.Color('#58a6ff');
-    const colorPurple = new THREE.Color('#a371f7');
-    for (let i = 0; i < count; i++) {
-      // Alternate between cyber blue and purple theme colors
-      meshRef.current.setColorAt(i, i % 2 === 0 ? colorCyan : colorPurple);
-    }
-    if (meshRef.current.instanceColor) {
-      meshRef.current.instanceColor.needsUpdate = true;
-    }
-  }, [count]);
-
-  useFrame((state) => {
-    if (!meshRef.current) return;
-    const t = state.clock.elapsedTime;
-
-    particles.forEach((p, idx) => {
-      // Drift upward and sway gently
-      p.y += p.speedY * 0.1;
-      p.x += Math.sin(t * 0.4 + p.seed) * 0.006;
-      p.rot += p.rotSpeed * 0.005;
-
-      // Wrap around when particle escapes top bounds
-      if (p.y > 12) {
-        p.y = -10;
-        p.x = (Math.random() - 0.5) * 35;
-        p.z = (Math.random() - 0.5) * 30;
-      }
-
-      tempObject.position.set(p.x, p.y, p.z);
-      tempObject.rotation.set(p.rot, p.rot, p.rot);
-      tempObject.scale.set(p.scale, p.scale, p.scale);
-      tempObject.updateMatrix();
-      meshRef.current!.setMatrixAt(idx, tempObject.matrix);
-    });
-
-    meshRef.current.instanceMatrix.needsUpdate = true;
-  });
-
-  return (
-    <instancedMesh
-      ref={meshRef}
-      args={[new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({
-        roughness: 0.1,
-        metalness: 0.9,
-        transparent: true,
-        opacity: 0.55
-      }), count]}
-    />
-  );
-}
-
 export default function Background3D() {
   const isConnected = useLayoutStore(state => state.isConnected);
   const [isAutoRotating, setIsAutoRotating] = useState(true);
+  const [orangeTarget, setOrangeTarget] = useState<THREE.Object3D | null>(null);
 
   return (
     <div style={{
       position: 'fixed',
       top: 0, left: 0, width: '100vw', height: '100vh',
       zIndex: -10,
-      background: '#0d1117',
+      background: 'radial-gradient(circle at 50% 35%, #2d1304 0%, #0c0501 55%, #050201 100%)',
       pointerEvents: 'auto',
       userSelect: 'none'
     }}>
@@ -523,21 +445,38 @@ export default function Background3D() {
         transition: 'opacity 2.5s cubic-bezier(0.16, 1, 0.3, 1), transform 2.5s cubic-bezier(0.16, 1, 0.3, 1)',
         pointerEvents: isConnected ? 'auto' : 'none'
       }}>
-        <Canvas shadows camera={{ position: [0, 12, 22], fov: 45 }}>
-          <color attach="background" args={['#0d1117']} />
-          <fog attach="fog" args={['#0d1117', 15, 40]} />
+        <Canvas shadows camera={{ position: [0, 12, 22], fov: 45 }} gl={{ alpha: true }}>
+          <fog attach="fog" args={['#0c0501', 26, 48]} />
 
-          <ambientLight intensity={0.4} />
-          <spotLight position={[-15, 15, 15]} angle={0.25} penumbra={1} intensity={1.8} castShadow />
-          <spotLight position={[15, 8, -15]} angle={0.3} penumbra={1} intensity={3.5} color="#e0eaff" />
-          <pointLight position={[-10, -10, -10]} intensity={0.8} color="#2a61a8" />
-          <pointLight position={[10, -10, 10]} intensity={0.8} color="#6436b5" />
+          <ambientLight intensity={0.65} />
+          <spotLight position={[-15, 15, 15]} angle={0.25} penumbra={1} intensity={3.5} castShadow />
+          <spotLight position={[15, 10, -15]} angle={0.3} penumbra={1} intensity={4.5} color="#e0eaff" />
 
-          {/* Floating cyber particles */}
-          <FloatingParticles count={90} />
+          {/* Target object positioned at the keyboard center */}
+          <object3D ref={setOrangeTarget} position={[0, -3.5, 0]} />
 
-          {/* Precision Blueprint Grid */}
-          <gridHelper args={[60, 60, '#2a61a8', '#161b22']} position={[0, -7.9, 0]} transparent opacity={0.12} />
+          {/* Symmetrical Dual warm orange spotlights positioned behind the keyboard for a clear, stunning double rim glow */}
+          <spotLight
+            position={[-9, 6, -10]}
+            angle={0.6}
+            penumbra={1}
+            intensity={650.0}
+            color="#ffa552"
+            castShadow
+            target={orangeTarget || undefined}
+          />
+          <spotLight
+            position={[9, 6, -10]}
+            angle={0.6}
+            penumbra={1}
+            intensity={650.0}
+            color="#ff7300"
+            castShadow
+            target={orangeTarget || undefined}
+          />
+
+          <pointLight position={[-10, -5, -10]} intensity={1.5} color="#ff7a24" />
+          <pointLight position={[10, -5, 10]} intensity={1.5} color="#6436b5" />
 
           <group position={[0, -3.5, 0]}>
             <KeyboardModel isAutoRotating={isAutoRotating} setIsAutoRotating={setIsAutoRotating} />

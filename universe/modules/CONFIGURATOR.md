@@ -4,7 +4,10 @@
 > **Entry point:** `configurator/src/main.tsx` → `App.tsx`
 > **Tech stack:** React 19 + TypeScript + Vite — runs entirely in the browser, no backend server.
 
-The **Configurator** is the browser-based GUI for the keyboard firmware. It communicates with the device over [[USB_MODULE|the USB COMM channel]] using the **WebHID API**, implementing the exact same Blast+Reconcile transport protocol as the firmware. The user never installs a driver or companion app — they open a URL, click Connect, and the browser talks directly to the keyboard.
+The **Configurator** is the browser-based GUI for the keyboard firmware. It communicates with the device over [[USB_MODULE|the USB COMM channel]] using the **WebHID API**, implementing the exact same Blast+Reconcile transport protocol as the firmware. The user never installs a driver or companion app — they open a URL, click Connect, and the browser talks directly to the keyboard. 
+
+> [!NOTE]
+> Because WebHID is a high-privilege device API, browsers strictly require a **Secure Context (HTTPS)** to enable it. Consequently, for local testing and development purposes only, the server runs over HTTPS using `@vitejs/plugin-basic-ssl` (`https://localhost:5173`) with a self-signed certificate. Any production/public hosting must be configured with a standard trusted SSL/TLS certificate (such as Let's Encrypt).
 
 It is the **only external consumer** of the firmware's `MODULE_CONFIG`, `MODULE_SYSTEM`, `MODULE_STATUS`, `MODULE_SPLIT`, and `MODULE_BLE` channels.
 
@@ -250,35 +253,23 @@ Injected keys pass through the full keyboard pipeline (layers, macros, custom ke
 
 ---
 
-## 3D & Ambient Background Environment (`Background3D.tsx` / `App.tsx` / `index.css`)
+## 3D Background Studio Environment (`Background3D.tsx` / `App.tsx` / `index.css`)
 
-The configurator features a highly immersive, multi-layered background environment combining a **procedurally generated real-time 3D keyboard canvas** with **interactive CSS ambient glows and technical details**. It requires no external assets and relies entirely on runtime generation for lightweight execution.
+The configurator features a highly immersive, multi-layered background environment combining a **procedurally generated real-time 3D keyboard canvas** with an ultra-clean, minimalist studio vignette backdrop. It requires no external assets and relies entirely on runtime generation for lightweight execution.
 
-### 1. Interactive Cyber Ambient Spotlights (CSS Glow Layer)
-To add deep atmospheric lighting that feels reactive and premium, the HTML layer hosts floating spotlights:
-- **Left Spotlight (`.spotlight-left`)**: Cyan/blue radial gradient (`hsla(210, 100%, 65%, 0.16)`) positioned in the top-left corner.
-- **Right Spotlight (`.spotlight-right`)**: Purple/magenta radial gradient (`hsla(270, 95%, 70%, 0.15)`) positioned in the top-right corner.
-- **Dynamic Mouse Tracking**: A window `mousemove` listener maps cursor coords to CSS variables (`--mouse-x`, `--mouse-y`), translating the spotlights dynamically in opposite directions (`translate(calc(var(--mouse-x) * 35px), calc(var(--mouse-y) * 25px))`) for an organic, interactive parallax breathing effect.
-- **Breathing Animations**: Independent keyframe animations (`spotlight-pulse-left` and `spotlight-pulse-right` at 25s and 30s) slowly warp scale and opacity to make the background feel alive.
+### 1. Minimalist Dark Studio Vignette Backdrop
+To keep the absolute focus on the gorgeous 3D model, its materials, shadows, and subtle reflections, the background is completely free of distracting tech patterns, lights, grids, or particles:
+- **Clean Studio Gradient**: A smooth, professional, ultra-dark obsidian radial vignette backdrop with a localized warm amber-copper sunset glow directly behind the keyboard (`radial-gradient(circle at 50% 35%, #2d1304 0%, #0c0501 55%, #050201 100%)`) provides an extremely premium, eye-friendly, and deep atmospheric backdrop.
+- **Transparent 3D Canvas**: The 3D Three.js canvas renders transparently (`gl={{ alpha: true }}`) allowing the deep, smooth studio backdrop gradient to show through.
+- **Atmospheric Studio Fog**: A subtle, matched dark warm-charcoal fog (`<fog attach="fog" args={['#0c0501', 26, 48]} />`) blends the distant edges of the scene smoothly, keeping the atmosphere clearly present with a beautiful warm copper rim-glow while retaining perfect model clarity in the foreground.
+- **Premium Studio Scene Lighting**: Specular and ambient lights inside the 3D scene are tuned to create a realistic specular highlights bloom across the keyboard keycaps, baseplate, and switches. Dedicated dual warm orange spotlights (`#ffa552` and `#ff7300` at `650.0` intensity each) are positioned symmetrically behind the keyboard at `[-9, 6, -10]` and `[9, 6, -10]`, targeting the center of the keyboard to project a clear, stunning double rim lighting glow on the backside without blinding the user.
+- **Contact Shadows**: High-end floor contact shadows (`ContactShadows`) are cast directly beneath the keyboard model, anchoring it in the 3D space as if resting on a premium dark matte studio surface.
 
-### 2. High-Tech Corner Framing Brackets
-Subtle, razor-sharp technical accents sit at the extreme top corners inside the window, framing the main header and accentuating the "custom hardware engineering" feel:
-- **Tech Brackets (`.tech-corner-tl` / `tr`)**: Absolute-positioned fine borders outlining the top left and top right headers.
-- **Glowing Accent Lines (`.tech-line-left` / `right`)**: Fading linear-gradient hair-lines extending from the brackets to guide the eye across the customizer layout.
-- **Pointer Isolation**: Both ambient spotlights and tech details containers utilize `pointer-events: none` and careful `z-index` values (`-5` and `1005` respectively) to allow seamless clicks and drag-rotation on empty canvas spaces to pass through completely unimpeded.
+### 2. Pointer Isolation and Interactivity
+- **Pointer Isolation**: All transparent structural HTML panels use `pointer-events: none`, allowing clicks and drags on empty space to pass directly through to the 3D Canvas. Interactive dashboard controls explicitly use `pointer-events: auto` to prevent conflicts.
+- **Canvas-Wide Drag Rotation**: A native `pointerdown` listener allows smooth drag-rotation of the 3D keyboard model from any empty backdrop area, while aborting automatically if the click starts on any interactive 2D panel or keyboard keycap.
 
-### 3. Precision Blueprint Grid (3D Layer)
-A horizontal visual helper grid (`gridHelper`) lies on the 3D scene floor at `y = -7.9`, exactly beneath the keyboard:
-- Styled with thin, low-opacity HSL colored line intersections (`#2a61a8` and `#161b22`) at `0.12` opacity.
-- Creates an engineering blueprint grid that aligns with the custom physical layout and gives the keyboard model a solid spatial grounding.
-
-### 4. Floating Cyber Particles (3D Layer)
-An optimized instanced mesh particle system (`FloatingParticles` component) renders ~90 neon data blocks drifting through the dark void:
-- **Geometry**: High-performance `instancedMesh` sharing a single BoxGeometry and standard material with low roughness and high metalness.
-- **Coloration**: Alternates between cyber blue (`#58a6ff`) and glowing purple (`#a371f7`).
-- **Drift Loop**: Particles drift upwards on the Y-axis and sway horizontally using a custom sine-wave phase offsets based on a randomized seed. When a particle escapes the top bound (`y > 12`), it wraps around to the bottom boundary (`y = -10`) with randomized X and Z offsets to prevent clustering.
-
-### 5. 3D Model Rendering Pipeline
+### 3. 3D Model Rendering Pipeline
 
 1. **Hardcoded fallback** — when no physical layout is loaded, a static 65% keyboard with pre-assigned key colours is displayed (keyed to a standard 65% layout's modifier positions).
 2. **Dynamic generation** — when a physical layout is loaded from the device, the renderer derives all geometry from the `PhysKey[][]` data in `layoutStore`.

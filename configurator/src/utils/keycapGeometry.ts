@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { Evaluator, Operation, Brush } from 'three-bvh-csg'
+import { Evaluator, Brush } from 'three-bvh-csg'
 
 const geometryCache = new Map<string, THREE.BufferGeometry>();
 const evaluator = new Evaluator();

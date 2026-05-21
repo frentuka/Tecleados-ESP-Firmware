@@ -613,6 +613,13 @@ const DeviceDashboard: React.FC<DeviceDashboardProps> = ({
                     </DdSection>
                 )}
 
+                {/* Benchmark Results Card */}
+                {benchResult && (
+                    <div style={{ gridColumn: '1 / -1', marginTop: '1rem', width: '100%' }}>
+                        <BenchResultCard result={benchResult} />
+                    </div>
+                )}
+
             </div>
 
 
