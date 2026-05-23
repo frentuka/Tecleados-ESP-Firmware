@@ -27,6 +27,7 @@ The application is divided into three layers that mirror the firmware's own laye
 │  DeviceController.ts   (typed command methods)                     │
 │  hooks/useMacros.ts    (macro CRUD + state + 7s timeout guard)     │
 │  hooks/useCustomKeys.ts (custom key CRUD + state + 7s timeout guard)│
+│  hooks/useCombos.ts     (combos CRUD + state + 7s timeout guard)   │
 │  stores/notificationStore.ts  (global notification state)          │
 │  stores/layoutStore.ts        (physical layout + connection state)  │
 ├────────────────────────────────────────────────────────────────────┤
@@ -78,6 +79,7 @@ The legacy `HIDService.ts` file is a thin re-export façade that maps old import
 | `KeyboardLayoutEditor.tsx` | "Layout" section | Visual key editor, layer switching, multi-selection (Ctrl+Drag), physical layout management |
 | `MacrosDashboard.tsx` | "Macros & CKs" | Macro list, event sequence editor, CRUD + Export/Import |
 | `CustomKeysDashboard.tsx` | "Macros & CKs" | Press/Release and MultiAction key rule editing + Export/Import |
+| `CombosDashboard.tsx` | "Macros & CKs" | Combos list, combo grid selector + Export/Import |
 | `SplitDashboard.tsx` | "Split" section | Pairing, role swap, latency benchmark, remote matrix visualizer |
 | `DeviceIdentityDashboard.tsx` | "Identity" (Dev) | Device name, split mirror/variant, shared BLE address (Developer Mode only) |
 | `StatusWidget.tsx` | Header | Always visible indicators for BLE/USB/Split state pushed from [[STATUS_MODULE]] |
@@ -225,6 +227,8 @@ The configurator is the primary client of `cfg_usb_callback()`. Every user actio
 | Edit a macro | GET / SET | `CFG_KEY_MACRO_SINGLE` |
 | Open "Macros & CKs" | GET | `CFG_KEY_CKEYS` |
 | Edit a custom key | GET / SET | `CFG_KEY_CKEY_SINGLE` |
+| Open "Macros & CKs" | GET | `CFG_KEY_COMBOS` |
+| Edit a combo | GET / SET | `CFG_KEY_COMBO_SINGLE` |
 | Open "Identity" (dev mode) | GET | `CFG_KEY_SYSTEM` |
 | Save identity | SET | `CFG_KEY_SYSTEM` (name, mirror_cols, variant) |
 
@@ -377,6 +381,7 @@ On expiry, `TimeoutError` is caught at the call site and surfaced as an `error` 
 
 - `useMacros`: `saveMacro`, `deleteMacro`
 - `useCustomKeys`: `saveCustomKey`, `deleteCustomKey`
+- `useCombos`: `saveCombo`, `deleteCombo`
 - `DeviceIdentityDashboard`: `saveDeviceIdentity`
 - `SplitDashboard`: `splitStartPairing`, `splitCancelPairing`, `splitUnpair`, `splitRoleSwap`
 - `KeyboardLayoutEditor`: per-layer saves, KLE physical layout SET
@@ -390,6 +395,7 @@ The configurator supports full configuration portability via JSON files, allowin
 - **Full Layouts**: The "..." menu in the Layout section provides options to export or import the entire layer set and (in Dev Mode) the physical layout geometry.
 - **Macros**: The Macros dashboard allows selective export of macro sequences and batch import from JSON.
 - **Custom Keys**: Similar to macros, custom key rules can be exported and imported to preserve complex behaviors.
+- **Combos**: Combo definitions can also be fully exported and imported from JSON.
 
 Imported data is validated against matrix bounds and device limits before being written to the device.
 
@@ -468,6 +474,7 @@ graph TD
 | `KeyboardLayoutEditor.tsx` | Main layout editor: layer management, physical layout rendering, KLE/JSON import, save timeout guard |
 | `MacrosDashboard.tsx` | Macro list + event-sequence editor (CRUD + Portability), success/error notifications |
 | `CustomKeysDashboard.tsx` | Custom key rule editor (PressRelease and MultiAction modes + Portability), success/error notifications |
+| `CombosDashboard.tsx` | Combo rule editor (keys, action, strict order + Portability), success/error notifications |
 | `SplitDashboard.tsx` | Split link management, role swap, RTT benchmark, remote matrix visualizer, success/error notifications |
 | `DeviceIdentityDashboard.tsx` | Device identity (Identity section): name, split variant, and shared BLE ID, success/error notifications |
 | `StatusWidget.tsx` | Live BLE / USB / Split status indicator fed by unsolicited firmware pushes |
@@ -483,8 +490,10 @@ graph TD
 | `types/device.ts` | Shared TypeScript types: `PhysKey`, `DeviceStatus`, `DeviceIdentity`, `NotificationType` |
 | `types/macros.ts` | Macro and MacroElement type definitions |
 | `types/customKeys.ts` | CustomKey, CustomKeyPR, CustomKeyMA type definitions |
+| `types/combos.ts` | Combo type definitions |
 | `hooks/useMacros.ts` | React hook: macro list state + fetch/save/delete with 7 s timeout guard |
 | `hooks/useCustomKeys.ts` | React hook: custom key state + fetch/save/delete with 7 s timeout guard |
+| `hooks/useCombos.ts` | React hook: combo state + fetch/save/delete with 7 s timeout guard |
 | `components/Background3D.tsx` | Full-page 3D keyboard background: procedural geometry, split detection, Minkowski-sum baseplates, connection-driven fade animation |
 | `components/SearchableKeyModal.tsx` | Searchable HID key picker modal with custom title support |
 | `components/MacroEditorModal.tsx` | Full macro event-sequence editor modal |

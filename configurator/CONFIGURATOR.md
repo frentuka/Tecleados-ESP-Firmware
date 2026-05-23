@@ -425,7 +425,35 @@ ID assignment follows the same "smallest available slot" pattern as macros. `id:
 
 ---
 
-## 9. Developer Mode
+## 9. Combos
+
+Combos allow users to trigger an action when a specific set of keys are pressed simultaneously. A combo consists of 2 to 8 keys on the matrix and an action code.
+
+### Data model
+
+```typescript
+export interface Combo {
+    id: number;
+    name: string;
+    keys: { row: number; col: number }[]; // Physical keys
+    action: number;                       // HID code to send
+    activeLayers: number[];               // e.g. [0, 1] means active on Base and FN1
+    strictOrder: boolean;                 // If true, keys must be pressed in exact order
+}
+```
+
+### Device encoding
+
+Fetch all combos: `CFG_KEY_COMBOS` (GET) → list of combos.
+Fetch single: `CFG_KEY_COMBO_SINGLE` (GET, body: `{ id }`).
+Save: `CFG_KEY_COMBO_SINGLE` (SET, body: full `Combo` object).
+Delete: `CFG_KEY_COMBO_SINGLE` (SET, body: `{ delete: id }`).
+
+Up to 32 combos are supported per device (`COMBO_MAX`).
+
+---
+
+## 10. Developer Mode
 
 Developer Mode is toggled by typing the **Developer Code** while the application is focused. There is no visible button for this to prevent accidental activation:
 `↑` `↑` `↓` `↓` `←` `→` `←` `→` `B` `A`
@@ -464,7 +492,7 @@ In Developer Mode, each macro card shows its raw HID action code: `ID: 0x4000` t
 
 ---
 
-## 10. Notification System
+## 11. Notification System
 
 A global, non-intrusive toast notification system provides consistent user feedback across all dashboards. It replaces any use of `alert()` or local error state.
 
@@ -509,7 +537,7 @@ The notification system is used in every dashboard for all save, delete, import,
 
 ---
 
-## 11. Save Timeout Guard (`src/utils/withTimeout.ts`)
+## 12. Save Timeout Guard (`src/utils/withTimeout.ts`)
 
 All write operations to the device are wrapped with a 7-second timeout to prevent the UI from hanging indefinitely if the firmware does not respond.
 
@@ -533,7 +561,7 @@ On timeout, a `TimeoutError` is caught and surfaced as an `error` notification w
 
 ---
 
-## 12. Packet Flow: End-to-End Example
+## 13. Packet Flow: End-to-End Example
 
 **Fetching a single macro (id=2):**
 
@@ -565,7 +593,7 @@ App               useMacros           HIDTransport           Device
 
 ---
 
-## 13. Key Definitions & Action Code Ranges
+## 14. Key Definitions & Action Code Ranges
 
 Defined in `types/protocol.ts` and `KeyDefinitions.ts`:
 
@@ -581,7 +609,7 @@ Defined in `types/protocol.ts` and `KeyDefinitions.ts`:
 
 ---
 
-## 14. 3D Background Studio Environment (`Background3D.tsx` / `App.tsx` / `index.css`)
+## 15. 3D Background Studio Environment (`Background3D.tsx` / `App.tsx` / `index.css`)
 
 The configurator features a highly immersive, multi-layered background environment combining a **procedurally generated real-time 3D keyboard canvas** with an ultra-clean, minimalist studio vignette backdrop. It requires no external assets and relies entirely on runtime generation for lightweight execution.
 

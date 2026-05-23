@@ -3,12 +3,14 @@ import { hidService, HIDTransport } from './HIDService';
 import KeyboardLayoutEditor from './KeyboardLayoutEditor';
 import MacrosDashboard from './MacrosDashboard';
 import CustomKeysDashboard from './CustomKeysDashboard';
+import CombosDashboard from './CombosDashboard';
 import DeviceDashboard from './DeviceDashboard';
 import StatusWidget from './StatusWidget';
 import DevControlsPanel from './components/DevControlsPanel';
 import { useConfirm } from './hooks/useConfirm';
 import { useMacros } from './hooks/useMacros';
 import { useCustomKeys } from './hooks/useCustomKeys';
+import { useCombos } from './hooks/useCombos';
 import { useNotificationStore } from './stores/notificationStore';
 import { getFlagsString } from './utils/packetUtils';
 import type { DeviceStatus, LogMessage, ConnectionNotification } from './types/device';
@@ -43,6 +45,7 @@ type ActiveSection = 'layout' | 'macrosCkeys' | 'device';
 
 function App() {
   const [activeSection, setActiveSection] = useState<ActiveSection>('layout');
+  const [activeMacrosTab, setActiveMacrosTab] = useState<'macros' | 'ckeys' | 'combos'>('macros');
   const [isConnected, setIsConnected] = useState(false);
   const setLayoutIsConnected = useLayoutStore(state => state.setIsConnected);
   const { notification, setNotification, showNotification } = useNotificationStore();
@@ -85,6 +88,13 @@ function App() {
     saveCustomKey: handleSaveCustomKey,
     deleteCustomKey: handleDeleteCustomKey,
   } = useCustomKeys(isConnected, addLog, confirm);
+
+  const {
+    combos,
+    fetchCombos,
+    saveCombo: handleSaveCombo,
+    deleteCombo: handleDeleteCombo,
+  } = useCombos(isConnected, addLog, confirm);
 
   // Persist Developer Mode
   useEffect(() => {
@@ -245,11 +255,12 @@ function App() {
       fetchMacroLimits();
       fetchCustomKeys();
       fetchMacros();
+      fetchCombos();
 
       const interval = setInterval(fetchStatus, 5000);
       return () => clearInterval(interval);
     }
-  }, [isConnected, fetchStatus, fetchMacroLimits, fetchCustomKeys, fetchMacros]);
+  }, [isConnected, fetchStatus, fetchMacroLimits, fetchCustomKeys, fetchMacros, fetchCombos]);
 
 
   // Raw packet logging (display only — ACKs and reassembly are handled by HIDService)
@@ -429,7 +440,7 @@ function App() {
                 className={`header-nav-item ${activeSection === 'macrosCkeys' ? 'active' : ''}`}
                 onClick={() => setActiveSection('macrosCkeys')}
               >
-                <MacrosIcon /> <span className="nav-label">Macros & CKs</span>
+                <MacrosIcon /> <span className="nav-label">Custom Actions</span>
               </button>
               <button
                 className={`header-nav-item ${activeSection === 'device' ? 'active' : ''}`}
@@ -480,27 +491,60 @@ function App() {
 
               <div className={`section-container ${activeSection === 'macrosCkeys' ? 'active' : ''}`}>
                 {activeSection === 'macrosCkeys' && (
-                  <div className="macros-ckeys-split-view">
-                    <div className="list-column">
-                      <MacrosDashboard
-                        macros={macros}
-                        macroLimits={macroLimits}
-                        isDeveloperMode={isDeveloperMode}
-                        onSaveMacro={handleSaveMacro}
-                        onDeleteMacro={handleDeleteMacro}
-                        onReload={fetchMacros}
-                        onFetchSingleMacro={fetchSingleMacro}
-                      />
+                  <div className="macros-ckeys-tabbed-view" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                    <div className="macros-tabs-header" style={{ display: 'flex', gap: '0.5rem', padding: '0.5rem 1rem', background: 'var(--header-bg)' }}>
+                      <button 
+                        className={`header-nav-item ${activeMacrosTab === 'macros' ? 'active' : ''}`}
+                        onClick={() => setActiveMacrosTab('macros')}
+                      >
+                        <span className="nav-label">Macros</span>
+                      </button>
+                      <button 
+                        className={`header-nav-item ${activeMacrosTab === 'ckeys' ? 'active' : ''}`}
+                        onClick={() => setActiveMacrosTab('ckeys')}
+                      >
+                        <span className="nav-label">Custom Keys</span>
+                      </button>
+                      <button 
+                        className={`header-nav-item ${activeMacrosTab === 'combos' ? 'active' : ''}`}
+                        onClick={() => setActiveMacrosTab('combos')}
+                      >
+                        <span className="nav-label">Combos</span>
+                      </button>
                     </div>
-                    <div className="list-column">
-                      <CustomKeysDashboard
-                        customKeys={customKeys}
-                        macros={macros}
-                        isDeveloperMode={isDeveloperMode}
-                        onSave={handleSaveCustomKey}
-                        onDelete={handleDeleteCustomKey}
-                        onReload={fetchCustomKeys}
-                      />
+                    
+                    <div className="macros-tab-content" style={{ flex: 1, minHeight: 0, padding: '1rem', overflow: 'hidden' }}>
+                      {activeMacrosTab === 'macros' && (
+                        <MacrosDashboard
+                          macros={macros}
+                          macroLimits={macroLimits}
+                          isDeveloperMode={isDeveloperMode}
+                          onSaveMacro={handleSaveMacro}
+                          onDeleteMacro={handleDeleteMacro}
+                          onReload={fetchMacros}
+                          onFetchSingleMacro={fetchSingleMacro}
+                        />
+                      )}
+                      {activeMacrosTab === 'ckeys' && (
+                        <CustomKeysDashboard
+                          customKeys={customKeys}
+                          macros={macros}
+                          isDeveloperMode={isDeveloperMode}
+                          onSave={handleSaveCustomKey}
+                          onDelete={handleDeleteCustomKey}
+                          onReload={fetchCustomKeys}
+                        />
+                      )}
+                      {activeMacrosTab === 'combos' && (
+                        <CombosDashboard
+                          combos={combos}
+                          macros={macros}
+                          isDeveloperMode={isDeveloperMode}
+                          onSave={handleSaveCombo}
+                          onDelete={handleDeleteCombo}
+                          onReload={fetchCombos}
+                        />
+                      )}
                     </div>
                   </div>
                 )}
