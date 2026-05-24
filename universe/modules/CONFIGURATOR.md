@@ -273,7 +273,14 @@ To keep the absolute focus on the gorgeous 3D model, its materials, shadows, and
 - **Pointer Isolation**: All transparent structural HTML panels use `pointer-events: none`, allowing clicks and drags on empty space to pass directly through to the 3D Canvas. Interactive dashboard controls explicitly use `pointer-events: auto` to prevent conflicts.
 - **Canvas-Wide Drag Rotation**: A native `pointerdown` listener allows smooth drag-rotation of the 3D keyboard model from any empty backdrop area, while aborting automatically if the click starts on any interactive 2D panel or keyboard keycap.
 
-### 3. 3D Model Rendering Pipeline
+### 3. Auto-Rotation and Weaving Animation
+To achieve a premium, high-end studio feel, the keyboard model avoids continuous spinning in favor of a smooth, lifelike weaving animation:
+- **Sine-Wave Weaving**: The keyboard oscillates smoothly left-to-right along the Y-axis (`Math.sin(state.clock.elapsedTime * weaveFreq + weaveSeed) * weaveAmp`), creating a subtle perspective shift.
+- **Randomized Phase Offset**: A `weaveSeed` ref is initialized at load with a random phase (`Math.random() * Math.PI * 2`) ensuring that each page load starts from a fresh, unique angle.
+- **Tuned Motion Design**: The animation uses a slow frequency (`weaveFreq = 0.18` rad/s, resulting in a ~35-second full cycle) and subtle amplitude (`weaveAmp = 0.26` rad, approximately ±15° of rotation) for an extremely calm and premium visual presence.
+- **Smooth Transition**: The auto-rotate strength is smoothly interpolated (using `lerp`) when transitioning between active user-controlled drag rotation and the idle weaving animation, avoiding abrupt visual snaps.
+
+### 4. 3D Model Rendering Pipeline
 
 1. **Hardcoded fallback** — when no physical layout is loaded, a static 65% keyboard with pre-assigned key colours is displayed (keyed to a standard 65% layout's modifier positions).
 2. **Dynamic generation** — when a physical layout is loaded from the device, the renderer derives all geometry from the `PhysKey[][]` data in `layoutStore`.

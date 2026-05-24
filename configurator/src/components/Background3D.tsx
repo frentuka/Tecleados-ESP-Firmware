@@ -336,6 +336,7 @@ function KeyboardModel({ isAutoRotating, setIsAutoRotating }: { isAutoRotating: 
   const [opacity, setOpacity] = useState(0);
   const targetFade = useRef(0)
   const targetRotation = useRef({ x: 0.2, y: 0 })
+  const weaveSeed = useRef(Math.random() * Math.PI * 2) // random phase offset so each load feels fresh
   const isDragging = useRef(false)
   const pointerDownPos = useRef({ x: 0, y: 0 })
   const hasMoved = useRef(false)
@@ -396,7 +397,15 @@ function KeyboardModel({ isAutoRotating, setIsAutoRotating }: { isAutoRotating: 
       autoRotateStrength.current = THREE.MathUtils.lerp(autoRotateStrength.current, targetStrength, clampedDelta * lerpSpeed);
 
       if (autoRotateStrength.current > 0.001) {
-        targetRotation.current.y += clampedDelta * 0.1 * autoRotateStrength.current;
+        // Weaving: smooth sine oscillation left↔right instead of continuous spin
+        const weaveFreq = 0.18; // radians/s — full cycle ~35 s
+        const weaveAmp  = 0.26; // ±~15° in radians
+        const weaveY = Math.sin(state.clock.elapsedTime * weaveFreq + weaveSeed.current) * weaveAmp;
+        targetRotation.current.y = THREE.MathUtils.lerp(
+          targetRotation.current.y,
+          weaveY,
+          clampedDelta * 0.6 * autoRotateStrength.current
+        );
         const idleX = Math.sin(state.clock.elapsedTime * 0.2) * 0.1 + 0.2;
         targetRotation.current.x = THREE.MathUtils.lerp(targetRotation.current.x, idleX, clampedDelta * 0.2 * autoRotateStrength.current);
       }
