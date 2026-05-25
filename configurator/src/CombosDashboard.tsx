@@ -72,7 +72,22 @@ function ComboCard({ combo, isSelected, onClick, onDelete, macros, isDeveloperMo
     );
 }
 
-function ComboEditorModal({ combo, macros, isSaving, error, onSave, onDelete, onClose }: {
+const ComboNameInput = ({ initialName, onChange }: { initialName: string, onChange: (val: string) => void }) => {
+    const [localName, setLocalName] = useState(initialName);
+    return (
+        <input
+            type="text"
+            value={localName}
+            onChange={e => setLocalName(e.target.value)}
+            onBlur={() => onChange(localName)}
+            onKeyDown={e => { if (e.key === 'Enter') { e.currentTarget.blur(); } }}
+            placeholder="Combo Name..."
+            className="macro-name-input-compact"
+        />
+    );
+};
+
+function ComboEditorModal({ combo, macros, isSaving, error, onSave, onDelete, onClose, isDeveloperMode }: {
     combo: Combo;
     macros: Macro[];
     isSaving: boolean;
@@ -80,6 +95,7 @@ function ComboEditorModal({ combo, macros, isSaving, error, onSave, onDelete, on
     onSave: (c: Combo) => void;
     onDelete: (id: number) => void;
     onClose: () => void;
+    isDeveloperMode: boolean;
 }) {
     const [local, setLocal] = useState<Combo>({ ...combo });
     const [actionSelectorOpen, setActionSelectorOpen] = useState(false);
@@ -96,90 +112,85 @@ function ComboEditorModal({ combo, macros, isSaving, error, onSave, onDelete, on
     return createPortal(
         <div className="modal-overlay" onClick={onClose}>
             <div className="modal-content ckey-editor-modal" style={{ maxWidth: '800px', width: '90%' }} onClick={e => e.stopPropagation()}>
-                <div className="modal-header">
-                    <h3 className="ckey-editor-title">
-                        {local.id < COMBO_MAX ? `Edit Combo [ID: ${local.id}]` : 'New Combo'}
-                    </h3>
+                <div className="modal-header macro-modal-header">
+                    <div className="macro-name-container">
+                        <ComboNameInput 
+                            initialName={local.name || (local.id >= 0 && local.id < COMBO_MAX ? `Combo #${local.id}` : '')} 
+                            onChange={val => setLocal({ ...local, name: val })} 
+                        />
+                    </div>
+                    {isDeveloperMode && (
+                        <div className="macro-editor-actions-header">
+                            <span style={{color: 'var(--text-muted)', fontSize: '0.8rem', marginRight: '1rem'}}>
+                                ID: {local.id < COMBO_MAX ? local.id : 'New'}
+                            </span>
+                        </div>
+                    )}
                     <button className="btn-close" onClick={onClose}>×</button>
                 </div>
 
-                <div className="modal-body">
+                <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                     {error && <div className="ckey-error">{error}</div>}
 
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                        <div>
-                            <div className="ckey-field">
-                                <label className="ckey-field-label">Name</label>
-                                <input
-                                    className="ckey-field-input"
-                                    value={local.name}
-                                    onChange={e => setLocal({ ...local, name: e.target.value })}
-                                    placeholder="e.g. Save Shortcut"
+                    <div className="ckey-field" style={{ margin: 0 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                            <label className="ckey-field-label" style={{ margin: 0 }}>Trigger Keys ({local.keys.length}/8)</label>
+                            <label className="ckey-field-label" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', margin: 0 }}>
+                                <input 
+                                    type="checkbox" 
+                                    checked={local.strictOrder}
+                                    onChange={e => setLocal({...local, strictOrder: e.target.checked})}
                                 />
-                            </div>
+                                Strict Order
+                            </label>
+                        </div>
+                        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontStyle: 'italic', marginBottom: '0.5rem' }}>
+                            Select the keys on the layout below. {local.strictOrder && 'The numbers indicate the required order.'}
+                        </div>
+                        <div style={{ border: '1px solid var(--border-color)', borderRadius: '8px', padding: '0.5rem', background: 'var(--bg-color)' }}>
+                            <ComboKeySelector 
+                                selectedKeys={local.keys}
+                                onChange={keys => setLocal({ ...local, keys })}
+                                strictOrder={local.strictOrder}
+                            />
+                        </div>
+                    </div>
 
-                            <div className="ckey-field">
-                                <label className="ckey-field-label">Action</label>
-                                <button
-                                    className={`ckey-slot-btn ${local.action ? 'has-value' : ''}`}
-                                    onClick={() => setActionSelectorOpen(true)}
-                                    style={{ width: '100%', justifyContent: 'flex-start' }}
-                                >
-                                    <span className={`key-chip ${local.action ? 'key-chip-active' : ''}`}>
-                                        {local.action ? getKeyName(local.action, macros) : 'Select Action...'}
-                                    </span>
-                                </button>
-                                {actionSelectorOpen && (
-                                    <SearchableKeyModal
-                                        currentValue={local.action}
-                                        macros={macros}
-                                        onSelect={v => { setLocal({ ...local, action: v }); setActionSelectorOpen(false); }}
-                                        onClose={() => setActionSelectorOpen(false)}
-                                    />
-                                )}
-                            </div>
-
-                            <div className="ckey-field">
-                                <label className="ckey-field-label">Active Layers</label>
-                                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                                    {LAYER_NAMES.map((name, i) => (
-                                        <button
-                                            key={i}
-                                            className={`ckey-mode-btn ${local.activeLayers.includes(i) ? 'active' : ''}`}
-                                            onClick={() => toggleLayer(i)}
-                                            style={{ flex: 1, padding: '0.5rem' }}
-                                        >
-                                            {name}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-                            
-                            <div className="ckey-field">
-                                <label className="ckey-field-label" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-                                    <input 
-                                        type="checkbox" 
-                                        checked={local.strictOrder}
-                                        onChange={e => setLocal({...local, strictOrder: e.target.checked})}
-                                    />
-                                    Strict Order (keys must be pressed in exact order)
-                                </label>
-                            </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                        <div className="ckey-field" style={{ margin: 0 }}>
+                            <label className="ckey-field-label">Action</label>
+                            <button
+                                className={`ckey-slot-btn ${local.action ? 'has-value' : ''}`}
+                                onClick={() => setActionSelectorOpen(true)}
+                                style={{ width: '200px', justifyContent: 'flex-start' }}
+                            >
+                                <span className={`key-chip ${local.action ? 'key-chip-active' : ''}`}>
+                                    {local.action ? getKeyName(local.action, macros) : 'Select Action...'}
+                                </span>
+                            </button>
+                            {actionSelectorOpen && (
+                                <SearchableKeyModal
+                                    currentValue={local.action}
+                                    macros={macros}
+                                    onSelect={v => { setLocal({ ...local, action: v }); setActionSelectorOpen(false); }}
+                                    onClose={() => setActionSelectorOpen(false)}
+                                />
+                            )}
                         </div>
 
-                        <div>
-                            <div className="ckey-field">
-                                <label className="ckey-field-label">Trigger Keys ({local.keys.length}/8)</label>
-                                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
-                                    Select the keys on the layout below. {local.strictOrder && 'The numbers indicate the required order.'}
-                                </div>
-                                <div style={{ border: '1px solid var(--border-color)', borderRadius: '8px', padding: '0.5rem', background: 'var(--bg-color)' }}>
-                                    <ComboKeySelector 
-                                        selectedKeys={local.keys}
-                                        onChange={keys => setLocal({ ...local, keys })}
-                                        strictOrder={local.strictOrder}
-                                    />
-                                </div>
+                        <div className="ckey-field" style={{ margin: 0 }}>
+                            <label className="ckey-field-label">Active Layers</label>
+                            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                {LAYER_NAMES.map((name, i) => (
+                                    <button
+                                        key={i}
+                                        className={`ckey-mode-btn ${local.activeLayers.includes(i) ? 'active' : ''}`}
+                                        onClick={() => toggleLayer(i)}
+                                        style={{ flex: 1, padding: '0.5rem' }}
+                                    >
+                                        {name}
+                                    </button>
+                                ))}
                             </div>
                         </div>
                     </div>
@@ -201,7 +212,7 @@ function ComboEditorModal({ combo, macros, isSaving, error, onSave, onDelete, on
                         onClick={() => onSave(local)}
                         disabled={isSaving}
                     >
-                        {isSaving ? 'Saving...' : 'Save to Device'}
+                        {isSaving ? 'Saving...' : 'Save'}
                     </button>
                 </div>
             </div>
@@ -278,9 +289,25 @@ export default function CombosDashboard({ combos, macros, isDeveloperMode, onSav
             return;
         }
 
+        // Generate default name "Combo #(n+1)", appending "-x" if occupied
+        const n = combos.length;
+        const baseName = `Combo #${n + 1}`;
+        const isNameOccupied = (nameToCheck: string) => {
+            return combos.some(c => c.name.trim().toLowerCase() === nameToCheck.trim().toLowerCase());
+        };
+
+        let finalName = baseName;
+        if (isNameOccupied(baseName)) {
+            let x = 2;
+            while (isNameOccupied(`${baseName}-${x}`)) {
+                x++;
+            }
+            finalName = `${baseName}-${x}`;
+        }
+
         setSelected({
             id: -1,
-            name: '',
+            name: finalName,
             keys: [],
             action: 0,
             activeLayers: [0, 1, 2, 3],
@@ -389,6 +416,7 @@ export default function CombosDashboard({ combos, macros, isDeveloperMode, onSav
                     onSave={handleSave}
                     onDelete={handleDelete}
                     onClose={() => setSelected(null)}
+                    isDeveloperMode={isDeveloperMode}
                 />
             )}
             <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept=".json" onChange={handleImport} />

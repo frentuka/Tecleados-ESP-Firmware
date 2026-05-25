@@ -801,9 +801,9 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                 row.forEach(pk => {
                                     if (pk.r && pk.rx !== undefined && pk.ry !== undefined) {
                                         const corners: [number, number][] = [
-                                            [pk.x,        pk.y       ],
-                                            [pk.x + pk.w, pk.y       ],
-                                            [pk.x,        pk.y + pk.h],
+                                            [pk.x, pk.y],
+                                            [pk.x + pk.w, pk.y],
+                                            [pk.x, pk.y + pk.h],
                                             [pk.x + pk.w, pk.y + pk.h],
                                         ];
                                         corners.forEach(([cx, cy]) => {
@@ -832,17 +832,17 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
 
                             return (
                                 <div className="keyboard-grid"
-                                    onMouseDown={(e) => { 
-                                        if (e.target === e.currentTarget) setSelectedKeys(new Set()); 
+                                    onMouseDown={(e) => {
+                                        if (e.target === e.currentTarget) setSelectedKeys(new Set());
                                         dragStartedInEditorRef.current = true;
                                     }}
                                     style={{
-                                    position: 'relative',
-                                    width: `${gridW * 3.2}rem`,
-                                    height: `${gridH * 3.2}rem`,
-                                    padding: 0,
-                                    margin: '0 auto',
-                                }}>
+                                        position: 'relative',
+                                        width: `${gridW * 3.2}rem`,
+                                        height: `${gridH * 3.2}rem`,
+                                        padding: 0,
+                                        margin: '0 auto',
+                                    }}>
                                     {layout.map((physRow: PhysKey[], ri: number) => (
                                         <div key={ri} className="keyboard-row">
                                             {physRow.map((pk: PhysKey) => {

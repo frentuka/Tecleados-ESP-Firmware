@@ -132,18 +132,12 @@ export default function ComboKeySelector({ selectedKeys, onChange, strictOrder }
                                     >
                                         {isSelected && strictOrder && orderIndex >= 0 && (
                                             <span style={{
-                                                position: 'absolute',
-                                                top: 2, right: 4,
-                                                fontSize: '0.65rem',
+                                                fontSize: '0.9rem',
                                                 fontWeight: 'bold',
-                                                opacity: 0.8
                                             }}>
                                                 {orderIndex + 1}
                                             </span>
                                         )}
-                                        <span style={{ opacity: 0.3, fontSize: '0.6rem' }}>
-                                            {pk.row},{pk.col}
-                                        </span>
                                     </button>
                                 </div>
                             );

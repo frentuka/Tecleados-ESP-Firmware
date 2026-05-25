@@ -420,7 +420,7 @@
   color: var(--accent-color) !important;
   transform: translateY(1.5px) scale(0.97);
   border: 1.5px solid var(--accent-color) !important;
-  box-shadow: 
+  box-shadow:
     0 0 15px rgba(88, 166, 255, 0.2),
     inset 0 1px 4px rgba(0, 0, 0, 0.4) !important;
   z-index: 10;
