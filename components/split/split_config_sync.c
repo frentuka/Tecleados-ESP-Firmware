@@ -13,6 +13,7 @@
 #include "cfg_ble.h"
 #include "cfg_macros.h"
 #include "cfg_custom_keys.h"
+#include "cfg_combos.h"
 #include "split_session.h"
 #include "host/ble_store.h"
 #include "freertos/semphr.h"
@@ -71,6 +72,7 @@ const split_sync_entry_t SPLIT_SYNC_ENTRIES[] = {
     { CFGMOD_KIND_PHYSICAL, CFG_ST_PHYSICAL_LAYOUT },
     { CFGMOD_KIND_MACRO,    "mac_idx"       },
     { CFGMOD_KIND_CKEY,     "ck_idx"        },
+    { CFGMOD_KIND_COMBO,    "cmb_idx"       },
     { CFGMOD_KIND_CONNECTION, "ble_cfg"     },
     { CFGMOD_KIND_BLE_BOND, "all"           },
 };
@@ -249,6 +251,18 @@ esp_err_t split_config_sync_push_kind(const uint8_t *peer_mac, split_seq_alloc_f
                     if (cidx.mask[j / 8] & (1u << (j % 8))) {
                         char sub_key[12];
                         snprintf(sub_key, sizeof(sub_key), "ck_%u", j);
+                        split_config_sync_push(peer_mac, get_seq, kind, sub_key);
+                    }
+                }
+            }
+        } else if (kind == CFGMOD_KIND_COMBO && strcmp(key, "cmb_idx") == 0) {
+            cfg_combo_index_t cmbidx = {0};
+            size_t cmbidx_len = sizeof(cmbidx);
+            if (cfgmod_read_storage(kind, key, &cmbidx, &cmbidx_len) == ESP_OK) {
+                for (uint16_t j = 0; j < 32; j++) {
+                    if (cmbidx.active_mask & (1u << j)) {
+                        char sub_key[16];
+                        snprintf(sub_key, sizeof(sub_key), "cmb_%u", j);
                         split_config_sync_push(peer_mac, get_seq, kind, sub_key);
                     }
                 }

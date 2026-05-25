@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { hidService } from '../HIDService';
-import type { Combo } from '../types/combos';
+import type { Combo, ComboLimits } from '../types/combos';
 import { withTimeout } from '../utils/withTimeout';
 
 type ConfirmFn = (title: string, description: string) => Promise<boolean>;
@@ -11,6 +11,17 @@ export function useCombos(
     confirm: ConfirmFn,
 ) {
     const [combos, setCombos] = useState<Combo[]>([]);
+    const [comboLimits, setComboLimits] = useState<ComboLimits | null>(null);
+
+    const fetchComboLimits = useCallback(async () => {
+        if (!isConnected) return;
+        try {
+            const limits = await hidService.fetchComboLimits();
+            if (limits) setComboLimits(limits);
+        } catch (e) {
+            console.error('[useCombos] Failed to fetch combo limits:', e);
+        }
+    }, [isConnected]);
 
     const fetchSingleCombo = useCallback(async (id: number): Promise<Combo | null> => {
         if (!isConnected) return null;
@@ -52,7 +63,8 @@ export function useCombos(
             const usedIds = new Set(combos.map(k => k.id));
             let nextId = 0;
             while (usedIds.has(nextId)) nextId++;
-            if (nextId >= 32) throw new Error('Maximum number of combos reached.');
+            const maxCombos = comboLimits?.maxCombos ?? 32;
+            if (nextId >= maxCombos) throw new Error('Maximum number of combos reached.');
             comboToSave = { ...combo, id: nextId };
         }
         const ok = await withTimeout(hidService.saveCombo(comboToSave), 7000);
@@ -76,7 +88,9 @@ export function useCombos(
 
     return {
         combos,
+        comboLimits,
         fetchCombos,
+        fetchComboLimits,
         saveCombo,
         deleteCombo,
     };

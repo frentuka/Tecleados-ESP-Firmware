@@ -24,6 +24,7 @@ import {
     CFG_KEY_CKEY_SINGLE,
     CFG_KEY_COMBOS,
     CFG_KEY_COMBO_SINGLE,
+    CFG_KEY_COMBO_LIMITS,
     SYS_CMD_INJECT_KEY,
     SYS_CMD_CLEAR_INJECTED,
     SPLIT_CMD_START_PAIRING,
@@ -470,6 +471,23 @@ export class DeviceController {
     }
 
     // ── Combos ──────────────────────────────────────────────────────────
+
+    public async fetchComboLimits(): Promise<{ maxCombos: number; maxKeys: number } | null> {
+        if (!this.isConnected()) return null;
+        const buf = this.buildConfigPayload(CFG_CMD_GET, CFG_KEY_COMBO_LIMITS);
+        const resp = await this.sendCommand(buf, 5000);
+        if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
+            try {
+                const parsed = JSON.parse(resp.jsonText);
+                if (parsed.maxCombos && parsed.maxKeys) {
+                    return { maxCombos: parsed.maxCombos, maxKeys: parsed.maxKeys };
+                }
+            } catch (e) {
+                console.error('fetchComboLimits parse error:', e);
+            }
+        }
+        return null;
+    }
 
     public async fetchCombos(): Promise<Combo[]> {
         if (!this.isConnected()) return [];

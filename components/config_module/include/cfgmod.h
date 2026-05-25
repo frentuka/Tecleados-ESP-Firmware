@@ -19,6 +19,7 @@ typedef enum cfgmod_kind : uint8_t {
   CFGMOD_KIND_PHYSICAL,  // Raw blob kind — not registered, uses direct NVS read/write
   CFGMOD_KIND_CKEY,      // Custom Keys
   CFGMOD_KIND_SPLIT,     // Split keyboard pairing data
+  CFGMOD_KIND_COMBO,     // Combo definitions
   CFGMOD_KIND_BLE_BOND,  // Bulk serialization of nimble_bond namespace
   CFGMOD_KIND_MAX
 } cfgmod_kind_t;
@@ -37,6 +38,9 @@ typedef enum cfgmod_key_id : uint8_t {
   CFG_KEY_CKEYS,        // Custom Keys outline (all names/IDs)
   CFG_KEY_CKEY_SINGLE,  // Single Custom Key GET / SET / DELETE
   CFG_KEY_SYSTEM,       // Device identity (name, split config)
+  CFG_KEY_COMBOS,       // 0x0D — Combo outline (all IDs/names)
+  CFG_KEY_COMBO_SINGLE, // 0x0E — Single Combo GET/SET/DELETE
+  CFG_KEY_COMBO_LIMITS, // 0x0F — Returns {maxCombos, maxKeys}
   CFG_KEY_MAX
 } cfgmod_key_id_t;
 

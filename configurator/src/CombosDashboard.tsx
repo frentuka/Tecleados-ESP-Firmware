@@ -4,13 +4,16 @@ import type { Combo } from './types/combos';
 import type { Macro } from './types/macros';
 import SearchableKeyModal from './components/SearchableKeyModal';
 import ComboKeySelector from './components/ComboKeySelector';
+import { ComboPreview } from './components/ComboPreview';
 import { getKeyName } from './KeyDefinitions';
+import { InfoIcon, AlertTriangleIcon } from './components/Icons';
 import { saveJsonFile } from './utils/fileUtils';
 import { useNotificationStore } from './stores/notificationStore';
 import './assets/css/custom-keys-dashboard.css'; // Reusing CSS from custom keys for general layout
 
 interface CombosDashboardProps {
     combos: Combo[];
+    comboLimits: { maxCombos: number; maxKeys: number } | null;
     macros: Macro[];
     isDeveloperMode: boolean;
     onSave: (combo: Combo) => Promise<void>;
@@ -19,10 +22,10 @@ interface CombosDashboardProps {
 }
 
 const LAYER_NAMES = ['Base', 'FN1', 'FN2', 'FN3'];
-const COMBO_MAX = 32;
 
-function ComboCard({ combo, isSelected, onClick, onDelete, macros, isDeveloperMode }: {
+function ComboCard({ combo, index, isSelected, onClick, onDelete, macros, isDeveloperMode }: {
     combo: Combo,
+    index: number,
     isSelected: boolean,
     onClick: () => void,
     onDelete: (id: number) => void,
@@ -36,17 +39,39 @@ function ComboCard({ combo, isSelected, onClick, onDelete, macros, isDeveloperMo
         >
             <div className="macro-card-content-wrapper" style={{ padding: '0.75rem' }}>
                 <div className="macro-card-header">
-                    <h4>{combo.name || `Combo[${combo.id}]`}</h4>
+                    <h4>{combo.name || (isDeveloperMode ? `Combo[${combo.id}]` : `Combo #${index + 1}`)}</h4>
                 </div>
-                <div className="macro-card-body">
-                    <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                        <strong>Trigger:</strong> {combo.keys.length} keys {combo.strictOrder ? '(Ordered)' : ''}
+
+                <div className="macro-card-body" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '0.75rem', padding: '0.5rem 0 0 0', whiteSpace: 'normal' }}>
+                    <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                        <div style={{ flexShrink: 0, width: '100px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <ComboPreview combo={combo} />
+                        </div>
+
+                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--text-muted)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                                    <polyline points="12 5 19 12 12 19"></polyline>
+                                </svg>
+                                <span className={`key-chip ${combo.action ? 'key-chip-active' : ''}`} style={{ fontSize: '0.85rem', padding: '0.15rem 0.5rem', background: 'var(--bg-secondary)', borderRadius: '4px', border: '1px solid var(--border-color)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                    {combo.action ? getKeyName(combo.action, macros) : '(none)'}
+                                </span>
+                            </div>
+                        </div>
                     </div>
-                    <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                        <strong>Action:</strong> {combo.action ? getKeyName(combo.action, macros) : '(none)'}
-                    </div>
-                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
-                        Layers: {combo.activeLayers.length === 0 ? 'None' : combo.activeLayers.map(l => LAYER_NAMES[l]).join(', ')}
+
+                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', fontSize: '0.7rem' }}>
+                        {combo.activeLayers.length === 0 ? (
+                            <span className="ckey-badge" style={{ padding: '0.15rem 0.4rem', borderRadius: '4px', background: 'var(--bg-secondary)', color: 'var(--text-muted)', border: '1px solid var(--border-color)' }}>No Layers</span>
+                        ) : (
+                            combo.activeLayers.map(l => (
+                                <span key={l} className="ckey-badge" style={{ padding: '0.15rem 0.4rem', borderRadius: '4px', background: 'rgba(0, 122, 255, 0.15)', color: '#58a6ff', border: '1px solid rgba(0,122,255,0.3)' }}>L{l}</span>
+                            ))
+                        )}
+                        {combo.strictOrder && <span className="ckey-badge" style={{ padding: '0.15rem 0.4rem', borderRadius: '4px', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}>Ordered</span>}
+                        {combo.delayedPress && <span className="ckey-badge" style={{ padding: '0.15rem 0.4rem', borderRadius: '4px', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}>Delayed</span>}
+                        {combo.cancelKeys && <span className="ckey-badge" style={{ padding: '0.15rem 0.4rem', borderRadius: '4px', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}>Cancel</span>}
                     </div>
                 </div>
             </div>
@@ -87,8 +112,10 @@ const ComboNameInput = ({ initialName, onChange }: { initialName: string, onChan
     );
 };
 
-function ComboEditorModal({ combo, macros, isSaving, error, onSave, onDelete, onClose, isDeveloperMode }: {
+function ComboEditorModal({ combo, index, maxCombos, macros, isSaving, error, onSave, onDelete, onClose, isDeveloperMode }: {
     combo: Combo;
+    index: number;
+    maxCombos: number;
     macros: Macro[];
     isSaving: boolean;
     error: string | null;
@@ -109,20 +136,24 @@ function ComboEditorModal({ combo, macros, isSaving, error, onSave, onDelete, on
         });
     };
 
+    const placeholderName = isDeveloperMode 
+        ? (local.id >= 0 && local.id < maxCombos ? `Combo #${local.id}` : '') 
+        : `Combo #${index + 1}`;
+
     return createPortal(
         <div className="modal-overlay" onClick={onClose}>
             <div className="modal-content ckey-editor-modal" style={{ maxWidth: '800px', width: '90%' }} onClick={e => e.stopPropagation()}>
                 <div className="modal-header macro-modal-header">
                     <div className="macro-name-container">
-                        <ComboNameInput 
-                            initialName={local.name || (local.id >= 0 && local.id < COMBO_MAX ? `Combo #${local.id}` : '')} 
-                            onChange={val => setLocal({ ...local, name: val })} 
+                        <ComboNameInput
+                            initialName={local.name || placeholderName}
+                            onChange={val => setLocal({ ...local, name: val })}
                         />
                     </div>
                     {isDeveloperMode && (
                         <div className="macro-editor-actions-header">
-                            <span style={{color: 'var(--text-muted)', fontSize: '0.8rem', marginRight: '1rem'}}>
-                                ID: {local.id < COMBO_MAX ? local.id : 'New'}
+                            <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginRight: '1rem' }}>
+                                ID: {local.id < maxCombos ? local.id : 'New'}
                             </span>
                         </div>
                     )}
@@ -136,10 +167,10 @@ function ComboEditorModal({ combo, macros, isSaving, error, onSave, onDelete, on
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                             <label className="ckey-field-label" style={{ margin: 0 }}>Trigger Keys ({local.keys.length}/8)</label>
                             <label className="ckey-field-label" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', margin: 0 }}>
-                                <input 
-                                    type="checkbox" 
+                                <input
+                                    type="checkbox"
                                     checked={local.strictOrder}
-                                    onChange={e => setLocal({...local, strictOrder: e.target.checked})}
+                                    onChange={e => setLocal({ ...local, strictOrder: e.target.checked })}
                                 />
                                 Strict Order
                             </label>
@@ -148,7 +179,7 @@ function ComboEditorModal({ combo, macros, isSaving, error, onSave, onDelete, on
                             Select the keys on the layout below. {local.strictOrder && 'The numbers indicate the required order.'}
                         </div>
                         <div style={{ border: '1px solid var(--border-color)', borderRadius: '8px', padding: '0.5rem', background: 'var(--bg-color)' }}>
-                            <ComboKeySelector 
+                            <ComboKeySelector
                                 selectedKeys={local.keys}
                                 onChange={keys => setLocal({ ...local, keys })}
                                 strictOrder={local.strictOrder}
@@ -194,6 +225,99 @@ function ComboEditorModal({ combo, macros, isSaving, error, onSave, onDelete, on
                             </div>
                         </div>
                     </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', alignItems: 'flex-start' }}>
+                        <div className="ckey-field" style={{ margin: 0 }}>
+                            <label className="ckey-field-label">Key Cancel Behavior</label>
+                            <label className="ckey-field-label" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', margin: '0.5rem 0', fontWeight: 'normal', color: 'var(--text-color)' }}>
+                                <input
+                                    type="checkbox"
+                                    checked={local.cancelKeys}
+                                    onChange={e => setLocal({ ...local, cancelKeys: e.target.checked })}
+                                />
+                                Cancel Keys on Trigger
+                            </label>
+                            <div style={{
+                                marginTop: '0.25rem',
+                                padding: '0.5rem 0.75rem',
+                                background: 'rgba(0, 122, 255, 0.05)',
+                                borderRadius: '4px',
+                                fontSize: '0.75rem',
+                                color: 'var(--text-secondary)',
+                                lineHeight: '1.4',
+                                display: 'flex', gap: '0.5rem', alignItems: 'flex-start'
+                            }}>
+                                <div style={{ flexShrink: 0, marginTop: '1px', color: '#007aff' }}>
+                                    <InfoIcon size={14} />
+                                </div>
+                                <div style={{ fontStyle: 'italic' }}>
+                                    When the combo fires, retroactively release the individual key actions that were already pressed.
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="ckey-field" style={{ margin: 0 }}>
+                            <label className="ckey-field-label">Delayed Press Behavior</label>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: '0.5rem 0' }}>
+                                <label className="ckey-field-label" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', margin: 0, fontWeight: 'normal', color: 'var(--text-color)' }}>
+                                    <input
+                                        type="checkbox"
+                                        checked={local.delayedPress}
+                                        onChange={e => setLocal({ ...local, delayedPress: e.target.checked })}
+                                    />
+                                    Delayed Press
+                                </label>
+                                <div style={{
+                                    display: 'flex', alignItems: 'center', gap: '0.5rem',
+                                    opacity: local.delayedPress ? 1 : 0,
+                                    transform: local.delayedPress ? 'translateX(0)' : 'translateX(-10px)',
+                                    transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                                    pointerEvents: local.delayedPress ? 'auto' : 'none',
+                                    visibility: local.delayedPress ? 'visible' : 'hidden'
+                                }}>
+                                    <input
+                                        type="number"
+                                        className="no-spinners combo-delay-input"
+                                        value={local.delayMs}
+                                        min={10}
+                                        max={200}
+                                        onChange={e => setLocal({ ...local, delayMs: parseInt(e.target.value) || 50 })}
+                                        style={{ width: '50px', padding: '0.25rem 0.5rem', borderRadius: '4px', border: '1px solid var(--border-color)', background: 'var(--bg-color)', color: 'var(--text-color)', textAlign: 'center' }}
+                                    />
+                                    <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>ms window</span>
+                                </div>
+                            </div>
+                            <div style={{
+                                display: 'grid',
+                                gridTemplateRows: local.delayedPress ? '1fr' : '0fr',
+                                transition: 'grid-template-rows 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                            }}>
+                                <div style={{ overflow: 'hidden' }}>
+                                    <div style={{
+                                        marginTop: '0.25rem',
+                                        padding: '0.5rem 0.75rem',
+                                        background: 'rgba(255, 170, 0, 0.05)',
+                                        borderLeft: '2px solid var(--warning-color)',
+                                        borderRadius: '0 4px 4px 0',
+                                        fontSize: '0.75rem',
+                                        color: 'var(--text-secondary)',
+                                        lineHeight: '1.4',
+                                        opacity: local.delayedPress ? 1 : 0,
+                                        transition: 'opacity 0.2s ease',
+                                        transitionDelay: local.delayedPress ? '0.1s' : '0s',
+                                        display: 'flex', gap: '0.5rem', alignItems: 'flex-start'
+                                    }}>
+                                        <div style={{ flexShrink: 0, marginTop: '1px', color: 'var(--warning-color)' }}>
+                                            <AlertTriangleIcon size={14} />
+                                        </div>
+                                        <div style={{ fontStyle: 'italic' }}>
+                                            Holds trigger keys for up to {local.delayMs}ms to ensure flawless combo matching, slightly affecting typing feel.
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <div className="modal-footer">
@@ -221,12 +345,13 @@ function ComboEditorModal({ combo, macros, isSaving, error, onSave, onDelete, on
     );
 }
 
-export default function CombosDashboard({ combos, macros, isDeveloperMode, onSave, onDelete, onReload }: CombosDashboardProps) {
+export default function CombosDashboard({ combos, comboLimits, macros, isDeveloperMode, onSave, onDelete, onReload }: CombosDashboardProps) {
     const { showNotification } = useNotificationStore();
     const [selected, setSelected] = useState<Combo | null>(null);
     const [isSaving, setIsSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [isMenuOpen, setIsMenuOpen] = useState(false);
+    const maxCombos = comboLimits?.maxCombos ?? 32;
 
     const menuRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -277,7 +402,7 @@ export default function CombosDashboard({ combos, macros, isDeveloperMode, onSav
 
     const handleNew = () => {
         let firstAvailable = -1;
-        for (let i = 0; i < COMBO_MAX; i++) {
+        for (let i = 0; i < maxCombos; i++) {
             if (!combos.find(k => k.id === i)) {
                 firstAvailable = i;
                 break;
@@ -285,7 +410,7 @@ export default function CombosDashboard({ combos, macros, isDeveloperMode, onSav
         }
 
         if (firstAvailable === -1) {
-            setError(`Maximum number of combos reached (${COMBO_MAX}).`);
+            setError(`Maximum number of combos reached (${maxCombos}).`);
             return;
         }
 
@@ -311,7 +436,10 @@ export default function CombosDashboard({ combos, macros, isDeveloperMode, onSav
             keys: [],
             action: 0,
             activeLayers: [0, 1, 2, 3],
-            strictOrder: false
+            strictOrder: false,
+            cancelKeys: true,
+            delayedPress: false,
+            delayMs: 50
         });
         setError(null);
     };
@@ -320,7 +448,7 @@ export default function CombosDashboard({ combos, macros, isDeveloperMode, onSav
         if (!combo.name.trim()) { setError('Please enter a name for the combo.'); return; }
         if (combo.keys.length < 2) { setError('A combo must have at least 2 keys.'); return; }
         if (combo.action === 0) { setError('Please select an action.'); return; }
-        
+
         setIsSaving(true);
         setError(null);
         try {
@@ -376,8 +504,8 @@ export default function CombosDashboard({ combos, macros, isDeveloperMode, onSav
                 </div>
 
                 <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                    <span className="ckey-count-badge">{combos.length} / {COMBO_MAX}</span>
-                    <button className="btn-new-action btn-new-success" onClick={handleNew} disabled={combos.length >= COMBO_MAX}>
+                    <span className="ckey-count-badge">{combos.length} / {maxCombos}</span>
+                    <button className="btn-new-action btn-new-success" onClick={handleNew} disabled={combos.length >= maxCombos}>
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                             <line x1="12" y1="5" x2="12" y2="19"></line>
                             <line x1="5" y1="12" x2="19" y2="12"></line>
@@ -392,10 +520,11 @@ export default function CombosDashboard({ combos, macros, isDeveloperMode, onSav
                     {sortedCombos.length === 0 ? (
                         <div className="empty-state">No combos defined yet.</div>
                     ) : (
-                        sortedCombos.map(c => (
+                        sortedCombos.map((c, index) => (
                             <ComboCard
                                 key={c.id}
                                 combo={c}
+                                index={index}
                                 isSelected={selected?.id === c.id}
                                 onClick={() => setSelected(c)}
                                 onDelete={handleDelete}
@@ -410,6 +539,8 @@ export default function CombosDashboard({ combos, macros, isDeveloperMode, onSav
             {selected && (
                 <ComboEditorModal
                     combo={selected}
+                    index={selected.id === -1 ? combos.length : sortedCombos.findIndex(c => c.id === selected.id)}
+                    maxCombos={maxCombos}
                     macros={macros}
                     isSaving={isSaving}
                     error={error}

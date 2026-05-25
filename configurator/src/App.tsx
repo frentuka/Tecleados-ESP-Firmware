@@ -91,7 +91,9 @@ function App() {
 
   const {
     combos,
+    comboLimits,
     fetchCombos,
+    fetchComboLimits,
     saveCombo: handleSaveCombo,
     deleteCombo: handleDeleteCombo,
   } = useCombos(isConnected, addLog, confirm);
@@ -253,6 +255,7 @@ function App() {
     if (isConnected) {
       fetchStatus();
       fetchMacroLimits();
+      fetchComboLimits();
       fetchCustomKeys();
       fetchMacros();
       fetchCombos();
@@ -260,7 +263,7 @@ function App() {
       const interval = setInterval(fetchStatus, 5000);
       return () => clearInterval(interval);
     }
-  }, [isConnected, fetchStatus, fetchMacroLimits, fetchCustomKeys, fetchMacros, fetchCombos]);
+  }, [isConnected, fetchStatus, fetchMacroLimits, fetchComboLimits, fetchCustomKeys, fetchMacros, fetchCombos]);
 
 
   // Raw packet logging (display only — ACKs and reassembly are handled by HIDService)
@@ -538,6 +541,7 @@ function App() {
                       {activeMacrosTab === 'combos' && (
                         <CombosDashboard
                           combos={combos}
+                          comboLimits={comboLimits}
                           macros={macros}
                           isDeveloperMode={isDeveloperMode}
                           onSave={handleSaveCombo}

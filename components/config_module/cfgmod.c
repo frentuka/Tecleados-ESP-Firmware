@@ -13,6 +13,7 @@
 
 #include "cfg_custom_keys.h"
 #include "cfg_macros.h"
+#include "cfg_combos.h"
 #include "event_bus.h"
 
 static inline void cfgmod_post_update_event(cfgmod_kind_t kind, const char *key) {
@@ -26,6 +27,7 @@ extern void cfg_layouts_register(void);
 extern void cfg_macros_register(void);
 extern void cfg_system_register(void);
 extern void cfg_physical_register(void);
+extern void cfg_ble_init(void);
 extern void cfg_ble_init(void);
 
 extern esp_err_t cfg_ble_bond_read_all(void *out_buf, size_t *inout_len);
@@ -44,6 +46,7 @@ static const char *const s_kind_ns[CFGMOD_KIND_MAX] = {
     [CFGMOD_KIND_PHYSICAL]   = NULL,
     [CFGMOD_KIND_CKEY]       = "cfg_ck",
     [CFGMOD_KIND_SPLIT]      = "cfg_spl",
+    [CFGMOD_KIND_COMBO]      = "cfg_cmb",
     [CFGMOD_KIND_BLE_BOND]   = NULL,           // Handled by cfg_ble_bond_{read,write}_all; ns unused
 };
 
@@ -109,6 +112,9 @@ static const cfgmod_key_map_t s_key_map[CFG_KEY_MAX] = {
    [CFG_KEY_CKEYS]        = { CFGMOD_KIND_CKEY, "ckeys" },
    [CFG_KEY_CKEY_SINGLE]  = { CFGMOD_KIND_CKEY, "ckeys" },
    [CFG_KEY_SYSTEM]       = { CFGMOD_KIND_SYSTEM, "sys" },
+   [CFG_KEY_COMBOS]       = { CFGMOD_KIND_COMBO, "combos" },
+   [CFG_KEY_COMBO_SINGLE] = { CFGMOD_KIND_COMBO, "combos" },
+   [CFG_KEY_COMBO_LIMITS] = { CFGMOD_KIND_COMBO, "combos" },
 };
 
 /*
@@ -313,6 +319,66 @@ esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
     }
     actual_payload_len = status_size;
 
+  // ---- Combo handlers ----
+  } else if (hdr.key_id == CFG_KEY_COMBO_LIMITS && hdr.cmd == CFG_CMD_GET) {
+    write_json_response(combos_serialize_limits(),
+                        out_payload, out_payload_max, status_size,
+                        &status, &actual_payload_len);
+
+  } else if (hdr.key_id == CFG_KEY_COMBOS && hdr.cmd == CFG_CMD_GET) {
+    cfg_combo_index_t cmb_idx = {0};
+    size_t cmb_idx_len = sizeof(cmb_idx);
+    cfgmod_read_storage(CFGMOD_KIND_COMBO, "cmb_idx", &cmb_idx, &cmb_idx_len);
+    write_json_response(combos_serialize_outline(&cmb_idx),
+                        out_payload, out_payload_max, status_size,
+                        &status, &actual_payload_len);
+
+  } else if (hdr.key_id == CFG_KEY_COMBO_SINGLE && hdr.cmd == CFG_CMD_GET) {
+    cJSON *req = parse_json_from_bytes(data_in, data_in_len);
+    uint16_t requested_id = 0xFFFF;
+    if (req) {
+      cJSON *id_item = cJSON_GetObjectItem(req, "id");
+      if (cJSON_IsNumber(id_item)) requested_id = (uint16_t)id_item->valueint;
+      cJSON_Delete(req);
+    }
+    if (requested_id != 0xFFFF) {
+      cfg_combo_index_t cmb_idx = {0};
+      size_t cmb_idx_len = sizeof(cmb_idx);
+      cfgmod_read_storage(CFGMOD_KIND_COMBO, "cmb_idx", &cmb_idx, &cmb_idx_len);
+      write_json_response(combos_serialize_single(requested_id, &cmb_idx),
+                          out_payload, out_payload_max, status_size,
+                          &status, &actual_payload_len);
+    } else {
+      status = ESP_ERR_INVALID_ARG;
+      actual_payload_len = status_size;
+    }
+
+  } else if (hdr.key_id == CFG_KEY_COMBO_SINGLE && hdr.cmd == CFG_CMD_SET) {
+    cJSON *root = parse_json_from_bytes(data_in, data_in_len);
+    if (root) {
+      cfg_combo_index_t cmb_idx = {0};
+      size_t cmb_idx_len = sizeof(cmb_idx);
+      cfgmod_read_storage(CFGMOD_KIND_COMBO, "cmb_idx", &cmb_idx, &cmb_idx_len);
+
+      cJSON *del = cJSON_GetObjectItem(root, "delete");
+      status = cJSON_IsNumber(del)
+               ? combos_delete_single((uint16_t)del->valueint, &cmb_idx)
+               : combos_upsert_single(root, &cmb_idx);
+
+      if (status != ESP_OK) {
+        ESP_LOGE(TAG, "Combo NVS write failed: 0x%X", (unsigned)status);
+      } else {
+        if (s_registry[CFGMOD_KIND_COMBO].update_fn) {
+          s_registry[CFGMOD_KIND_COMBO].update_fn("combos");
+        }
+        cfgmod_post_update_event(CFGMOD_KIND_COMBO, "combos");
+      }
+      cJSON_Delete(root);
+    } else {
+      status = ESP_ERR_INVALID_ARG;
+    }
+    actual_payload_len = status_size;
+
   // ---- Generic GET/SET handlers ----
   } else if (hdr.cmd == CFG_CMD_GET) {
     ESP_LOGI(TAG, "Received GET message for %s (kind=%d, key_id=%d)", key, kind, (int)hdr.key_id);
@@ -503,6 +569,7 @@ esp_err_t cfg_init(void) {
     cfg_layouts_register();
     cfg_macros_register();
     cfg_custom_keys_register(NULL); // keyboard module re-registers with its callback in kb_custom_key_init()
+    cfg_combos_register(NULL);      // keyboard module re-registers with its callback in kb_combo_init()
     cfg_system_register();
     cfg_physical_register();
     cfg_ble_init();

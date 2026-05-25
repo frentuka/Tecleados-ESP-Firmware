@@ -17,6 +17,7 @@
 #include "kb_system_action.h"
 #include "kb_custom_key.h"
 #include "kb_bitmap.h"
+#include "kb_combo.h"
 
 #include "cfg_layouts.h"
 #include "cfg_system.h"
@@ -392,6 +393,9 @@ static void kb_manager_task(void *arg) {
                     diff[i] = s_matrix[i] ^ (s_last_matrix_valid ? s_last_matrix[i] : 0);
                 }
 
+                // Tick the combo engine (flushes delayed keys)
+                kb_combo_tick(now_us);
+
                 for (size_t byte_idx = 0; byte_idx < KB_MATRIX_BITMAP_BYTES; byte_idx++) {
                     uint8_t d = diff[byte_idx];
                     while (d) {
@@ -407,11 +411,17 @@ static void kb_manager_task(void *arg) {
                         if (curr) {
                             /* Key down: resolve action on current layer and remember it */
                             uint8_t layer    = kb_macro_get_active_layer();
+                            if (kb_combo_process_key(r, c, true, layer)) {
+                                d &= (uint8_t)(d - 1);
+                                continue;
+                            }
                             uint16_t action  = kb_layout_get_action_code(r, c, layer);
                             s_active_action_codes[r][c] = action;
                             kb_macro_process_action(action, true);
                         } else {
                             /* Key up: fire release on the same action code as the press */
+                            uint8_t layer = kb_macro_get_active_layer();
+                            kb_combo_process_key(r, c, false, layer);
                             uint16_t action = s_active_action_codes[r][c];
                             kb_macro_process_action(action, false);
                             s_active_action_codes[r][c] = ACTION_CODE_NONE;
@@ -460,6 +470,7 @@ void kb_manager_start(void) {
     kb_macro_init();
     kb_system_action_init();
     kb_custom_key_init();
+    kb_combo_init();
     cfg_layout_load_all();
 
     cfg_system_t sys;
