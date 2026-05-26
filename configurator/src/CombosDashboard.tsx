@@ -37,42 +37,35 @@ function ComboCard({ combo, index, isSelected, onClick, onDelete, macros, isDeve
             className={`macro-card ${isSelected ? 'ckey-card-selected' : ''}`}
             onClick={onClick}
         >
-            <div className="macro-card-content-wrapper" style={{ padding: '0.75rem' }}>
-                <div className="macro-card-header">
-                    <h4>{combo.name || (isDeveloperMode ? `Combo[${combo.id}]` : `Combo #${index + 1}`)}</h4>
+            <div style={{ flexShrink: 0, width: '75px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <ComboPreview combo={combo} />
+            </div>
+
+            <div className="macro-card-content-wrapper">
+                <div className="macro-card-header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <h4 style={{ margin: 0 }}>{combo.name || (isDeveloperMode ? `Combo[${combo.id}]` : `Combo #${index + 1}`)}</h4>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="var(--text-muted)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, opacity: 0.6 }}>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                            <polyline points="12 5 19 12 12 19"></polyline>
+                        </svg>
+                        <span className={`key-chip ${combo.action ? 'key-chip-active' : ''}`} style={{ fontSize: '0.7rem', padding: '0.1rem 0.4rem', background: 'rgba(255,255,255,0.05)', borderRadius: '4px', border: '1px solid var(--border-color)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {combo.action ? getKeyName(combo.action, macros) : '(none)'}
+                        </span>
+                    </div>
                 </div>
 
-                <div className="macro-card-body" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '0.75rem', padding: '0.5rem 0 0 0', whiteSpace: 'normal' }}>
-                    <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-                        <div style={{ flexShrink: 0, width: '100px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                            <ComboPreview combo={combo} />
-                        </div>
-
-                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--text-muted)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-                                    <line x1="5" y1="12" x2="19" y2="12"></line>
-                                    <polyline points="12 5 19 12 12 19"></polyline>
-                                </svg>
-                                <span className={`key-chip ${combo.action ? 'key-chip-active' : ''}`} style={{ fontSize: '0.85rem', padding: '0.15rem 0.5rem', background: 'var(--bg-secondary)', borderRadius: '4px', border: '1px solid var(--border-color)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                    {combo.action ? getKeyName(combo.action, macros) : '(none)'}
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', fontSize: '0.7rem' }}>
-                        {combo.activeLayers.length === 0 ? (
-                            <span className="ckey-badge" style={{ padding: '0.15rem 0.4rem', borderRadius: '4px', background: 'var(--bg-secondary)', color: 'var(--text-muted)', border: '1px solid var(--border-color)' }}>No Layers</span>
-                        ) : (
-                            combo.activeLayers.map(l => (
-                                <span key={l} className="ckey-badge" style={{ padding: '0.15rem 0.4rem', borderRadius: '4px', background: 'rgba(0, 122, 255, 0.15)', color: '#58a6ff', border: '1px solid rgba(0,122,255,0.3)' }}>L{l}</span>
-                            ))
-                        )}
-                        {combo.strictOrder && <span className="ckey-badge" style={{ padding: '0.15rem 0.4rem', borderRadius: '4px', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}>Ordered</span>}
-                        {combo.delayedPress && <span className="ckey-badge" style={{ padding: '0.15rem 0.4rem', borderRadius: '4px', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}>Delayed</span>}
-                        {combo.cancelKeys && <span className="ckey-badge" style={{ padding: '0.15rem 0.4rem', borderRadius: '4px', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}>Cancel</span>}
-                    </div>
+                <div className="macro-card-body" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap', fontSize: '0.65rem' }}>
+                    {combo.activeLayers.length === 0 ? (
+                        <span className="ckey-badge" style={{ padding: '0.1rem 0.35rem', borderRadius: '4px', background: 'var(--bg-secondary)', color: 'var(--text-muted)', border: '1px solid var(--border-color)' }}>No Layers</span>
+                    ) : (
+                        combo.activeLayers.map(l => (
+                            <span key={l} className="ckey-badge" style={{ padding: '0.1rem 0.35rem', borderRadius: '4px', background: 'rgba(0, 122, 255, 0.12)', color: '#58a6ff', border: '1px solid rgba(0,122,255,0.25)' }}>L{l}</span>
+                        ))
+                    )}
+                    {combo.strictOrder && <span className="ckey-badge" style={{ padding: '0.1rem 0.35rem', borderRadius: '4px', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}>Ordered</span>}
+                    {combo.delayedPress && <span className="ckey-badge" style={{ padding: '0.1rem 0.35rem', borderRadius: '4px', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}>Delayed</span>}
+                    {combo.cancelKeys && <span className="ckey-badge" style={{ padding: '0.1rem 0.35rem', borderRadius: '4px', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}>Cancel</span>}
                 </div>
             </div>
 
