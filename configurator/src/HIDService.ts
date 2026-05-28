@@ -99,7 +99,7 @@ export type {
 } from './types/macros';
 
 // Re-export transport utilities
-export { computeCrc8 } from './services/HIDTransport';
+export { computeCrc8, HIDTransport } from './services/HIDTransport';
 
 // Create and export the singleton
 import { DeviceController } from './services/DeviceController';

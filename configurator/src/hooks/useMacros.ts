@@ -9,6 +9,7 @@ import {
     CFG_KEY_MACRO_SINGLE,
 } from '../HIDService';
 import type { Macro } from '../types/macros';
+import { withTimeout } from '../utils/withTimeout';
 
 type ConfirmFn = (title: string, description: string) => Promise<boolean>;
 
@@ -185,7 +186,7 @@ export function useMacros(
         buf[2] = CFG_KEY_MACRO_SINGLE;
         buf.set(jsonBytes, 3);
 
-        const resp = await hidService.sendCommand(buf);
+        const resp = await withTimeout(hidService.sendCommand(buf), 7000);
         if (resp && resp.status === 0) {
             // Final merge: ensure the specific card is updated and deduplicated by ID
             const newList = macrosRef.current.map(m => m.id === macroToSave.id ? macroToSave : m);
@@ -220,7 +221,7 @@ export function useMacros(
         buf[2] = CFG_KEY_MACRO_SINGLE;
         buf.set(jsonBytes, 3);
 
-        const resp = await hidService.sendCommand(buf);
+        const resp = await withTimeout(hidService.sendCommand(buf), 7000);
         if (resp && resp.status === 0) {
             syncMacros(macrosRef.current.filter(m => m.id !== id));
             delete macroCache.current[id]; // Remove from cache

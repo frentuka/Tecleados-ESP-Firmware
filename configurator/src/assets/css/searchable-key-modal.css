@@ -1,0 +1,163 @@
+/* ═══════════════════════════════════════════════
+   SELECT KEY MODAL ACCORDION REVAMP
+   ═══════════════════════════════════════════════ */
+
+.accordion-modal {
+  position: relative;
+  max-width: 500px;
+  width: 90%;
+  background: rgba(13, 17, 23, 0.85);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  border-radius: 16px;
+}
+
+.accordion-modal.expanded {
+  max-width: 650px;
+}
+
+.accordion-header-top {
+  display: flex;
+  margin-bottom: 0.5rem;
+}
+
+.btn-close-inline {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.btn-close-inline:hover {
+  color: rgba(255, 80, 80, 0.9);
+  background: rgba(255, 80, 80, 0.15);
+  transform: rotate(90deg);
+}
+
+.accordion-header {
+  padding: 1rem 1.5rem 1.5rem 1.5rem;
+}
+
+.accordion-menu-row {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+  margin-bottom: 1.25rem;
+}
+
+.accordion-btn {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+}
+
+.accordion-btn span {
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.accordion-btn:hover:not(.disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.accordion-btn.active {
+  background: rgba(88, 166, 255, 0.15);
+  border-color: var(--accent-color);
+  color: #fff;
+  box-shadow: 0 4px 15px rgba(88, 166, 255, 0.2);
+}
+
+.accordion-btn.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  filter: grayscale(1);
+}
+
+.lock-icon {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  color: var(--text-secondary);
+}
+
+.accordion-search {
+  position: relative;
+}
+
+.accordion-search input {
+  width: 100%;
+  padding: 0.75rem 1.2rem;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  color: var(--text-secondary);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 0.95rem;
+  font-weight: 400;
+  letter-spacing: 0.5px;
+  outline: none;
+  text-align: center;
+  transition: all 0.3s;
+  caret-color: transparent;
+}
+
+.accordion-search input::placeholder {
+  color: rgba(255, 255, 255, 0.3);
+}
+
+.accordion-search input:focus {
+  background: rgba(0, 0, 0, 0.4);
+  border-color: rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.accordion-search input::selection {
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+}
+
+.accordion-smooth-wrapper {
+  transition: height 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.accordion-smooth-content {
+  padding: 0 1.5rem 1.5rem 1.5rem;
+}
+
+@keyframes keyPopIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.key-option-anim {
+  animation: keyPopIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+

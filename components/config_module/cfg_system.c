@@ -6,9 +6,9 @@
 
 
 // Per-device identity fields — stored in "sys_id", never synced to the other half.
-// Keeps device_name, split_variant and split_mirror_cols independent on each half.
+// Keeps split_variant and split_mirror_cols independent on each half.
+// device_name is purposefully EXCLUDED here so it synchronizes across split halves.
 typedef struct __attribute__((packed)) {
-  char device_name[32];
   bool is_split;
   bool split_mirror_cols;
   char split_variant[16];
@@ -30,7 +30,6 @@ static void sys_apply_local_id(cfg_system_t *s) {
   size_t len = sizeof(id);
   if (cfgmod_read_storage(CFGMOD_KIND_SYSTEM, "sys_id", &id, &len) == ESP_OK
       && len == sizeof(cfg_sys_id_t)) {
-    memcpy(s->device_name,    id.device_name,    sizeof(s->device_name));
     s->is_split        = id.is_split;
     s->split_mirror_cols = id.split_mirror_cols;
     memcpy(s->split_variant,  id.split_variant,  sizeof(s->split_variant));
@@ -39,11 +38,11 @@ static void sys_apply_local_id(cfg_system_t *s) {
 
 static void sys_default(void *out_struct) {
   cfg_system_t *s = (cfg_system_t *)out_struct;
-  strncpy(s->device_name, "Antigravity KB", sizeof(s->device_name) - 1);
+  strncpy(s->device_name, "Tecleados MK1", sizeof(s->device_name) - 1);
   s->device_name[sizeof(s->device_name) - 1] = '\0';
   s->sleep_timeout_ms = 300000; // 5 mins
   s->rgb_brightness = 255;
-  s->bluetooth_enabled = true;
+  s->bluetooth_enabled = false;
   s->is_split = false;
   s->split_mirror_cols = false;
   s->split_variant[0] = '\0';
@@ -147,7 +146,6 @@ void cfg_system_register(void) {
       || id_len != sizeof(cfg_sys_id_t)) {
     cfg_system_t sys;
     cfgmod_get_config(CFGMOD_KIND_SYSTEM, "sys", &sys);
-    memcpy(id.device_name,   sys.device_name,   sizeof(id.device_name));
     id.is_split          = sys.is_split;
     id.split_mirror_cols = sys.split_mirror_cols;
     memcpy(id.split_variant, sys.split_variant, sizeof(id.split_variant));
@@ -176,9 +174,8 @@ esp_err_t cfg_system_set(const cfg_system_t *in_sys) {
   esp_err_t err = cfgmod_set_config(CFGMOD_KIND_SYSTEM, "sys", in_sys);
   if (err == ESP_OK) {
     // Persist per-device identity separately so a future "sys" sync from the
-    // master cannot overwrite this half's device_name, split_variant, etc.
+    // master cannot overwrite this half's hardware variant, etc.
     cfg_sys_id_t id;
-    memcpy(id.device_name,   in_sys->device_name,   sizeof(id.device_name));
     id.is_split          = in_sys->is_split;
     id.split_mirror_cols = in_sys->split_mirror_cols;
     memcpy(id.split_variant, in_sys->split_variant, sizeof(id.split_variant));

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Macro } from '../types/macros';
+import '../assets/css/macro-list-modals.css';
 
 interface ExportModalProps {
     macros: Macro[];

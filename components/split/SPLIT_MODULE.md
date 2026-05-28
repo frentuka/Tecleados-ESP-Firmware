@@ -86,7 +86,7 @@ The module is broken into single-responsibility C files, orchestrated by `splitm
 - `split_bridge.c`: Links split actions with keyboard scanning and BLE module. Handles BLE role-based suspension and state handover.
 - `split_sync.c`: Remote matrix state serialization (`KEY_STATE_FULL`/`KEY_STATE_DELTA`). Mutex-protected.
 - `split_config_sync.c`: Fragmented NVS replication with role-aware BLE/bond sync guards.
-- `split_bench.c`: RTT benchmarking via PING/PONG.
+- `split_bench.c`: Low-latency Link RTT (Delay) and Keyboard Matrix Polling Rate benchmarking.
 - `split_usb.c`: `MODULE_SPLIT` USB commands from the Configurator.
 
 ---
@@ -110,9 +110,13 @@ All over-the-air packets share a standard 10-byte header (Version `0x02`):
 | `PING/PONG` | `0x50`/`0x51` | RTT benchmark probes. |
 | `BLE_CMD/STATUS` | `0x60`/`0x61` | Configurator tunnel for managing BLE from the Slave via USB. |
 
-### Heartbeat RTT Measurement
-The slave transmits a `HEARTBEAT` frame containing its local time `sent_us`. The Master explicitly echoes this exact value back in its response. Upon receiving the response, the slave computes:
-`RTT = now_us - sent_us` and stores `latency_us = RTT / 2`.
+### Heartbeat RTT & Link Benchmarking
+- **Heartbeat Latency**: The slave transmits a periodic `HEARTBEAT` frame containing its local time `sent_us`. The Master explicitly echoes this exact value back in its response. Upon receiving the response, the slave computes `RTT = now_us - sent_us` and stores `latency_us = RTT / 2`.
+- **Delay (RTT/2) Benchmark**: Triggered via `split_bench.h` from the Configurator, this measures true one-way connection propagation delay over a sequence of ~20 high-speed packet exchanges, saving the min, average, and maximum delays as RTT/2.
+- **Maximum Polling Rate Benchmark**: Stress tests both keyboard matrix schedulers simultaneously during a 2-second "full blast" dwell period. Both Master and Slave track their low-level matrix scan frequency, capturing:
+  * **Floor HZ**: The lowest recorded polling rate frequency under load.
+  * **Avg HZ**: The average scan frequency over the test duration.
+  * **Peak HZ**: The peak achieved polling rate frequency.
 
 ---
 

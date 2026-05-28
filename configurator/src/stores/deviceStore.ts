@@ -39,7 +39,8 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
     connect: async () => {
         const { controller } = get();
         if (!controller) return false;
-        return await controller.requestDevice();
+        const res = await controller.requestDevice();
+        return res.ok;
     },
 
     disconnect: async () => {

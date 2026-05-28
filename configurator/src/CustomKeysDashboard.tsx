@@ -1,9 +1,13 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import type { CustomKey, CustomKeyPR, CustomKeyMA } from './types/customKeys';
 import type { Macro } from './types/macros';
 import SearchableKeyModal from './components/SearchableKeyModal';
 import { getKeyName, CKEY_BASE } from './KeyDefinitions';
+import { getCustomKeyBadge } from './components/MacroIcons';
+import { saveJsonFile } from './utils/fileUtils';
+import { useNotificationStore } from './stores/notificationStore';
+import './assets/css/custom-keys-dashboard.css';
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -13,7 +17,7 @@ interface CustomKeysDashboardProps {
     isDeveloperMode: boolean;
     onSave:   (ckey: CustomKey) => Promise<void>;
     onDelete: (id: number) => Promise<void>;
-    onReload: () => void;
+    onReload?: () => void;
 }
 
 // ── Default values ─────────────────────────────────────────────────────────────
@@ -101,7 +105,6 @@ function ActionSlot({ label, value, macros, onChange }: ActionSlotProps) {
                 <SearchableKeyModal
                     currentValue={value}
                     macros={macros}
-                    customKeys={[]} 
                     onSelect={v => { onChange(v); setOpen(false); }}
                     onClose={() => setOpen(false)}
                 />
@@ -115,42 +118,42 @@ function ActionSlot({ label, value, macros, onChange }: ActionSlotProps) {
 function CKeyPreviewSequence({ ck, macros }: { ck: CustomKey, macros: Macro[] }) {
     if (ck.mode === 0 && ck.pr) {
         return (
-            <div className="ck-preview-seq">
-                <div className="preview-el preview-el-press" title="Press Action">
+            <div className="macro-preview-sequence">
+                <span className="preview-el preview-el-press" title="Press Action">
                     <span className="preview-el-action">P</span>
                     {getKeyName(ck.pr.pressAction, macros)}
                     {ck.pr.pressSustain
                         ? <span className="preview-el-sleep">(sustain)</span>
                         : ck.pr.pressDuration > 0 && <span className="preview-el-sleep">({ck.pr.pressDuration}ms)</span>}
-                </div>
-                <div className="preview-el preview-el-release" title="Release Action">
+                </span>
+                <span className="preview-el preview-el-release" title="Release Action">
                     <span className="preview-el-action">R</span>
                     {getKeyName(ck.pr.releaseAction, macros)}
                     {ck.pr.releaseDuration > 0 && <span className="preview-el-sleep">({ck.pr.releaseDuration}ms)</span>}
-                </div>
+                </span>
             </div>
         );
     }
     if (ck.mode === 1 && ck.ma) {
         return (
-            <div className="ck-preview-seq">
-                <div className="preview-el preview-el-tap" title="Tap Action">
+            <div className="macro-preview-sequence">
+                <span className="preview-el preview-el-tap" title="Tap Action">
                     <span className="preview-el-action">T</span>
                     {getKeyName(ck.ma.tapAction, macros)}
                     {ck.ma.tapDuration > 0 && <span className="preview-el-sleep">({ck.ma.tapDuration}ms)</span>}
-                </div>
-                <div className="preview-el preview-el-dtap" title="Double Tap Action">
+                </span>
+                <span className="preview-el preview-el-dtap" title="Double Tap Action">
                     <span className="preview-el-action">2T</span>
                     {getKeyName(ck.ma.doubleTapAction, macros)}
                     {ck.ma.doubleTapDuration > 0 && <span className="preview-el-sleep">({ck.ma.doubleTapDuration}ms)</span>}
-                </div>
-                <div className="preview-el preview-el-hold" title="Hold Action">
+                </span>
+                <span className="preview-el preview-el-hold" title="Hold Action">
                     <span className="preview-el-action">H</span>
                     {getKeyName(ck.ma.holdAction, macros)}
                     {ck.ma.holdSustain
                         ? <span className="preview-el-sleep">(sustain)</span>
                         : ck.ma.holdDuration > 0 && <span className="preview-el-sleep">({ck.ma.holdDuration}ms)</span>}
-                </div>
+                </span>
             </div>
         );
     }
@@ -167,38 +170,40 @@ function CKeyCard({ ck, isSelected, onClick, onDelete, macros, isDeveloperMode }
 }) {
     return (
         <div
-            className={`ckey-card glass-panel ${isSelected ? 'ckey-card-selected' : ''}`}
+            className={`macro-card ${isSelected ? 'ckey-card-selected' : ''}`}
             onClick={onClick}
         >
-            <span className={`ckey-card-badge ${ck.mode === 0 ? 'badge-pr' : 'badge-ma'}`}>
-                {ck.mode === 0 ? 'PR' : 'MA'}
+            <span className={`macro-mode-badge-corner ${ck.mode === 0 ? 'badge-pr' : 'badge-ma'}`}>
+                <span className="macro-mode-badge-icon">{getCustomKeyBadge(ck.mode)}</span>
             </span>
 
-            <div className="ckey-card-header">
-                <h4>{ck.name || `CK[${ck.id}]`}</h4>
-            </div>
-
-            <div className="ckey-card-body">
-                <CKeyPreviewSequence ck={ck} macros={macros} />
-            </div>
-
-            {isDeveloperMode && (
-                <div className="ckey-id">
-                    ID: 0x{(CKEY_BASE + ck.id).toString(16).toUpperCase()}
+            <div className="macro-card-content-wrapper">
+                <div className="macro-card-header">
+                    <h4>{ck.name || `CK[${ck.id}]`}</h4>
                 </div>
-            )}
 
-            <button
-                className="btn-icon btn-danger"
-                title="Delete"
-                onClick={e => { e.stopPropagation(); onDelete(ck.id); }}
-                style={{ position: 'absolute', bottom: '0.75rem', right: '0.75rem' }}
-            >
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: 'middle' }}>
-                    <polyline points="3 6 5 6 21 6"></polyline>
-                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                </svg>
-            </button>
+                <div className="macro-card-body">
+                    <CKeyPreviewSequence ck={ck} macros={macros} />
+                </div>
+            </div>
+
+            <div className="macro-card-actions" onClick={e => e.stopPropagation()}>
+                {isDeveloperMode && (
+                    <div className="macro-id">
+                        ID: 0x{(CKEY_BASE + ck.id).toString(16).toUpperCase()}
+                    </div>
+                )}
+                <button
+                    className="btn-icon btn-danger"
+                    title="Delete"
+                    onClick={e => { e.stopPropagation(); onDelete(ck.id); }}
+                >
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: 'middle' }}>
+                        <polyline points="3 6 5 6 21 6"></polyline>
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                    </svg>
+                </button>
+            </div>
         </div>
     );
 }
@@ -256,13 +261,23 @@ function CKeyEditorModal({ ckey, macros, isSaving, error, onSave, onDelete, onCl
                                 className={`ckey-mode-btn ${local.mode === 0 ? 'active' : ''}`}
                                 onClick={() => handleField('mode', 0)}
                             >
-                                <span className="mode-icon">⇄</span> Press/Release
+                                <span className="badge-pr" style={{ display: 'inline-flex', verticalAlign: 'middle', marginRight: '0.5rem' }}>
+                                    <span className="macro-mode-badge-icon" style={{ minWidth: '36px', height: '22px' }}>
+                                        {getCustomKeyBadge(0)}
+                                    </span>
+                                </span>
+                                Press/Release
                             </button>
                             <button
                                 className={`ckey-mode-btn ${local.mode === 1 ? 'active' : ''}`}
                                 onClick={() => handleField('mode', 1)}
                             >
-                                <span className="mode-icon">⟳</span> Multi-Action
+                                <span className="badge-ma" style={{ display: 'inline-flex', verticalAlign: 'middle', marginRight: '0.5rem' }}>
+                                    <span className="macro-mode-badge-icon" style={{ minWidth: '36px', height: '22px' }}>
+                                        {getCustomKeyBadge(1)}
+                                    </span>
+                                </span>
+                                Multi-Action
                             </button>
                         </div>
                     </div>
@@ -456,9 +471,58 @@ function CKeyEditorModal({ ckey, macros, isSaving, error, onSave, onDelete, onCl
 const CKEY_MAX = 120;
 
 export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMode, onSave, onDelete, onReload }: CustomKeysDashboardProps) {
+    const { showNotification } = useNotificationStore();
     const [selected, setSelected] = useState<CustomKey | null>(null);
     const [isSaving, setIsSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [isMenuOpen, setIsMenuOpen] = useState(false);
+    
+    const menuRef = useRef<HTMLDivElement>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
+    useEffect(() => {
+        function handleClickOutside(event: MouseEvent) {
+            if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+                setIsMenuOpen(false);
+            }
+        }
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
+    const handleExport = async () => {
+        try {
+            const dataStr = JSON.stringify(customKeys, null, 2);
+            await saveJsonFile(dataStr, 'custom_keys_export.json');
+            showNotification("Custom keys exported successfully", "success");
+        } catch (err) {
+            showNotification("Failed to export custom keys.", "error");
+        }
+        setIsMenuOpen(false);
+    };
+
+    const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+            try {
+                const importedData = JSON.parse(e.target?.result as string);
+                const parsedKeys = Array.isArray(importedData) ? importedData : [importedData];
+                
+                for (const ck of parsedKeys) {
+                    await onSave(ck);
+                }
+                showNotification("Custom keys imported successfully", "success");
+            } catch (error) {
+                showNotification("Failed to import custom keys.", "error");
+            }
+        };
+        reader.readAsText(file);
+        event.target.value = '';
+        setIsMenuOpen(false);
+    };
 
     const handleNew = () => {
         let firstAvailable = -1;
@@ -485,8 +549,11 @@ export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMod
         try {
             await onSave(ckey);
             setSelected(null);
+            showNotification(`Custom key "${ckey.name}" saved`, "success");
         } catch (e: unknown) {
-            setError(e instanceof Error ? e.message : 'Save failed');
+            const msg = e instanceof Error ? e.message : 'Save failed';
+            setError(msg);
+            showNotification(`Failed to save custom key: ${msg}`, "error");
         } finally {
             setIsSaving(false);
         }
@@ -497,8 +564,11 @@ export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMod
         try {
             await onDelete(id);
             setSelected(null);
+            showNotification("Custom key deleted", "success");
         } catch (e: unknown) {
-            setError(e instanceof Error ? e.message : 'Delete failed');
+            const msg = e instanceof Error ? e.message : 'Delete failed';
+            setError(msg);
+            showNotification(`Failed to delete custom key: ${msg}`, "error");
         } finally {
             setIsSaving(false);
         }
@@ -507,18 +577,42 @@ export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMod
     const sortedKeys = [...customKeys].sort((a, b) => a.id - b.id);
 
     return (
-        <div className="ckey-dashboard">
-            <div className="ckey-dashboard-header">
-                <h2 className="section-title">Custom Keys</h2>
+        <div className="ckey-dashboard" style={{ height: '100%' }}>
+            <div className="ckey-dashboard-header" style={{ position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center', marginBottom: '0', flexShrink: 0, minHeight: '42px' }}>
+                {/* Title — pinned left */}
+                <span className="board-title">Custom Keys</span>
+
+                <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, display: 'flex', alignItems: 'center' }}>
+                    <div className="menu-container" ref={menuRef}>
+                        <button className="btn-icon" onClick={() => setIsMenuOpen(!isMenuOpen)} title="Options">
+                            <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
+                                <path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z" />
+                            </svg>
+                        </button>
+                        {isMenuOpen && (
+                            <div className="dropdown-menu">
+                                <button className="dropdown-item" onClick={handleExport}>Export Custom Keys</button>
+                                <button className="dropdown-item" onClick={() => { fileInputRef.current?.click(); setIsMenuOpen(false); }}>Import Custom Keys</button>
+                                <button className="dropdown-item" onClick={() => { onReload?.(); setIsMenuOpen(false); }}>Refresh</button>
+                            </div>
+                        )}
+                    </div>
+                </div>
+
                 <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                     <span className="ckey-count-badge">{customKeys.length} / {CKEY_MAX}</span>
-                    <button id="ckey-reload-btn" className="btn" onClick={onReload} title="Reload from device">↺ Reload</button>
-                    <button id="ckey-new-top-btn" className="btn btn-success" onClick={handleNew} disabled={customKeys.length >= CKEY_MAX}>+ New</button>
+                    <button className="btn-new-action btn-new-success" onClick={handleNew} disabled={customKeys.length >= CKEY_MAX}>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                        New
+                    </button>
                 </div>
             </div>
 
-            <div className="ckey-list-full">
-                <div className="macro-cards-grid">
+            <div className="ckey-list-full list-scroll-area">
+                <div className="macro-cards-list">
                     {sortedKeys.length === 0 ? (
                         <div className="empty-state">No custom keys defined yet.</div>
                     ) : (
@@ -548,6 +642,7 @@ export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMod
                     onClose={() => setSelected(null)}
                 />
             )}
+            <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept=".json" onChange={handleImport} />
         </div>
     );
 }

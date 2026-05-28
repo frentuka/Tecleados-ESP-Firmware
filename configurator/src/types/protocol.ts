@@ -79,6 +79,9 @@ export const CFG_KEY_MACRO_SINGLE = 0x09;
 export const CFG_KEY_CKEYS = 0x0a;
 export const CFG_KEY_CKEY_SINGLE = 0x0b;
 export const CFG_KEY_SYSTEM = 0x0c;  // Device identity (name, split config)
+export const CFG_KEY_COMBOS = 0x0d;
+export const CFG_KEY_COMBO_SINGLE = 0x0e;
+export const CFG_KEY_COMBO_LIMITS = 0x0f;
 
 // ── System Commands ─────────────────────────────────────────────────────
 export const SYS_CMD_INJECT_KEY = 0x01;

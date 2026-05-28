@@ -93,7 +93,7 @@ static void handle_get_remote_matrix(uint8_t cmd)
 
 static void handle_get_bench(uint8_t cmd)
 {
-    char   json[128];
+    char   json[320];   /* expanded for floor/avg/peak fields + sent count (~280 chars max) */
     size_t n = split_bench_format_json(json, sizeof(json));
     if (n == 0) return;
     send_usb_json_response(cmd, json, n);

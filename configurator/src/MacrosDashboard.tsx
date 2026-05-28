@@ -8,6 +8,8 @@ import MacroModeModal from './components/MacroModeModal';
 import ExportModal from './components/ExportModal';
 import ImportModal from './components/ImportModal';
 import { saveJsonFile } from './utils/fileUtils';
+import { useNotificationStore } from './stores/notificationStore';
+import './assets/css/macros-dashboard.css';
 
 interface MacrosDashboardProps {
     macros: Macro[];
@@ -28,6 +30,7 @@ export default function MacrosDashboard({
     onReload, 
     onFetchSingleMacro 
 }: MacrosDashboardProps) {
+    const { showNotification } = useNotificationStore();
     const [editingMacro, setEditingMacro] = useState<Macro | null>(null);
     const [modeMacro, setModeMacro] = useState<Macro | null>(null);
     const [fetchingMacroId, setFetchingMacroId] = useState<number | null>(null);
@@ -79,7 +82,7 @@ export default function MacrosDashboard({
             if (fullMacro) {
                 setEditingMacro(fullMacro);
             } else {
-                alert("Failed to fetch full macro data.");
+                showNotification("Failed to fetch full macro data.", "error");
             }
         } else {
             setEditingMacro(macro);
@@ -90,8 +93,9 @@ export default function MacrosDashboard({
         markBusy(id, 'Deleting...');
         try {
             await onDeleteMacro(id);
+            showNotification("Macro deleted", "success");
         } catch (err: any) {
-            alert(`Failed to delete macro: ${err?.message || 'Unknown error'}`);
+            showNotification(`Failed to delete macro: ${err?.message || 'Unknown error'}`, "error");
         } finally {
             clearBusy(id);
         }
@@ -116,8 +120,9 @@ export default function MacrosDashboard({
             const dataStr = JSON.stringify(fullMacros, null, 2);
 
             await saveJsonFile(dataStr, 'macros_export.json');
+            showNotification("Macros exported successfully", "success");
         } catch (err) {
-            alert("Failed to export macros.");
+            showNotification("Failed to export macros.", "error");
         } finally {
             setIsExporting(false);
             setIsExportModalOpen(false);
@@ -140,7 +145,7 @@ export default function MacrosDashboard({
                 setMacrosToImport(importableMacros);
                 setIsImportModalOpen(true);
             } catch (error) {
-                alert("Failed to parse JSON file.");
+                showNotification("Failed to parse JSON file.", "error");
             }
         };
         reader.readAsText(file);
@@ -159,8 +164,9 @@ export default function MacrosDashboard({
                 try {
                     await onSaveMacro(newMacro);
                     setMacrosToImport(prev => prev.filter(item => item.tempId !== tempId));
+                    showNotification(`Macro "${newMacro.name}" imported`, "success");
                 } catch (err: any) {
-                    alert(`Failed to save imported macro "${newMacro.name}": ${err?.message || 'Unknown error'}`);
+                    showNotification(`Failed to save imported macro "${newMacro.name}": ${err?.message || 'Unknown error'}`, "error");
                     break;
                 } finally {
                     setIsCreating(false);
@@ -177,11 +183,13 @@ export default function MacrosDashboard({
     };
 
     return (
-        <div className="macros-dashboard">
-            <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept=".json" onChange={handleImport} />
-            <div className="macros-header">
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginBottom: '0.5rem' }}>
-                    <h2 className="section-title">Macros Editor</h2>
+        <div className="macros-dashboard" style={{ height: '100%' }}>
+
+            <div className="ckey-dashboard-header" style={{ position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center', marginBottom: '0', flexShrink: 0, minHeight: '42px' }}>
+                {/* Title — pinned left */}
+                <span className="board-title">Macros</span>
+
+                <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, display: 'flex', alignItems: 'center' }}>
                     <div className="menu-container" ref={menuRef}>
                         <button className="btn-icon" onClick={() => setIsMenuOpen(!isMenuOpen)} title="Options">
                             <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
@@ -197,18 +205,26 @@ export default function MacrosDashboard({
                         )}
                     </div>
                 </div>
-                <button className="btn" onClick={handleCreate} disabled={isAtMacroLimit} title={isAtMacroLimit ? `Maximum macros reached (${macroLimits!.maxMacros})` : undefined}>
-                    Create Macro
-                </button>
+
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                    <span className="ckey-count-badge">{macros.length} / {macroLimits?.maxMacros || '?'}</span>
+                    <button className="btn-new-action btn-new-success" onClick={handleCreate} disabled={isAtMacroLimit} title={isAtMacroLimit ? `Maximum macros reached (${macroLimits!.maxMacros})` : undefined}>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                        New
+                    </button>
+                </div>
             </div>
 
-            <div className="macros-list">
+            <div className="ckey-list-full list-scroll-area">
                 {macros.length === 0 && !isCreating ? (
                     <div className="empty-state">No macros defined yet.</div>
                 ) : (
-                    <div className="macro-cards-grid">
+                    <div className="macro-cards-list">
                         {sortedMacros.map(m => (
-                            <div key={m.id} className={`macro-card glass-panel ${busyMacroIds.has(m.id) ? 'macro-card-busy' : ''}`} onClick={() => !busyMacroIds.has(m.id) && handleEdit(m)}>
+                            <div key={m.id} className={`macro-card ${busyMacroIds.has(m.id) ? 'macro-card-busy' : ''}`} onClick={() => !busyMacroIds.has(m.id) && handleEdit(m)}>
                                 {busyMacroIds.has(m.id) && (
                                     <div className="macro-card-loading-overlay">
                                         <div className="macro-card-spinner" />
@@ -223,11 +239,13 @@ export default function MacrosDashboard({
                                 >
                                     <span className="macro-mode-badge-icon">{getModeBadge(m.execMode ?? 0)}</span>
                                 </button>
-                                <div className="macro-card-header">
-                                    <h4>{m.name || `Macro #${m.id}`}</h4>
-                                </div>
-                                <div className="macro-card-body">
-                                    {m.elements && <MacroPreview m={m} macros={macros} />}
+                                <div className="macro-card-content-wrapper">
+                                    <div className="macro-card-header">
+                                        <h4>{m.name || `Macro #${m.id}`}</h4>
+                                    </div>
+                                    <div className="macro-card-body">
+                                        {m.elements && <MacroPreview m={m} macros={macros} />}
+                                    </div>
                                 </div>
                                 <div className="macro-card-actions" onClick={e => e.stopPropagation()}>
                                     <div style={{ flex: 1, display: 'flex', alignItems: 'center' }}>
@@ -248,13 +266,15 @@ export default function MacrosDashboard({
                             </div>
                         ))}
                         {isCreating && (
-                            <div className="macro-card glass-panel macro-card-busy">
+                            <div className="macro-card macro-card-busy">
                                 <div className="macro-card-loading-overlay">
                                     <div className="macro-card-spinner" />
                                     <span>Creating...</span>
                                 </div>
-                                <div className="macro-card-header"><h4 style={{ opacity: 0.3 }}>New Macro</h4></div>
-                                <div className="macro-card-body" />
+                                <div className="macro-card-content-wrapper">
+                                    <div className="macro-card-header"><h4 style={{ opacity: 0.3 }}>New Macro</h4></div>
+                                    <div className="macro-card-body" />
+                                </div>
                             </div>
                         )}
                     </div>
@@ -269,8 +289,9 @@ export default function MacrosDashboard({
                         markBusy(m.id, 'Saving...');
                         try {
                             await onSaveMacro(m);
+                            showNotification(`Macro "${m.name}" mode updated`, "success");
                         } catch (err: any) {
-                            alert(`Failed to save mode: ${err?.message || 'Unknown error'}`);
+                            showNotification(`Failed to save mode: ${err?.message || 'Unknown error'}`, "error");
                         } finally {
                             clearBusy(m.id);
                         }
@@ -291,8 +312,9 @@ export default function MacrosDashboard({
                         else markBusy(m.id, 'Saving...');
                         try {
                             await onSaveMacro(m);
+                            showNotification(`Macro "${m.name}" saved`, "success");
                         } catch (err: any) {
-                            alert(`Failed to save macro: ${err?.message || 'Unknown error'}`);
+                            showNotification(`Failed to save macro: ${err?.message || 'Unknown error'}`, "error");
                         } finally {
                             if (isNew) setIsCreating(false);
                             else clearBusy(m.id);
@@ -321,6 +343,7 @@ export default function MacrosDashboard({
                     isImporting={isImporting}
                 />
             )}
+            <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept=".json" onChange={handleImport} />
         </div>
     );
 }

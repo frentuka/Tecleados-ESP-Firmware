@@ -1,0 +1,482 @@
+/* ═══════════════════════════════════════════════
+   SPLIT PAGE
+   ═══════════════════════════════════════════════ */
+
+.split-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding: 1.5rem 0;
+  max-width: 860px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+/* Status banner */
+.split-status-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.split-status-left {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.split-status-title {
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.split-status-state {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.split-status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.split-status-label {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.split-role-badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent-color);
+  background: rgba(88, 166, 255, 0.12);
+  border: 1px solid rgba(88, 166, 255, 0.25);
+  border-radius: 6px;
+  padding: 0.1rem 0.5rem;
+}
+
+/* Controls grid */
+.split-controls-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+@media (max-width: 640px) {
+  .split-controls-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Section block */
+.split-section {
+  background: rgba(22, 27, 34, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+  padding: 1.25rem;
+}
+
+.split-test-section {
+  background: rgba(22, 27, 34, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+  padding: 1.25rem;
+}
+
+.split-section-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+  opacity: 0.7;
+  margin-bottom: 1rem;
+}
+
+.split-section-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.split-section-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+/* Action row */
+.split-action-row {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+/* Pairing progress indicator */
+.split-pairing-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: #f39c12;
+  font-weight: 500;
+}
+
+.split-pairing-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #f39c12;
+  box-shadow: 0 0 8px #f39c12;
+  animation: split-pulse 1.2s infinite ease-in-out;
+  flex-shrink: 0;
+}
+
+/* Timeout input */
+.split-timeout-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  opacity: 0.8;
+}
+
+.split-timeout-input {
+  width: 52px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  color: var(--text-primary);
+  padding: 3px 6px;
+  font-size: 0.82rem;
+  font-family: inherit;
+  text-align: center;
+  transition: border-color 0.15s;
+  outline: none;
+}
+
+.split-timeout-input:focus {
+  border-color: rgba(88, 166, 255, 0.5);
+  background: rgba(88, 166, 255, 0.06);
+}
+
+/* Hide spinners */
+.split-timeout-input::-webkit-outer-spin-button,
+.split-timeout-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.split-timeout-input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+/* Empty hint */
+.split-empty-hint {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  opacity: 0.6;
+  line-height: 1.5;
+  margin: 0;
+}
+
+/* Matrix visualiser */
+.split-matrix-wrapper {
+  overflow-x: auto;
+  padding-bottom: 4px;
+  animation: fadeSlideUp 0.25s ease-out;
+}
+
+.split-matrix-grid {
+  display: grid;
+  grid-template-columns: repeat(18, 18px);
+  gap: 3px;
+}
+
+.split-matrix-cell {
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: background 0.08s, border-color 0.08s, box-shadow 0.08s;
+}
+
+.split-matrix-cell.pressed {
+  background: var(--success-color);
+  border-color: rgba(46, 204, 113, 0.6);
+  box-shadow: 0 0 8px rgba(46, 204, 113, 0.4);
+}
+
+.split-matrix-empty {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  opacity: 0.5;
+  padding: 0.5rem 0;
+}
+
+
+/* Banner Actions */
+.split-status-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.btn-banner-action {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  padding: 0.4rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.btn-banner-action:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: var(--text-primary);
+  transform: translateY(-1px);
+}
+
+.btn-banner-action:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.btn-banner-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-banner-action svg {
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+
+.btn-banner-action:hover svg {
+  opacity: 1;
+}
+
+.btn-banner-action.loading {
+  color: var(--accent-color);
+  border-color: rgba(88, 166, 255, 0.3);
+  background: rgba(88, 166, 255, 0.08);
+}
+
+.btn-banner-action.loading svg {
+  animation: spin 2s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 640px) {
+  .split-status-banner {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1rem;
+  }
+  
+  .split-status-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
+
+/* ═══════════════════════════════════════════════
+   BENCHMARK RESULTS CARD
+   (shared between SplitDashboard and DeviceDashboard)
+   ═══════════════════════════════════════════════ */
+
+.split-bench-card {
+  background: rgba(15, 20, 30, 0.7);
+  border: 1px solid rgba(88, 166, 255, 0.18);
+  border-radius: 14px;
+  overflow: hidden;
+  backdrop-filter: blur(12px);
+  animation: fadeSlideUp 0.3s ease-out;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.split-bench-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.25rem;
+  background: rgba(88, 166, 255, 0.07);
+  border-bottom: 1px solid rgba(88, 166, 255, 0.1);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent-color);
+}
+
+.split-bench-card-header svg {
+  opacity: 0.7;
+}
+
+.split-bench-card-body {
+  display: flex;
+  gap: 0;
+}
+
+.split-bench-divider {
+  width: 1px;
+  background: rgba(255, 255, 255, 0.06);
+  flex-shrink: 0;
+}
+
+.split-bench-section {
+  flex: 1;
+  padding: 1rem 1.25rem;
+  min-width: 0;
+}
+
+.split-bench-section-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+  opacity: 0.6;
+  margin-bottom: 0.85rem;
+}
+
+/* ── Category title (Delay / Polling Rate) ──── */
+.split-bench-cat-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.66rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--accent-color);
+  opacity: 0.75;
+  margin-bottom: 0.8rem;
+}
+
+/* ── Delay four-metric row ───────────────────── */
+.split-bench-delay-grid {
+  display: flex;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+}
+
+.split-bench-delay-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  min-width: 46px;
+}
+
+.split-bench-delay-label {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  opacity: 0.5;
+}
+
+.split-bench-delay-value {
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.split-bench-delay-value.accent { color: var(--accent-color); }
+.split-bench-delay-value.ok     { color: var(--success-color); }
+.split-bench-delay-value.warn   { color: var(--danger-color); }
+
+/* ── Poll-rate table grid ────────────────────── */
+.split-bench-poll-grid {
+  display: grid;
+  grid-template-columns: auto 1fr 1fr;
+  gap: 0.2rem 0.75rem;
+  align-items: center;
+}
+
+.split-bench-poll-header {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  opacity: 0.45;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  text-align: center;
+}
+
+.split-bench-poll-rowlabel {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  opacity: 0.5;
+  padding-right: 0.5rem;
+  text-align: left;
+}
+
+.split-bench-poll-cell {
+  font-size: 0.88rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+  text-align: center;
+  padding: 0.12rem 0;
+}
+
+.split-bench-poll-cell.accent { color: var(--accent-color); }
+.split-bench-poll-cell.bright {
+  color: #fff;
+  text-shadow: 0 0 12px rgba(88, 166, 255, 0.4);
+}
+
+
+/* Responsive stacking */
+@media (max-width: 580px) {
+  .split-bench-card-body {
+    flex-direction: column;
+  }
+
+  .split-bench-divider {
+    width: auto;
+    height: 1px;
+  }
+
+  .split-bench-metrics {
+    gap: 1rem;
+  }
+}
+

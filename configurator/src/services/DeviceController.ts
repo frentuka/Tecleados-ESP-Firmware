@@ -22,6 +22,9 @@ import {
     CFG_KEY_MACRO_SINGLE,
     CFG_KEY_CKEYS,
     CFG_KEY_CKEY_SINGLE,
+    CFG_KEY_COMBOS,
+    CFG_KEY_COMBO_SINGLE,
+    CFG_KEY_COMBO_LIMITS,
     SYS_CMD_INJECT_KEY,
     SYS_CMD_CLEAR_INJECTED,
     SPLIT_CMD_START_PAIRING,
@@ -42,6 +45,7 @@ import {
 import type { CommandResponse, DeviceStatus } from '../types/device';
 import type { Macro, MacroLimits } from '../types/macros';
 import type { CustomKey } from '../types/customKeys';
+import type { Combo } from '../types/combos';
 
 // ── Device Identity ─────────────────────────────────────────────────────────
 export interface DeviceIdentity {
@@ -206,7 +210,20 @@ export class DeviceController {
         );
     }
 
-    public async splitGetBench(): Promise<{active: boolean, min: number, avg: number, max: number, lost: number} | null> {
+    public async splitGetBench(): Promise<{
+        active: boolean;
+        min: number;
+        avg: number;
+        max: number;
+        lost: number;
+        sent?: number;
+        local_scan_hz?: number;
+        local_floor_hz?: number;
+        local_peak_hz?: number;
+        remote_scan_hz?: number;
+        remote_floor_hz?: number;
+        remote_peak_hz?: number;
+    } | null> {
         if (!this.isConnected()) return null;
         const resp = await this.sendCommand(
             new Uint8Array([MODULE_SPLIT, SPLIT_CMD_GET_BENCH]), 1000
@@ -449,6 +466,72 @@ export class DeviceController {
         if (!this.isConnected()) return false;
         const jsonBytes = new TextEncoder().encode(JSON.stringify({ delete: id }));
         const buf = new Uint8Array([MODULE_CONFIG, CFG_CMD_SET, CFG_KEY_CKEY_SINGLE, ...jsonBytes]);
+        const resp = await this.sendCommand(buf, 5000);
+        return resp !== null && resp.status === 0;
+    }
+
+    // ── Combos ──────────────────────────────────────────────────────────
+
+    public async fetchComboLimits(): Promise<{ maxCombos: number; maxKeys: number } | null> {
+        if (!this.isConnected()) return null;
+        const buf = this.buildConfigPayload(CFG_CMD_GET, CFG_KEY_COMBO_LIMITS);
+        const resp = await this.sendCommand(buf, 5000);
+        if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
+            try {
+                const parsed = JSON.parse(resp.jsonText);
+                if (parsed.maxCombos && parsed.maxKeys) {
+                    return { maxCombos: parsed.maxCombos, maxKeys: parsed.maxKeys };
+                }
+            } catch (e) {
+                console.error('fetchComboLimits parse error:', e);
+            }
+        }
+        return null;
+    }
+
+    public async fetchCombos(): Promise<Combo[]> {
+        if (!this.isConnected()) return [];
+        const buf = this.buildConfigPayload(CFG_CMD_GET, CFG_KEY_COMBOS);
+        const resp = await this.sendCommand(buf, 5000);
+        if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
+            try {
+                const data = JSON.parse(resp.jsonText);
+                return (data.combos ?? []) as Combo[];
+            } catch (e) {
+                console.error('fetchCombos parse error:', e);
+            }
+        }
+        return [];
+    }
+
+    public async fetchSingleCombo(id: number): Promise<Combo | null> {
+        if (!this.isConnected()) return null;
+        const requestJson = JSON.stringify({ id });
+        const jsonBytes = new TextEncoder().encode(requestJson);
+        const buf = new Uint8Array([MODULE_CONFIG, CFG_CMD_GET, CFG_KEY_COMBO_SINGLE, ...jsonBytes]);
+        const resp = await this.sendCommand(buf, 5000);
+        if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
+            try {
+                return JSON.parse(resp.jsonText) as Combo;
+            } catch (e) {
+                console.error('fetchSingleCombo parse error:', e);
+            }
+        }
+        return null;
+    }
+
+    public async saveCombo(combo: Combo): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        const jsonBytes = new TextEncoder().encode(JSON.stringify(combo));
+        const buf = new Uint8Array([MODULE_CONFIG, CFG_CMD_SET, CFG_KEY_COMBO_SINGLE, ...jsonBytes]);
+        const resp = await this.sendCommand(buf, 10000);
+        return resp !== null && resp.status === 0;
+    }
+
+    public async deleteCombo(id: number): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        const jsonBytes = new TextEncoder().encode(JSON.stringify({ delete: id }));
+        const buf = new Uint8Array([MODULE_CONFIG, CFG_CMD_SET, CFG_KEY_COMBO_SINGLE, ...jsonBytes]);
         const resp = await this.sendCommand(buf, 5000);
         return resp !== null && resp.status === 0;
     }

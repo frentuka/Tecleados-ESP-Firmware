@@ -11,20 +11,21 @@ The configurator lets you:
 - Create, edit, and delete macros with rich action types and execution modes
 - Create, edit, and delete custom keys (PressRelease and MultiAction modes)
 - Import physical layouts from KLE (Keyboard Layout Editor) JSON
-- Export and import macro sets as portable JSON files
+- Export and import full layouts, macros, and custom keys as portable JSON files
 - Monitor raw HID communication in Developer Mode
+- Receive non-intrusive in-app feedback for every device operation via the global notification system
 
 ### Getting started
 
 ```sh
 cd configurator
 npm install
-npm run dev        # Vite dev server at http://localhost:5173
+npm run dev        # Vite dev server at https://localhost:5173 (Runs over local HTTPS using @vitejs/plugin-basic-ssl for local testing of secure WebHID access)
 npm run build      # TypeScript check + Vite production build
 npm run preview    # Serve the production build locally
 ```
 
-The app requires a Chromium-based browser (Chrome, Edge, Opera) — Firefox does not support WebHID.
+The app requires a Chromium-based browser (Chrome, Edge, Opera) — Firefox does not support WebHID. Since WebHID is restricted to Secure Contexts, local development is served over a temporary HTTPS server using `@vitejs/plugin-basic-ssl` exclusively for local testing purposes. When loading the local server, accept the browser's self-signed certificate warning to proceed. This self-signed setup is for testing only; any public/production deployments must use a standard, trusted SSL/TLS certificate (e.g., from Let's Encrypt).
 
 ---
 
@@ -33,7 +34,7 @@ The app requires a Chromium-based browser (Chrome, Edge, Opera) — Firefox does
 ```
 Browser
   └── React UI (App.tsx)
-        ├── Zustand Stores         — global state (device, macros, custom keys, logs)
+        ├── Zustand Stores         — global state (device, macros, custom keys, logs, notifications)
         ├── React Hooks            — local business logic (useMacros, useCustomKeys)
         └── DeviceController       — high-level typed API
               └── HIDTransport     — low-level WebHID transport
@@ -45,7 +46,7 @@ Browser
 
 | Layer            | File                           | Responsibility                                                       |
 |------------------|--------------------------------|----------------------------------------------------------------------|
-| React UI         | `App.tsx`, dashboards, modals  | Rendering, user interaction, routing                                 |
+| React UI         | `App.tsx`, dashboards, modals  | Rendering, user interaction, section routing (Header Nav)            |
 | Zustand stores   | `stores/`                      | Global state shared across components                                |
 | React hooks      | `hooks/`                       | Local async device operations with their own state                   |
 | DeviceController | `services/DeviceController.ts` | Typed commands — fetchStatus, fetchMacros, saveMacro, etc.           |
@@ -59,18 +60,20 @@ Browser
 ```
 configurator/
 ├── src/
-│   ├── App.tsx                         — Top-level: connection wiring, log aggregation, root layout
+│   ├── App.tsx                         — Top-level: section routing, secret code listener, connection logic
 │   ├── main.tsx                        — React entry point, DeviceController instantiation
-│   ├── index.css                       — All CSS (variables, layout, components)
-│   ├── HIDService.ts                   — Backward-compat re-export façade (all protocol constants + hidService singleton)
-│   ├── KeyDefinitions.ts               — HID keycodes, key names, browser key→HID map, action code ranges
-│   ├── KeyboardLayoutEditor.tsx        — Visual key map editor: layers, physical layout, KLE import, test mode
-│   ├── MacrosDashboard.tsx             — Macro list + CRUD + export/import workflow
-│   ├── CustomKeysDashboard.tsx         — Custom key list + CRUD with PR/MA mode editor
-│   ├── StatusWidget.tsx                — BLE/USB transport mode + profile + pairing status display
-│   ├── SearchableKeyModal.tsx          — Legacy entry point; delegates to components/SearchableKeyModal.tsx
+│   ├── index.css                       — Global styles, dashboard layouts, utility classes
+│   ├── HIDService.ts                   — Backward-compat re-export façade (singleton instance)
+│   ├── KeyDefinitions.ts               — HID keycodes, key names, browser key→HID map
+│   ├── KeyboardLayoutEditor.tsx        — "Layout" section: visual matrix editor, KLE/JSON portability
+│   ├── MacrosDashboard.tsx             — "Macros & CKs" column: Macro CRUD + Export/Import
+│   ├── CustomKeysDashboard.tsx         — "Macros & CKs" column: Custom Key CRUD + Export/Import
+│   ├── StatusWidget.tsx                — Header widget: BLE/USB/Split status indicators
+│   ├── SplitDashboard.tsx              — "Split" section: Pairing, role swap, latency, remote matrix visualizer
+│   ├── DeviceIdentityDashboard.tsx     — "Identity" section: device naming and split variants (Dev only)
 │   │
 │   ├── components/
+│   │   ├── Background3D.tsx            — Full-page 3D keyboard background (React Three Fiber; procedural geometry, split detection, Minkowski-sum baseplates)
 │   │   ├── DevControlsPanel.tsx        — Developer Mode panel: config GET/SET form + raw log viewer
 │   │   ├── MacroEditorModal.tsx        — Full macro editor with recording, element list, drag-and-drop
 │   │   ├── MacroModeModal.tsx          — Inline modal to change a macro's execution mode
@@ -79,6 +82,7 @@ configurator/
 │   │   ├── ExportModal.tsx             — Multi-select modal to choose which macros to export
 │   │   ├── ImportModal.tsx             — Preview + confirm modal for importing a JSON macro file
 │   │   ├── SearchableKeyModal.tsx      — Searchable key picker (HID keys, custom keys, macros, transparent)
+│   │   ├── SidebarIcons.tsx            — SVG icons used in the main application navigation sidebar/header
 │   │   └── Icons.tsx                   — Reusable SVG icon components (ActionTapIcon, etc.)
 │   │
 │   ├── hooks/
@@ -94,11 +98,13 @@ configurator/
 │   │   ├── deviceStore.ts              — Zustand: isConnected, deviceStatus, isDeveloperMode, controller ref
 │   │   ├── macroStore.ts               — Zustand: macros[], macroLimits, macroCache, async fetch/save/delete
 │   │   ├── customKeyStore.ts           — Zustand: customKeys[], async fetch/save/delete
-│   │   └── logStore.ts                 — Zustand: logs[] (max 200 entries), addLog, clearLogs
+│   │   ├── logStore.ts                 — Zustand: logs[] (max 200 entries), addLog, clearLogs
+│   │   ├── notificationStore.ts        — Zustand: global notification state; showNotification(message, type)
+│   │   └── layoutStore.ts              — Zustand: physicalLayout, layers, activeLayer, isConnected (shared between editor and 3D background)
 │   │
 │   ├── types/
 │   │   ├── protocol.ts                 — All protocol constants (VID/PID, flag bits, module IDs, key IDs)
-│   │   ├── device.ts                   — CommandResponse, DeviceStatus, LogMessage, PhysKey, LayerData, callbacks
+│   │   ├── device.ts                   — CommandResponse, DeviceStatus, LogMessage, PhysKey, LayerData, callbacks, NotificationType
 │   │   ├── macros.ts                   — Macro, MacroElement, MacroAction, MacroLimits, ImportableMacro
 │   │   ├── customKeys.ts               — CustomKey, CustomKeyPR, CustomKeyMA
 │   │   └── index.ts                    — Barrel re-export
@@ -107,7 +113,8 @@ configurator/
 │       ├── packetUtils.ts              — getFlagsString() for log display, formatHex() helper
 │       ├── kleParser.ts                — Parses KLE (Keyboard Layout Editor) JSON into PhysKey[][]
 │       ├── layoutUtils.ts              — Physical layout JSON parse + serialize
-│       └── fileUtils.ts               — saveJsonFile(): File System Access API + <a> fallback
+│       ├── fileUtils.ts                — saveJsonFile(): File System Access API + <a> fallback
+│       └── withTimeout.ts              — withTimeout<T>(promise, ms): wraps any promise with a deadline; throws TimeoutError on expiry
 ```
 
 ---
@@ -216,16 +223,18 @@ If the device disconnects unexpectedly while `wantConnection` is true, `HIDTrans
 
 ### Zustand stores (`src/stores/`)
 
-| Store            | Key state                                                      | Purpose                             |
-|------------------|----------------------------------------------------------------|-------------------------------------|
-| `deviceStore`    | `isConnected`, `deviceStatus`, `isDeveloperMode`, `controller` | Connection + global UI flags        |
-| `macroStore`     | `macros[]`, `macroLimits`, `macroCache`                        | Macro list + per-macro detail cache |
-| `customKeyStore` | `customKeys[]`                                                 | Custom key list                     |
-| `logStore`       | `logs[]` (max 200) | Communication log ring buffer             |
+| Store                 | Key state                                                      | Purpose                                   |
+|-----------------------|----------------------------------------------------------------|-------------------------------------------|
+| `deviceStore`         | `isConnected`, `deviceStatus`, `isDeveloperMode`, `controller` | Connection + global UI flags              |
+| `macroStore`          | `macros[]`, `macroLimits`, `macroCache`                        | Macro list + per-macro detail cache       |
+| `customKeyStore`      | `customKeys[]`                                                 | Custom key list                           |
+| `logStore`            | `logs[]` (max 200)                                             | Communication log ring buffer             |
+| `notificationStore`   | `notification`, `showNotification`, `clearNotification`        | Global user-feedback notification system  |
+| `layoutStore`         | `physicalLayout`, `layers`, `activeLayer`, `isConnected`       | Bridge between `KeyboardLayoutEditor` and `Background3D` |
 
 The stores hold **typed actions** that accept a `DeviceController` argument, keeping the async device logic inside the store rather than leaking into components.
 
-> **Note:** The current `App.tsx` + hooks architecture does **not** read from these Zustand stores — it manages its own local state and uses `useMacros` / `useCustomKeys` hooks directly. The Zustand stores are prepared infrastructure for a future refactor that would unify all state. New features should use the stores; the existing App flow still uses hooks.
+> **Note:** The current `App.tsx` + hooks architecture does **not** read from the device/macro/customKey Zustand stores — it manages its own local state and uses `useMacros` / `useCustomKeys` hooks directly. The Zustand stores are prepared infrastructure for a future refactor. The exception is `notificationStore`, which **is actively used** by all dashboard components and `App.tsx` for UI feedback.
 
 ### React hooks (`src/hooks/`)
 
@@ -242,8 +251,9 @@ The stores hold **typed actions** that accept a `DeviceController` argument, kee
 After hook extraction, `App.tsx` owns only:
 - `isConnected` — drives conditional rendering of all panels
 - `deviceStatus` — passed to `StatusWidget`
-- `isDeveloperMode` — persisted in `localStorage`, passed to dashboards
-- `logs[]` — ring of `LogMessage` entries for the dev panel
+- `isDeveloperMode` — persisted in `localStorage`, unlocked via the code
+- `logs[]` — ring of `LogMessage` entries for the dev panel strip
+- `activeSection` — current navigation target (layout, macrosCkeys, split, identity)
 
 ---
 
@@ -278,13 +288,15 @@ The editor accepts **KLE (Keyboard Layout Editor) raw JSON** pasted into a text 
 1. Bounds validation checks that no key has `row >= MATRIX_ROWS` or `col >= MATRIX_COLS`. Out-of-bounds keys show an error and abort.
 2. On success, `setPhysicalLayout(parsed)` updates the local state and the "Save Physical Layout" button pushes it to the device.
 
-### Test mode
+### Test mode / Row-Col Edit
 
-When test mode is active (`isTestMode === true`), physical key presses on the real keyboard are injected via `SYS_CMD_INJECT_KEY`. The highlighted key in the editor tracks which key was most recently pressed, giving visual feedback of the physical key matrix mapping.
+Accessed via the "..." options menu in the Layout section (Developer Mode only). 
 
-### Export
+When test mode is active, physical key presses are injected via `SYS_CMD_INJECT_KEY`. In Row-Col Edit mode, matrix coordinates are displayed over each key, and logical matrix positions can be reassigned.
 
-The current physical layout can be exported to JSON (the same format accepted by KLE import) via `saveJsonFile()` from `utils/fileUtils.ts`.
+### Portability (Export/Import)
+
+The entire layout (all 4 layers) and the physical layout geometry can be exported to a single JSON file. This is accessed via the options menu in the Layout section.
 
 ---
 
@@ -413,26 +425,55 @@ ID assignment follows the same "smallest available slot" pattern as macros. `id:
 
 ---
 
-## 9. Developer Mode
+## 9. Combos
 
-Toggle the **DEV MODE** switch in the top-right corner of the header. The state is persisted in `localStorage`.
+Combos allow users to trigger an action when a specific set of keys are pressed simultaneously. A combo consists of 2 to 8 keys on the matrix and an action code.
+
+### Data model
+
+```typescript
+export interface Combo {
+    id: number;
+    name: string;
+    keys: { row: number; col: number }[]; // Physical keys
+    action: number;                       // HID code to send
+    activeLayers: number[];               // e.g. [0, 1] means active on Base and FN1
+    strictOrder: boolean;                 // If true, keys must be pressed in exact order
+}
+```
+
+### Device encoding
+
+Fetch all combos: `CFG_KEY_COMBOS` (GET) → list of combos.
+Fetch single: `CFG_KEY_COMBO_SINGLE` (GET, body: `{ id }`).
+Save: `CFG_KEY_COMBO_SINGLE` (SET, body: full `Combo` object).
+Delete: `CFG_KEY_COMBO_SINGLE` (SET, body: `{ delete: id }`).
+
+Up to 32 combos are supported per device (`COMBO_MAX`).
+
+---
+
+## 10. Developer Mode
+
+Developer Mode is toggled by typing the **Developer Code** while the application is focused. There is no visible button for this to prevent accidental activation:
+`↑` `↑` `↓` `↓` `←` `→` `←` `→` `B` `A`
 
 ### DevControlsPanel
 
-When Developer Mode is on, a `DevControlsPanel` appears at the bottom. It has two columns:
+When active, a `DevControlsPanel` appears as a strip at the bottom of the viewport. It provides:
 
-**Left — Controls:**
-- **Enable/disable toggle** — disables sending until explicitly enabled, preventing accidental writes.
+**Left — Config Explorer:**
 - **Target Module** selector — CONFIG or SYSTEM.
-- **Key ID** selector (CONFIG module only) — selects which config record to read/write.
-- **Configuration Form** — auto-generated form populated by a GET of the selected key. Edit fields and click **Save Payload** to send a SET.
-- **Clear Logs** button.
+- **Key ID** selector — selects which config record to read/write.
+- **Auto-Form** — populated by a GET of the selected key; allows editing and SETing raw JSON records.
 
-When the module or key ID changes, a GET is fired automatically to populate the form with the current device values.
+**Right — Raw Packet Log:**
+- Real-time display of every HID report sent/received.
+- Decoded flags (e.g. `[FIRST|LAST|ACK]`) and text-decoded payloads for rapid protocol debugging.
 
-**Right — Device Logs:**
-- Every received HID packet is shown with its timestamp, flag string (e.g. `[FIRST|ACK]`), payload length, remaining count, and either a hex dump or decoded text payload.
-- Text log entries (e.g. "Device connected", "Found 3 macros") are injected via `addLog()` in `App.tsx`.
+### Unlocked Sections
+
+Developer mode unlocks the **Identity** section in the main header navigation, which allows modifying device names and split hardware variants. It also unlocks advanced tools in the Layout section's options menu (KLE Import, Physical Layout Save, Matrix Row/Col Edit).
 
 ### Packet flags display
 
@@ -451,7 +492,76 @@ In Developer Mode, each macro card shows its raw HID action code: `ID: 0x4000` t
 
 ---
 
-## 10. Packet Flow: End-to-End Example
+## 11. Notification System
+
+A global, non-intrusive toast notification system provides consistent user feedback across all dashboards. It replaces any use of `alert()` or local error state.
+
+### Store (`src/stores/notificationStore.ts`)
+
+```typescript
+showNotification(message: string, type?: NotificationType): void
+// type: 'info' | 'warning' | 'error' | 'success'
+```
+
+Any component can import `useNotificationStore` and call `showNotification` without prop drilling.
+
+### Notification types
+
+| Type      | Color  | Use case                                          | Auto-dismiss |
+|-----------|--------|---------------------------------------------------|--------------|
+| `success` | Green  | Save confirmed, import/export completed           | 2.5 s        |
+| `info`    | Blue   | Informational status changes                      | 6 s          |
+| `warning` | Amber  | Non-fatal issues (e.g. layout not stored, import needs save) | 6 s |
+| `error`   | Red    | Operation failed or timed out                     | 6 s          |
+
+### Auto-dismiss behavior (`App.tsx`)
+
+- A CSS transition makes the toast slide in/out.
+- **Success** notifications dismiss after **2.5 s**. All others dismiss after **6 s**. Linux permission errors persist for **20 s**.
+- **Hover-to-pause**: moving the mouse over the toast cancels the timer. On mouse-leave, a grace period (1.5 s for success, 4 s for others) restarts before dismissal.
+- **Manual Dismissal**: Every notification features an "x" close button in the top-right corner for immediate removal.
+- **Actionable Notifications**: Some notifications include interactive buttons, such as the "Refresh Now" button for Linux system locks.
+- **Linux Permission Help**: On Linux, connectivity failures (Permission Denied or System Lock) trigger a persistent, detailed help overlay with the necessary `udev` rules and a copyable fix command.
+
+### Coverage
+
+The notification system is used in every dashboard for all save, delete, import, and export operations:
+
+| Component | Events notified |
+|-----------|-----------------|
+| `MacrosDashboard` | Save, delete, export, import |
+| `CustomKeysDashboard` | Save, delete, export, import |
+| `KeyboardLayoutEditor` | Layer save (per layer), KLE physical layout save, JSON export/import, Key Test Mode toggle |
+| `SplitDashboard` | Pairing start/cancel, unpair, role swap |
+| `DeviceIdentityDashboard` | Identity save, load failure |
+
+---
+
+## 12. Save Timeout Guard (`src/utils/withTimeout.ts`)
+
+All write operations to the device are wrapped with a 7-second timeout to prevent the UI from hanging indefinitely if the firmware does not respond.
+
+```typescript
+// Throws TimeoutError if promise does not resolve within ms milliseconds
+export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T>
+
+export class TimeoutError extends Error {
+    readonly isTimeout = true;
+}
+```
+
+**Applied to:**
+- `useMacros.ts` — `saveMacro`, `deleteMacro`
+- `useCustomKeys.ts` — `saveCustomKey`, `deleteCustomKey`
+- `DeviceIdentityDashboard.tsx` — `saveDeviceIdentity`
+- `SplitDashboard.tsx` — `splitStartPairing`, `splitCancelPairing`, `splitUnpair`, `splitRoleSwap`
+- `KeyboardLayoutEditor.tsx` — per-layer saves, KLE physical layout SET
+
+On timeout, a `TimeoutError` is caught and surfaced as an `error` notification with a "please retry" message. The `isSaving`/`busy` state is always cleared in a `finally` block so the UI remains usable.
+
+---
+
+## 13. Packet Flow: End-to-End Example
 
 **Fetching a single macro (id=2):**
 
@@ -483,7 +593,7 @@ App               useMacros           HIDTransport           Device
 
 ---
 
-## 11. Key Definitions & Action Code Ranges
+## 14. Key Definitions & Action Code Ranges
 
 Defined in `types/protocol.ts` and `KeyDefinitions.ts`:
 
@@ -496,3 +606,77 @@ Defined in `types/protocol.ts` and `KeyDefinitions.ts`:
 | `0x4000–0x4FFF` | `ACTION_CODE_MACRO_MIN/MAX` | Macro slots (base 0x4000 + id) |
 | `0xFFFF` | `KB_KEY_TRANSPARENT` | Pass-through to next layer |
 | `0x0000` | `ACTION_CODE_NONE` | No-op / unassigned |
+
+---
+
+## 15. 3D Background Studio Environment (`Background3D.tsx` / `App.tsx` / `index.css`)
+
+The configurator features a highly immersive, multi-layered background environment combining a **procedurally generated real-time 3D keyboard canvas** with an ultra-clean, minimalist studio vignette backdrop. It requires no external assets and relies entirely on runtime generation for lightweight execution.
+
+### 1. Minimalist Dark Studio Vignette Backdrop
+To keep the absolute focus on the gorgeous 3D model, its materials, shadows, and subtle reflections, the background is completely free of distracting tech patterns, lights, grids, or particles:
+- **Clean Studio Gradient**: A smooth, professional, ultra-dark obsidian radial vignette backdrop with a localized warm amber-copper sunset glow directly behind the keyboard (`radial-gradient(circle at 50% 35%, #2d1304 0%, #0c0501 55%, #050201 100%)`) provides an extremely premium, eye-friendly, and deep atmospheric backdrop.
+- **Transparent 3D Canvas**: The 3D Three.js canvas renders transparently (`gl={{ alpha: true }}`) allowing the deep, smooth studio backdrop gradient to show through.
+- **Atmospheric Studio Fog**: A subtle, matched dark warm-charcoal fog (`<fog attach="fog" args={['#0c0501', 26, 48]} />`) blends the distant edges of the scene smoothly, keeping the atmosphere clearly present with a beautiful warm copper rim-glow while retaining perfect model clarity in the foreground.
+- **Premium Studio Scene Lighting**: Specular and ambient lights inside the 3D scene are tuned to create a realistic specular highlights bloom across the keyboard keycaps, baseplate, and switches. Dedicated dual warm orange spotlights (`#ffa552` and `#ff7300` at `650.0` intensity each) are positioned symmetrically behind the keyboard at `[-9, 6, -10]` and `[9, 6, -10]`, targeting the center of the keyboard to project a clear, stunning double rim lighting glow on the backside without blinding the user.
+- **Contact Shadows**: High-end floor contact shadows (`ContactShadows`) are cast directly beneath the keyboard model, anchoring it in the 3D space as if resting on a premium dark matte studio surface.
+
+### 2. Pointer Isolation and Interactivity
+- **Pointer Isolation**: All transparent structural HTML panels use `pointer-events: none`, allowing clicks and drags on empty space to pass directly through to the 3D Canvas. Interactive dashboard controls explicitly use `pointer-events: auto` to prevent conflicts.
+- **Canvas-Wide Drag Rotation**: A native `pointerdown` listener allows smooth drag-rotation of the 3D keyboard model from any empty backdrop area, while aborting automatically if the click starts on any interactive 2D panel or keyboard keycap.
+
+### 3. Auto-Rotation and Weaving Animation
+To achieve a premium, high-end studio feel, the keyboard model avoids continuous spinning in favor of a smooth, lifelike weaving animation:
+- **Sine-Wave Weaving**: The keyboard oscillates smoothly left-to-right along the Y-axis (`Math.sin(state.clock.elapsedTime * weaveFreq + weaveSeed) * weaveAmp`), creating a subtle perspective shift.
+- **Randomized Phase Offset**: A `weaveSeed` ref is initialized at load with a random phase (`Math.random() * Math.PI * 2`) ensuring that each page load starts from a fresh, unique angle.
+- **Tuned Motion Design**: The animation uses a slow frequency (`weaveFreq = 0.18` rad/s, resulting in a ~35-second full cycle) and subtle amplitude (`weaveAmp = 0.26` rad, approximately ±15° of rotation) for an extremely calm and premium visual presence.
+- **Smooth Transition**: The auto-rotate strength is smoothly interpolated (using `lerp`) when transitioning between active user-controlled drag rotation and the idle weaving animation, avoiding abrupt visual snaps.
+
+### 4. 3D Model Rendering Pipeline
+
+1. **Geometry source** — `Background3D.tsx` reads `physicalLayout` from `layoutStore`. If no layout is loaded, it renders a hardcoded 65% keyboard with realistic key colour assignments.
+2. **Key colouring** — each keycap is coloured according to the action code stored in the active layer at the key's `{row, col}` position, using `getKeyClass()` from `KeyDefinitions.ts`:
+
+   | Key class | Colour |
+   |---|---|
+   | Standard alphanumerics | Dark charcoal (`#111111`) |
+   | Modifiers + action keys (Ctrl, Shift, Alt, Enter, Esc, Caps, Menu, arrows) | Deep blue (`#2a61a8`) |
+   | F1–F12 | Forest green (`#2a7a3b`) |
+   | System actions, macros, custom keys | Deep purple (`#6436b5`) |
+   | Unassigned / transparent | Near-black (`#080b0f`) |
+
+3. **Split detection** — column gaps in the middle of the physical layout signal a split keyboard. The layout is split into two clusters, each rendered with independent ergonomic tenting (Z-axis roll) and a lateral gap.
+4. **Custom baseplates** — each cluster gets a backplate whose outline is computed via a **Minkowski sum on its 2D Convex Hull**: the hull of all key corners is inflated with smooth circular arcs at every vertex, then extruded into a bevelled 3D slab. This produces a rounded, organic silhouette that exactly matches each half's physical outline.
+5. **Rotation correctness** — KLE rotation pivots `(rx, ry)` are fully replicated in 3D: keys are placed inside a `<group>` at the pivot position, then the group is rotated, so angled thumb clusters land in their correct world positions without clipping.
+
+### Connection-driven visibility
+
+The `isConnected` flag is stored in `layoutStore` and set by `App.tsx`'s connection handler. `Background3D` reads it and applies:
+
+- **Fade-in on connect**: `opacity 0 → 1` + `translateY(40px → 0)` over 2.5 s (CSS, spring easing).
+- **Key colour fade-in**: keycap `opacity` is animated per-frame via `useFrame` over ~2.5 s so colours bloom in gradually.
+- **Fade-out on disconnect**: the layout store is cleared (`physicalLayout → null`, `layers → [null,…]`), reversing both animations and sinking the model out of view.
+
+### State Wiring
+
+| State | Source | Consumer |
+|---|---|---|
+| `physicalLayout` | `KeyboardLayoutEditor` (on device load / KLE import) | `Background3D` (geometry generation) |
+| `layers` / `activeLayer` | `KeyboardLayoutEditor` (on device load) | `Background3D` (key colouring) |
+| `isConnected` | `App.tsx` (connection handler) | `Background3D` (fade in/out) |
+
+All shared state lives in `stores/layoutStore.ts` (Zustand). Clearing the layout store on disconnect (setting `physicalLayout → null`, `layers → [null,…]`) is what triggers the fade-out.
+
+### 2D/3D Interaction & Pointer Isolation
+
+To prevent conflicts between the 2D layout editor (dragging to select keys) and the 3D canvas background (dragging to rotate the keyboard model), the application implements a strict pointer-events isolation system:
+
+1. **CSS Pointer Isolation (`index.css`)**:
+   - Transparent structural layout wrappers and page dashboard containers (`.app-layout`, `.app-main-content`, `.app-sections-area`, `.section-container`, `.macros-ckeys-split-view`, `.layout-editor`, `.macros-dashboard`, `.custom-keys-dashboard`, `.dd-page`, etc.) are styled with `pointer-events: none`. This allows clicks on any empty space around the dashboards to pass directly through the DOM layers to the 3D Canvas.
+   - All interactive 2D UI components, dashboards, columns, controls, modals, and settings blocks (`.main-header`, `.layout-toolbar`, `.keyboard-grid`, `.glass-panel`, `.modal-overlay`, `.devctrl-page`, `.list-column`, `.dd-page-header`, `.dd-sections`, `.dd-section`, etc., along with standard buttons, links, and inputs) have `pointer-events: auto` explicitly set. They fully intercept all mouse interactions, preventing rotation triggers when editing layouts.
+
+2. **Canvas-Wide Drag Rotation (`Background3D.tsx`)**:
+   - A native `pointerdown` listener is bound directly to the `window` within `useEffect` inside the `KeyboardModel` component.
+   - To prevent conflict with 2D dashboard interactivity, the handler utilizes a highly comprehensive `.closest()` selector filter. If a click starts on any interactive panel, column, modal, dropdown, header, button, input, or keyboard grid, the handler immediately aborts.
+   - Any drag starting on the empty background space or around the 3D keyboard model initiates the rotation seamlessly, providing a robust, responsive, and cross-browser customizer experience without any dependency on standard DOM hit-testing constraints.
+

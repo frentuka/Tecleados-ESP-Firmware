@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import {
   SPLIT_STATE_CONNECTED,
   SPLIT_STATE_PAIRING,
@@ -16,18 +16,28 @@ interface StatusWidgetProps {
   connectedBitmap: number; // 16-bit bitmap
   splitState?: number;  // split_state_t
   splitRole?: number;   // split_role_t
-  onExpandChange?: (isExpanded: boolean) => void;
   onOfflineClick?: () => void;
-  // BLE action callbacks — wired up from App to hidService.ble*()
+  // BLE action callbacks
   onBleToggleRouting?: () => void;
   onBleConnect?: (profileId: number) => void;
   onBleToggleConn?: (profileId: number) => void;
   onBlePair?: (profileId: number) => void;
 }
 
-const StatusWidget: React.FC<StatusWidgetProps> = ({ isConnected, transportMode, selectedProfile, pairingProfile, connectedBitmap, splitState = 0, splitRole = 0, onExpandChange, onOfflineClick, onBleToggleRouting, onBleConnect, onBleToggleConn, onBlePair }) => {
-  const [isPersistent, setIsPersistent] = useState(false);
-  const [isHovered, setIsHovered] = useState(false);
+const StatusWidget: React.FC<StatusWidgetProps> = ({ 
+  isConnected, 
+  transportMode, 
+  selectedProfile, 
+  pairingProfile, 
+  connectedBitmap, 
+  splitState = 0, 
+  splitRole = 0, 
+  onOfflineClick, 
+  onBleToggleRouting, 
+  onBleConnect, 
+  onBleToggleConn, 
+  onBlePair 
+}) => {
   const isBle = transportMode === 1;
 
   // Split state helpers
@@ -39,45 +49,21 @@ const StatusWidget: React.FC<StatusWidgetProps> = ({ isConnected, transportMode,
   const splitRoleLabel = splitRole === SPLIT_ROLE_MASTER ? 'M' : splitRole === SPLIT_ROLE_SLAVE ? 'S' : '';
   const profileRange = Array.from({ length: 9 }, (_, i) => i); // Indexes 0-8
 
-  // Track expansion state for collision avoidance
-  useEffect(() => {
-    if (onExpandChange) {
-      onExpandChange(isPersistent || isHovered);
-    }
-  }, [isPersistent, isHovered, onExpandChange]);
-
-  // Reset persistence if disconnected
-  useEffect(() => {
-    if (!isConnected) {
-      setIsPersistent(false);
-    }
-  }, [isConnected]);
-
-  const togglePersistent = (e: React.MouseEvent) => {
-    e.stopPropagation(); // Avoid triggering any parent handlers
-    if (!isConnected) {
-      if (onOfflineClick) onOfflineClick();
-      return;
-    }
-    setIsPersistent(!isPersistent);
-  };
-
   return (
-    <div
-      className={`status-pill ${isConnected ? 'connected' : 'disconnected'} ${isPersistent ? 'persistent' : ''}`}
-      onClick={togglePersistent}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-      title={isConnected ? (isPersistent ? "Click to unlock" : "Click to keep expanded") : "Disconnected"}
-    >
-      <div className="status-badge">
+    <div className={`status-widget ${isConnected ? 'connected' : 'disconnected'}`}>
+      <div 
+        className="status-badge" 
+        onClick={!isConnected ? onOfflineClick : undefined} 
+        title={isConnected ? "Connected" : "Disconnected"}
+      >
         <span className="status-dot"></span>
         <span className="status-text">{isConnected ? 'LIVE' : 'OFFLINE'}</span>
       </div>
 
       {isConnected && (
-        <div className="status-expandable">
+        <div className="status-content">
           <div className="status-divider-v"></div>
+          
           <div className="status-section mode-section">
             <div className={`mode-icon ${!isBle ? 'active' : ''}`} title="USB Mode (always active when connected via USB)">
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -98,37 +84,38 @@ const StatusWidget: React.FC<StatusWidgetProps> = ({ isConnected, transportMode,
             </div>
           </div>
 
-          <div className={`ble-profiles-wrapper ${isBle ? 'visible' : 'hidden'}`}>
-            <div className="status-divider-v"></div>
-
-            <div className="status-section profiles-section">
-              <div className="profiles-grid">
-                {profileRange.map((p) => {
-                    const isSelected = selectedProfile === p;
-                    const isConnectedProfile = (connectedBitmap & (1 << p)) !== 0;
-                    const isPairing = pairingProfile === p;
-                    const canClick = !!(onBleConnect || onBleToggleConn || onBlePair);
-                    const tooltip = [
-                        `Profile ${p + 1}: ${isPairing ? 'Pairing…' : isConnectedProfile ? 'Connected' : 'Disconnected'}${isSelected ? ' (active)' : ''}`,
-                        canClick ? 'Click=connect  Dbl-click=toggle  Right-click=pair' : '',
-                    ].filter(Boolean).join(' · ');
-                    return (
-                      <div
-                        key={p}
-                        className={`profile-indicator ${isSelected ? 'selected' : ''} ${isConnectedProfile ? 'connected-p' : ''} ${isPairing ? 'pairing' : ''}`}
-                        title={tooltip}
-                        style={{ cursor: canClick ? 'pointer' : 'default' }}
-                        onClick={e => { e.stopPropagation(); onBleConnect?.(p); }}
-                        onDoubleClick={e => { e.stopPropagation(); onBleToggleConn?.(p); }}
-                        onContextMenu={e => { e.preventDefault(); e.stopPropagation(); onBlePair?.(p); }}
-                      >
-                        {p + 1}
-                      </div>
-                    );
-                })}
+          {isBle && (
+            <>
+              <div className="status-divider-v"></div>
+              <div className="status-section profiles-section">
+                <div className="profiles-grid">
+                  {profileRange.map((p) => {
+                      const isSelected = selectedProfile === p;
+                      const isConnectedProfile = (connectedBitmap & (1 << p)) !== 0;
+                      const isPairing = pairingProfile === p;
+                      const canClick = !!(onBleConnect || onBleToggleConn || onBlePair);
+                      const tooltip = [
+                          `Profile ${p + 1}: ${isPairing ? 'Pairing…' : isConnectedProfile ? 'Connected' : 'Disconnected'}${isSelected ? ' (active)' : ''}`,
+                          canClick ? 'Click=connect  Dbl-click=toggle  Right-click=pair' : '',
+                      ].filter(Boolean).join(' · ');
+                      return (
+                        <div
+                          key={p}
+                          className={`profile-indicator ${isSelected ? 'selected' : ''} ${isConnectedProfile ? 'connected-p' : ''} ${isPairing ? 'pairing' : ''}`}
+                          title={tooltip}
+                          style={{ cursor: canClick ? 'pointer' : 'default' }}
+                          onClick={e => { e.stopPropagation(); onBleConnect?.(p); }}
+                          onDoubleClick={e => { e.stopPropagation(); onBleToggleConn?.(p); }}
+                          onContextMenu={e => { e.preventDefault(); e.stopPropagation(); onBlePair?.(p); }}
+                        >
+                          {p + 1}
+                        </div>
+                      );
+                  })}
+                </div>
               </div>
-            </div>
-          </div>
+            </>
+          )}
 
           {/* Split keyboard indicator */}
           {splitActive && (
@@ -137,15 +124,15 @@ const StatusWidget: React.FC<StatusWidgetProps> = ({ isConnected, transportMode,
               <div
                 className="status-section"
                 title={`Split: ${isSplitConnected ? 'Connected' : isSplitPairing ? 'Pairing' : 'Disconnected'}${splitRoleLabel ? ` (${splitRoleLabel === 'M' ? 'Master' : 'Slave'})` : ''}`}
-                style={{ gap: 4, paddingRight: 4 }}
+                style={{ gap: 4 }}
               >
-                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={splitColor} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={splitColor} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <rect x="2" y="7" width="20" height="14" rx="2" ry="2"/>
                   <path d="M16 3h-4M12 3v4M8 3h4"/>
                   <line x1="12" y1="7" x2="12" y2="21"/>
                 </svg>
                 {splitRoleLabel && (
-                  <span style={{ fontSize: 9, fontWeight: 800, color: splitColor, letterSpacing: 0.5 }}>
+                  <span style={{ fontSize: 10, fontWeight: 800, color: splitColor, letterSpacing: 0.5 }}>
                     {splitRoleLabel}
                   </span>
                 )}
@@ -156,49 +143,36 @@ const StatusWidget: React.FC<StatusWidgetProps> = ({ isConnected, transportMode,
       )}
 
       <style>{`
-        .status-pill {
+        .status-widget {
           display: flex;
           align-items: center;
           height: 36px;
-          padding: 1px 0px 0px 10px;
-          background: rgba(255, 255, 255, 0.05);
-          border: 1px solid rgba(255, 255, 255, 0.1);
-          border-radius: 20px;
+          padding: 0 14px;
+          background: rgba(255, 255, 255, 0.03);
+          border: 1px solid rgba(255, 255, 255, 0.05);
+          border-radius: 10px;
           backdrop-filter: blur(10px);
-          transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-          overflow: hidden;
-          cursor: pointer;
           user-select: none;
-          width: fit-content;
-          box-sizing: border-box;
-        }
-
-        .status-pill.connected:hover,
-        .status-pill.connected.persistent {
-          background: rgba(255, 255, 255, 0.08);
-          border-color: rgba(255, 255, 255, 0.2);
-          padding-right: 14px;
-        }
-
-        .status-pill.persistent {
-          border-color: rgba(88, 166, 255, 0.4);
-          box-shadow: 0 0 10px rgba(88, 166, 255, 0.1);
+          gap: 4px;
+          transition: all 0.3s ease;
         }
 
         .status-badge {
           display: flex;
           align-items: center;
-          align-self: center;
-          gap: 6px;
-          flex-shrink: 0;
+          gap: 8px;
           white-space: nowrap;
+          cursor: default;
+        }
+        
+        .disconnected .status-badge {
+          cursor: pointer;
         }
 
         .status-dot {
           width: 8px;
           height: 8px;
           border-radius: 50%;
-          transition: background 0.3s ease;
           flex-shrink: 0;
         }
 
@@ -218,69 +192,25 @@ const StatusWidget: React.FC<StatusWidgetProps> = ({ isConnected, transportMode,
           letter-spacing: 0.5px;
           color: rgba(255, 255, 255, 0.9);
           line-height: 1;
+        }
+
+        .status-content {
           display: flex;
           align-items: center;
-          margin-top: 0px;
-          margin-right: 12px;
-          transition: margin-right 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+          animation: fadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
         }
 
-        .status-pill.connected:hover .status-text,
-        .status-pill.connected.persistent .status-text {
-          margin-right: 4px;
-        }
-
-        .status-expandable {
-          display: flex;
-          align-items: center;
-          opacity: 0;
-          max-width: 0;
-          transform: translateX(-10px);
-          transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-          pointer-events: none;
-          overflow: hidden;
-        }
-
-        .status-pill:hover .status-expandable,
-        .status-pill.persistent .status-expandable {
-          opacity: 1;
-          max-width: 500px;
-          transform: translateX(0);
-          pointer-events: auto;
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateX(-10px); }
+          to { opacity: 1; transform: translateX(0); }
         }
 
         .status-divider-v {
           width: 1px;
           height: 16px;
           background: rgba(255, 255, 255, 0.15);
-          margin: 6px;
+          margin: 0 10px;
           flex-shrink: 0;
-        }
-
-        .ble-profiles-wrapper {
-          display: flex;
-          align-items: center;
-          gap: 4px;
-          overflow: hidden;
-          transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-          opacity: 0;
-          max-width: 0;
-          transform: scaleX(0.9);
-          transform-origin: left;
-        }
-
-        .ble-profiles-wrapper.visible {
-          opacity: 1;
-          max-width: 240px;
-          transform: scaleX(1);
-        }
-
-        .ble-profiles-wrapper.hidden {
-          opacity: 0;
-          max-width: 0;
-          transform: scaleX(0.8);
-          margin-left: 0;
-          pointer-events: none;
         }
 
         .status-section {
@@ -301,23 +231,23 @@ const StatusWidget: React.FC<StatusWidgetProps> = ({ isConnected, transportMode,
 
         .mode-icon.active {
           color: #59a7ffff;
+          background: rgba(89, 167, 255, 0.1);
         }
 
         .mode-separator {
           font-size: 10px;
           opacity: 0.3;
-          margin: 8px;
+          margin: 0 4px;
         }
 
         .profiles-grid {
           display: flex;
           gap: 4px;
-          margin: 4px;
         }
 
         .profile-indicator {
-          width: 18px;
-          height: 18px;
+          width: 20px;
+          height: 20px;
           display: flex;
           align-items: center;
           justify-content: center;
@@ -359,7 +289,7 @@ const StatusWidget: React.FC<StatusWidgetProps> = ({ isConnected, transportMode,
             border-color: rgba(88, 166, 255, 0.5);
           }
           50% {
-            box-shadow: 0 0 10px rgba(88, 166, 255, 0.8);
+            box-shadow: 0 0 8px rgba(88, 166, 255, 0.8);
             border-color: rgba(88, 166, 255, 1);
           }
           100% {

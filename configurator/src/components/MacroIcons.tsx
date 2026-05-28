@@ -17,6 +17,12 @@ export const IconPlus = () => <span className="m-sym m-smaller">+</span>;
 export const IconExclamation = () => <span className="m-sym m-smaller">!</span>;
 export const IconMultiply = () => <span className="m-sym m-smaller">×</span>;
 
+// Symbols for Custom Keys
+export const IconP = () => <span className="m-sym">P</span>;
+export const IconR = () => <span className="m-sym">R</span>;
+export const IconM = () => <span className="m-sym">M</span>;
+export const IconA = () => <span className="m-sym">A</span>;
+
 export const IconHold = () => (
     <svg className="m-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
         <path d="M12 4v14M7 13l5 5 5-5M5 21h14" />
@@ -59,4 +65,11 @@ export function getModeBadge(execMode: number): React.ReactNode {
         case 7: return <><IconN /><IconMultiply /></>;
         default: return <><IconOne /><IconXSmall /></>;
     }
+}
+
+export function getCustomKeyBadge(mode: number): React.ReactNode {
+    // 0 = PressRelease (PR), 1 = MultiAction (MA)
+    if (mode === 0) return <><IconP /><IconR /></>;
+    if (mode === 1) return <><IconM /><IconA /></>;
+    return null;
 }

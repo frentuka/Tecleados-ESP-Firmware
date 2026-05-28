@@ -44,6 +44,7 @@ Most kinds are registered by the config module itself in `cfg_init()`. However, 
 | SYSTEM            | `cfg_init`          | —                        |
 | PHYSICAL          | `cfg_init`          | —                        |
 | CKEY              | `cfg_init` (NULL cb)| `kb_custom_key_init`     |
+| COMBO             | `cfg_init` (NULL cb)| `kb_combo_init`          |
 
 ### NVS Storage Layout
 
@@ -57,6 +58,7 @@ Each kind writes to its own NVS namespace for isolation and to stay within NVS's
 | SYSTEM            | `cfg`         | `k3_sys` (prefixed)           | Uses fallback prefix scheme     |
 | PHYSICAL          | `cfg`         | `k4_physical` (prefixed)      | Uses fallback prefix scheme     |
 | CKEY              | `cfg_ck`      | `ck_0`…`ck_119`, `ck_idx`     | Individual blobs + bitmap index |
+| COMBO             | `cfg_cmb`     | `cmb_0`…`cmb_31`, `cmb_idx`   | Individual blobs + bitmap index |
 
 Kinds with a dedicated namespace use the raw key name directly. Kinds using the fallback `cfg` namespace have their key prefixed with `k<kind_int>_` to avoid collisions (enforced by the internal `cfgmod_build_key()` + `resolve_ns_and_key()` helpers in `cfgmod.c`).
 
@@ -122,6 +124,10 @@ The config module registers with the USB module as `MODULE_CONFIG` via `usbmod_r
 | `CFG_KEY_CKEYS`           | GET     | —                             | `{"customKeys": [{id, name, mode}…]}`|
 | `CFG_KEY_CKEY_SINGLE`     | GET     | `{"id": N}`                   | Full custom key JSON                 |
 | `CFG_KEY_CKEY_SINGLE`     | SET     | CKey JSON or `{"delete": N}`  | — (status only)                      |
+| `CFG_KEY_COMBOS`          | GET     | —                             | `{"combos": [{id, name, action}…]}`  |
+| `CFG_KEY_COMBO_LIMITS`    | GET     | —                             | `{"maxCombos": 32, "maxKeys": 8}`    |
+| `CFG_KEY_COMBO_SINGLE`    | GET     | `{"id": N}`                   | Full combo JSON with `keys` array    |
+| `CFG_KEY_COMBO_SINGLE`    | SET     | Combo JSON or `{"delete": N}` | — (status only)                      |
 
 `CFG_KEY_TEST` and `CFG_KEY_HELLO` are protocol slots for raw NVS read/write, useful for diagnostics. They return `ESP_ERR_NVS_NOT_FOUND` until written via SET.
 
@@ -206,6 +212,27 @@ All actions are action codes in the unified action code space (HID, System, Macr
 **Storage:** Like macros, each custom key is stored as an individual NVS blob under `ck_<id>` in namespace `cfg_ck`. A `cfg_ckey_index_t` (15-byte bitmask, 120 bits) under `ck_idx` tracks which IDs exist.
 
 **Registration note:** `cfg_init()` registers `CFGMOD_KIND_CKEY` with a NULL update callback. `kb_custom_key_init()` in `kb_custom_key.c` re-registers with `kb_custom_key_reload` as the callback, matching the macro pattern. This ensures the config module has no dependency on the keyboard module.
+
+---
+
+### cfg_combos — Combos Definitions
+
+**Files:** [cfg_combos.c](cfg_combos.c), [include/cfg_combos.h](include/cfg_combos.h)
+
+Stores up to **32 combos** (IDs 0–31), each allowing up to **8 simultaneous trigger keys**.
+
+Each combo (`cfg_combo_t`) contains:
+- `id`, `name[32]`
+- `keys` — array of `cfg_combo_key_t` (row, col matrix positions)
+- `action` — 16-bit action code to fire
+- `active_layers` — bitmask of layers where the combo is active
+- `strict_order` — if true, the keys must be pressed in the exact order defined
+- `cancel_keys` — if true, retroactively releases individual keys when the combo triggers
+- `delayed_press` / `delay_ms` — optionally holds trigger keys from firing for a time window to ensure clean combo matching
+
+**Storage:** Each combo is stored as an individual NVS blob under `cmb_<id>` in namespace `cfg_cmb`. A `cfg_combo_index_t` (32-bit bitmask) under `cmb_idx` tracks which IDs exist.
+
+**Registration note:** `cfg_init()` registers `CFGMOD_KIND_COMBO` with a NULL update callback. The keyboard module later re-registers it with its own reload callback during initialization to avoid circular dependencies.
 
 ---
 

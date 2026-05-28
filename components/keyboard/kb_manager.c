@@ -17,6 +17,7 @@
 #include "kb_system_action.h"
 #include "kb_custom_key.h"
 #include "kb_bitmap.h"
+#include "kb_combo.h"
 
 #include "cfg_layouts.h"
 #include "cfg_system.h"
@@ -54,6 +55,8 @@ static volatile matrix_cb_t s_matrix_cb = NULL;
 /* ---- Pause control ---- */
 static volatile bool s_paused = false;
 
+static volatile bool s_force_active = false;
+
 void kb_manager_set_paused(bool paused) { s_paused = paused; }
 
 /* ---- Mirror-cols flag (live-reloadable from system config) ---- */
@@ -80,6 +83,27 @@ void kb_manager_set_scan_divisor(uint8_t divisor)
 {
     s_scan_divisor = divisor ? divisor : 1;
 }
+
+/* ---- Polling-rate snapshot (updated every 1-second window) ---- */
+static kb_poll_rate_snapshot_t s_poll_rate_snap = {0};
+static portMUX_TYPE            s_poll_rate_mux  = portMUX_INITIALIZER_UNLOCKED;
+
+void kb_manager_get_poll_rate(kb_poll_rate_snapshot_t *out)
+{
+    if (!out) return;
+    portENTER_CRITICAL(&s_poll_rate_mux);
+    *out = s_poll_rate_snap;
+    portEXIT_CRITICAL(&s_poll_rate_mux);
+}
+
+void kb_manager_set_force_active(bool active)
+{
+    s_force_active = active;
+    if (active && s_kb_task_handle) {
+        xTaskNotifyGive(s_kb_task_handle);
+    }
+}
+
 
 void kb_manager_set_matrix_cb(void (*cb)(const uint8_t *matrix, size_t len,
                                           uint8_t layer))
@@ -179,13 +203,18 @@ static void kb_manager_task(void *arg) {
     uint16_t s_active_action_codes[KB_MATRIX_ROW_COUNT][KB_MATRIX_COL_COUNT];
 
     /* Timing / benchmarking */
-    int64_t s_seconds_timer        = esp_timer_get_time();
-    int64_t s_last_scan_us         = s_seconds_timer;
-    int64_t s_last_report_sent_us  = s_seconds_timer;
-    int64_t s_prev_report_sent_us  = -1;
+    int64_t s_seconds_timer          = esp_timer_get_time();
+    int64_t s_last_scan_us           = s_seconds_timer;
+    int64_t s_last_report_sent_us    = s_seconds_timer;
+    int64_t s_prev_report_sent_us    = -1;
+    int64_t s_prev_scan_us           = -1;  // for min scan interval tracking
     int64_t s_min_report_interval_us = LLONG_MAX;
-    uint32_t s_scan_count          = 0;
-    uint32_t s_report_count        = 0;
+    int64_t s_min_scan_interval_us   = LLONG_MAX;
+    int64_t s_max_scan_interval_us   = 0;           // for floor_scan_hz
+    uint32_t s_scan_count            = 0;
+    uint32_t s_report_count          = 0;
+    /* NOTE: these are task-local accumulators; results committed atomically
+     * into s_poll_rate_snap at the end of each 1-second window. */
 
     /* State flags */
     bool s_last_matrix_valid  = false;
@@ -214,7 +243,7 @@ static void kb_manager_task(void *arg) {
         if (now_us - s_last_scan_us < effective_interval_us) {
             /* If no keys are held, sleep in interrupt mode until a key wakes us.
              * s_matrix_nonempty is updated after every debounce; use the cached value. */
-            if (!s_matrix_nonempty && !s_paused) {
+            if (!s_matrix_nonempty && !s_paused && !s_force_active) {
                 bool injected_empty = true;
                 portENTER_CRITICAL(&s_injected_matrix_lock);
                 for (size_t i = 0; i < KB_MATRIX_BITMAP_BYTES; i++) {
@@ -265,6 +294,15 @@ static void kb_manager_task(void *arg) {
         portEXIT_CRITICAL(&s_remote_matrix_lock);
 
         s_scan_count++;
+        /* Track min/max scan interval for peak_scan_hz / floor_scan_hz */
+        if (s_prev_scan_us >= 0) {
+            int64_t scan_interval = now_us - s_prev_scan_us;
+            if (scan_interval > 0) {
+                if (scan_interval < s_min_scan_interval_us) s_min_scan_interval_us = scan_interval;
+                if (scan_interval > s_max_scan_interval_us) s_max_scan_interval_us = scan_interval;
+            }
+        }
+        s_prev_scan_us = now_us;
         s_last_scan_us = now_us;
 
         /* Update cached emptiness flag for the rate-limiter sleep decision */
@@ -273,12 +311,24 @@ static void kb_manager_task(void *arg) {
             if (s_matrix[i] != 0) { s_matrix_nonempty = true; break; }
         }
 
-        /* --- Periodic stats logging (errors only) --- */
+        /* --- Periodic stats logging + snapshot update (every 1 s) --- */
         if (elapsed_us >= 1000000LL) {
             uint32_t scans_per_sec   = (uint32_t)((s_scan_count  * 1000000LL) / elapsed_us);
             uint32_t reports_per_sec = (uint32_t)((s_report_count * 1000000LL) / elapsed_us);
-            uint32_t peak_hz = (s_min_report_interval_us > 0 && s_min_report_interval_us != LLONG_MAX)
+            uint32_t peak_scan_hz = (s_min_scan_interval_us > 0 && s_min_scan_interval_us != LLONG_MAX)
+                               ? (uint32_t)(1000000LL / s_min_scan_interval_us) : 0;
+            uint32_t floor_scan_hz = (s_max_scan_interval_us > 0)
+                               ? (uint32_t)(1000000LL / s_max_scan_interval_us) : 0;
+            uint32_t peak_report_hz = (s_min_report_interval_us > 0 && s_min_report_interval_us != LLONG_MAX)
                                ? (uint32_t)(1000000LL / s_min_report_interval_us) : 0;
+
+            /* Publish snapshot atomically so split_bench can read it from any task. */
+            portENTER_CRITICAL(&s_poll_rate_mux);
+            s_poll_rate_snap.scan_hz        = scans_per_sec;
+            s_poll_rate_snap.floor_scan_hz  = floor_scan_hz;
+            s_poll_rate_snap.peak_scan_hz   = peak_scan_hz;
+            s_poll_rate_snap.peak_report_hz = peak_report_hz;
+            portEXIT_CRITICAL(&s_poll_rate_mux);
 
             static bool s_logged_boot_protocol = false;
             bool boot_proto_now = usb_keyboard_use_boot_protocol();
@@ -288,16 +338,18 @@ static void kb_manager_task(void *arg) {
             }
 
             if (reports_per_sec < MIN_REPORT_RATE_HZ / 2) {
-                ESP_LOGE(TAG, "Low report rate — scans/s: %lu, reports/s: %lu, peak: %lu Hz",
+                ESP_LOGE(TAG, "Low report rate — scans/s: %lu, reports/s: %lu, peak_scan: %lu Hz",
                          (unsigned long)scans_per_sec,
                          (unsigned long)reports_per_sec,
-                         (unsigned long)(peak_hz <= 1000 ? peak_hz : 1000));
+                         (unsigned long)(peak_scan_hz <= 1200 ? peak_scan_hz : 1200));
             }
 
-            s_scan_count          = 0;
-            s_report_count        = 0;
+            s_scan_count             = 0;
+            s_report_count           = 0;
             s_min_report_interval_us = LLONG_MAX;
-            s_seconds_timer       = now_us;
+            s_min_scan_interval_us   = LLONG_MAX;
+            s_max_scan_interval_us   = 0;
+            s_seconds_timer          = now_us;
         }
 
         /* --- Matrix-change callback (split SLAVE mode) --- */
@@ -341,6 +393,9 @@ static void kb_manager_task(void *arg) {
                     diff[i] = s_matrix[i] ^ (s_last_matrix_valid ? s_last_matrix[i] : 0);
                 }
 
+                // Tick the combo engine (flushes delayed keys)
+                kb_combo_tick(now_us);
+
                 for (size_t byte_idx = 0; byte_idx < KB_MATRIX_BITMAP_BYTES; byte_idx++) {
                     uint8_t d = diff[byte_idx];
                     while (d) {
@@ -356,11 +411,17 @@ static void kb_manager_task(void *arg) {
                         if (curr) {
                             /* Key down: resolve action on current layer and remember it */
                             uint8_t layer    = kb_macro_get_active_layer();
+                            if (kb_combo_process_key(r, c, true, layer)) {
+                                d &= (uint8_t)(d - 1);
+                                continue;
+                            }
                             uint16_t action  = kb_layout_get_action_code(r, c, layer);
                             s_active_action_codes[r][c] = action;
                             kb_macro_process_action(action, true);
                         } else {
                             /* Key up: fire release on the same action code as the press */
+                            uint8_t layer = kb_macro_get_active_layer();
+                            kb_combo_process_key(r, c, false, layer);
                             uint16_t action = s_active_action_codes[r][c];
                             kb_macro_process_action(action, false);
                             s_active_action_codes[r][c] = ACTION_CODE_NONE;
@@ -409,6 +470,7 @@ void kb_manager_start(void) {
     kb_macro_init();
     kb_system_action_init();
     kb_custom_key_init();
+    kb_combo_init();
     cfg_layout_load_all();
 
     cfg_system_t sys;

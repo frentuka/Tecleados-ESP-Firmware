@@ -1,7 +1,7 @@
 # Keyboard Module (`kb_module`)
 
-> **Source:** `components/keyboard/` — `kb_manager.c`, `kb_matrix.c`, `kb_layout.c`, `kb_macro.c`, `kb_system_action.c`, `kb_report.c`, `kb_custom_key.c`, `kb_state.c`
-> **Public API:** `include/kb_manager.h`, `include/kb_layout.h`, `include/kb_matrix.h`, `include/kb_report.h`
+> **Source:** `components/keyboard/` — `kb_manager.c`, `kb_matrix.c`, `kb_layout.c`, `kb_macro.c`, `kb_system_action.c`, `kb_report.c`, `kb_custom_key.c`, `kb_state.c`, `kb_combo.c`
+> **Public API:** `include/kb_manager.h`, `include/kb_layout.h`, `include/kb_matrix.h`, `include/kb_report.h`, `include/kb_combo.h`
 
 The Keyboard module is the **central nervous system** of the firmware. It is responsible for the entire lifecycle of a keypress: from high-frequency hardware scanning and debouncing to the complex logic of layers, macros, and multi-transport HID reporting.
 
@@ -59,7 +59,14 @@ Keys are not just HID constants; they are 16-bit **Action Codes** that define co
 | `0x3000` – `0x3FFF` | **Custom Key** | User-defined complex keys (Configurator presets). |
 | `0x4000` – `0x4FFF` | **Macro** | Trigger for a multi-step sequence defined in NVS. |
 
-### 2. The Tap / Hold State Machine
+### 2. Combos
+The `kb_combo` engine intercepts keys before they are resolved into single actions. 
+- It monitors the state of all keys pressed.
+- When a combination of keys matches a defined combo, the combo's action is fired.
+- Depending on the combo configuration, it may retroactively release the individual keys (`cancelKeys: true`) if they were already sent to the host.
+- It supports a **suppression time window** (`delayedPress: true` with a `delayMs` timer) which holds the first key from firing while it waits to see if the other combo keys are pressed. If `delayedPress` is false, it relies purely on the keys being detected in a simultaneous overlapping down-state, which requires more precise timing from the user.
+
+### 3. The Tap / Hold State Machine
 Specialized "system actions" (like BLE profile switching) are processed via `kb_system_action.c`. This sub-module implements a state machine that distinguishes between:
 - **Single Tap**: Press and release within <300ms.
 - **Hold**: Press sustained for >500ms.
@@ -108,6 +115,8 @@ graph TD
     MGR -- "Matrix XOR Diff" --> SYS
     SYS -- "Post Event" --> EVENT_BUS
     MGR -- "Action Lookup" --> CONFIG
+    MGR -- "Combo Check" --> COMBO["kb_combo (Engine)"]
+    COMBO -- "Process Action" --> MACRO
     MGR -- "Process Action" --> MACRO
     
     MACRO -- "kb_macro_send_report()" --> ROUTER["kb_report (Routing Gate)"]
@@ -129,5 +138,6 @@ graph TD
 | `kb_system_action.c`| Tap/Hold/Double-tap state machine and event bus broadcasting. |
 | `kb_report.c` | The master routing decision point between USB and BLE transports. |
 | `kb_custom_key.c` | Handler for "Custom Key" action codes (presets from the configurator). |
+| `kb_combo.c` | Runtime engine for evaluating combos, canceling keys, and delaying keys. |
 | `kb_state.c` | Management of HID LED states (Caps Lock, Num Lock) shared across modules. |
 | `kb_bitmap.h` | Inline bitmap utilities for high-performance bit manipulation. |

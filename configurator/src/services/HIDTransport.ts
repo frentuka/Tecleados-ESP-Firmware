@@ -34,14 +34,15 @@ import type {
     StatusUpdateCallback,
     DeviceStatus,
     CommandResponse,
+    ConnectionNotification,
 } from '../types/device';
 
 import { MODULE_STATUS } from '../types/protocol';
 
 // ── Transport timing & limits ───────────────────────────────────────────
-const RECONNECT_INTERVAL_MS  = 2000; // How often to poll for device reconnection
-const TASK_QUEUE_DELAY_MS    = 50;   // Delay between sequential queued tasks
-const BLAST_RX_MAX_PACKETS   = 5000; // Abort if a single Blast RX exceeds this count
+const RECONNECT_INTERVAL_MS = 2000; // How often to poll for device reconnection
+const TASK_QUEUE_DELAY_MS = 50;   // Delay between sequential queued tasks
+const BLAST_RX_MAX_PACKETS = 5000; // Abort if a single Blast RX exceeds this count
 
 // ── CRC-8 Table (polynomial 0x07, matches firmware usb_crc.c) ──────────
 const CRC8_TABLE = new Uint8Array([
@@ -117,6 +118,7 @@ export class HIDTransport {
         buffer: null as Uint8Array | null,
         bitmap: null as Uint8Array | null,
         payloadLens: null as Uint8Array | null,
+        startTime: 0,
     };
 
     constructor() {
@@ -131,16 +133,22 @@ export class HIDTransport {
         }
     }
 
+    public static isLinux(): boolean {
+        return /Linux/i.test(navigator.userAgent) || /Linux/i.test((navigator as any).platform || '');
+    }
+
     // ══════════════════════════════════════════════════════════
     // ── Device Discovery & Connection ──
     // ══════════════════════════════════════════════════════════
 
-    public async requestDevice(): Promise<boolean> {
+    public async requestDevice(): Promise<{ ok: boolean; notification?: ConnectionNotification }> {
         try {
             const nav = navigator as any;
             if (!('hid' in nav)) {
-                console.error('WebHID is not supported in this browser.');
-                return false;
+                return {
+                    ok: false,
+                    notification: { type: 'error', message: 'WebHID is not supported in this browser.' }
+                };
             }
 
             const devices = await nav.hid.requestDevice({
@@ -148,49 +156,110 @@ export class HIDTransport {
             });
 
             if (devices.length > 0) {
-                const target = devices.find((d: any) => this.isCommInterface(d));
-                if (!target) {
-                    const debugInfo = devices.map((d: any) => 
-                        `${d.productName} cols: ${(d.collections||[]).map((c:any) => `UP:${c.usagePage}`).join(',')}`
-                    ).join('\n');
-                    alert(`Fail: No Comm interface (0xFFFF) found.\nDevices seen:\n${debugInfo}`);
-                    console.error('[HIDTransport] No valid Comm interface found.', debugInfo);
-                    return false;
+                const candidates = devices.filter((d: any) => this.isCommInterface(d));
+                
+                if (candidates.length === 0) {
+                    return {
+                        ok: false,
+                        notification: { type: 'warning', message: 'The selected device does not have the required communication interface.' }
+                    };
                 }
 
-                console.log(`[HIDTransport] Found Comm interface: ${target.productName}`);
                 this.wantConnection = true;
-                const ok = await this.openDevice(target);
-                if (!ok) {
-                    alert(`Fail: dev.open() returned false for ${target.productName}. Check browser console for SecurityError or UnknownError.`);
-                    console.warn('[HIDTransport] Initial open failed, starting reconnect polling');
-                    this.startReconnectPolling();
+                let lastError: any = null;
+
+                for (const target of candidates) {
+                    console.log(`[HIDTransport] Attempting to open interface: ${target.productName}`);
+                    try {
+                        await this.openDevice(target);
+                        return { ok: true };
+                    } catch (e: any) {
+                        console.warn(`[HIDTransport] Failed to open interface "${target.productName}":`, e);
+                        lastError = e;
+                    }
                 }
-                return ok;
+
+                // If we reach here, all candidates failed
+                const msg = lastError?.message || 'Unknown error during open';
+                
+                if (msg.toLowerCase().includes('failed to open') && HIDTransport.isLinux()) {
+                    return {
+                        ok: false,
+                        notification: { 
+                            type: 'error', 
+                            message: 'System lock: The device is busy. Please try unplugging and plugging it back in.' 
+                        }
+                    };
+                }
+
+                if (lastError?.name === 'SecurityError' || msg.toLowerCase().includes('access denied')) {
+                    return {
+                        ok: false,
+                        notification: { type: 'error', message: 'PERMISSION_DENIED' }
+                    };
+                }
+
+                return {
+                    ok: false,
+                    notification: { type: 'error', message: msg }
+                };
             }
-            return false;
-        } catch (error) {
+            return {
+                ok: false,
+                notification: { type: 'info', message: 'Connection cancelled: No device selected.' }
+            };
+        } catch (error: any) {
+            if (error.name === 'NotFoundError') {
+                return {
+                    ok: false,
+                    notification: { type: 'info', message: 'Connection cancelled: No device selected.' }
+                };
+            }
             console.error('Error requesting HID device:', error);
-            return false;
+            return {
+                ok: false,
+                notification: { type: 'error', message: error.message || 'Error requesting device' }
+            };
         }
     }
 
-    private async openDevice(dev: HIDDeviceLike): Promise<boolean> {
+    private async openDevice(dev: HIDDeviceLike): Promise<void> {
         try {
-            this.device = dev;
-            if (!dev.opened) {
-                await dev.open();
+            // Check for any "ghost" connections that might be hanging
+            const nav = navigator as any;
+            if ('hid' in nav) {
+                const existing = await nav.hid.getDevices();
+                for (const d of existing) {
+                    if (d !== dev && d.opened && d.vendorId === VENDOR_ID && d.productId === PRODUCT_ID) {
+                        console.log('[HIDTransport] Closing ghost connection to existing device...');
+                        try { await d.close(); } catch { /* ignore */ }
+                    }
+                }
             }
+
+            if (!dev.opened) {
+                // Mandatory small pre-delay (Chromium bug workaround for quick reconnections)
+                await new Promise(r => setTimeout(r, 300));
+                
+                try {
+                    await dev.open();
+                } catch (e) {
+                    // Second attempt with longer delay
+                    console.warn('[HIDTransport] First open attempt failed, retrying...', e);
+                    await new Promise(r => setTimeout(r, 800));
+                    await dev.open();
+                }
+            }
+
+            this.device = dev;
             dev.addEventListener('inputreport', this.handleInputReport as EventListener);
             console.log(`Connected to HID device: ${dev.productName}`);
             this.notifyConnectionChange(true);
             this.stopReconnectPolling();
-            return true;
-        } catch (error: any) {
-            alert(`Error opening HID device: ${error?.message || error}`);
-            console.error('Error opening HID device:', error);
+        } catch (e) {
+            console.error('[HIDTransport] Failed to open device:', e);
             this.device = null;
-            return false;
+            throw e;
         }
     }
 
@@ -408,7 +477,7 @@ export class HIDTransport {
     // ── Blast RX Helpers ──
 
     private blastRxReset(): void {
-        this.blastRx = { active: false, totalPackets: 0, buffer: null, bitmap: null, payloadLens: null };
+        this.blastRx = { active: false, totalPackets: 0, buffer: null, bitmap: null, payloadLens: null, startTime: 0 };
     }
 
     private blastRxReceivePacket(index: number, payload: Uint8Array, payloadLen: number): void {
@@ -634,9 +703,9 @@ export class HIDTransport {
         const payloadBytes = data.slice(4, 4 + safeLen);
 
         const isBlastPacket = (flags & PAYLOAD_FLAG_MID) || (flags & PAYLOAD_FLAG_LAST);
-        const isHandshake = (flags & PAYLOAD_FLAG_FIRST) && remaining > 0;
 
-        if (!this.blastRx.active || isHandshake || !isBlastPacket) {
+        // Only log single packets or handshakes (bursts are summarized on finish)
+        if (!this.blastRx.active && !isBlastPacket) {
             this.logCallbacks.forEach(cb => cb(data));
             this.rawPacketCallbacks.forEach(cb => cb(data, 'rx'));
         }
@@ -677,6 +746,7 @@ export class HIDTransport {
             this.blastRx.buffer = new Uint8Array(totalPackets * MAX_PAYLOAD_LENGTH);
             this.blastRx.bitmap = new Uint8Array(Math.ceil(totalPackets / 8));
             this.blastRx.payloadLens = new Uint8Array(totalPackets);
+            this.blastRx.startTime = Date.now();
             this.blastRxReceivePacket(0, payloadBytes, safeLen);
             this.sendResponse(PAYLOAD_FLAG_ACK);
             return;
@@ -698,6 +768,18 @@ export class HIDTransport {
         if (this.blastRx.active && (flags & PAYLOAD_FLAG_LAST)) {
             const lastIndex = this.blastRx.totalPackets - 1;
             this.blastRxReceivePacket(lastIndex, payloadBytes, safeLen);
+
+            const duration = Date.now() - this.blastRx.startTime;
+            const count = this.blastRx.totalPackets;
+
+            // Log aggregated summary
+            const summaryData = new TextEncoder().encode(`USB Comms: ${count} packets received in ${duration}ms`);
+            // We use a dummy packet structure (Flags: 0xFF) to signal a summary log
+            const virtualPacket = new Uint8Array(64);
+            virtualPacket[0] = 0xFF;
+            virtualPacket.set(summaryData.slice(0, 60), 4);
+            this.logCallbacks.forEach(cb => cb(virtualPacket));
+
             const fullPayload = this.blastRxAssemblePayload();
             if (fullPayload.length >= 7) {
                 const module = fullPayload[0];
@@ -706,6 +788,14 @@ export class HIDTransport {
                 const status = (fullPayload[3] | (fullPayload[4] << 8) | (fullPayload[5] << 16) | (fullPayload[6] << 24));
                 const jsonText = new TextDecoder().decode(fullPayload.slice(7)).replace(/\0/g, '');
                 this.pendingResponse = { module, cmd, keyId, status, jsonText };
+
+                // Also emit the reassembled result as a "virtual" single packet for high-level logging in App
+                const resultPacket = new Uint8Array(64);
+                resultPacket[0] = PAYLOAD_FLAG_FIRST | PAYLOAD_FLAG_LAST;
+                resultPacket[3] = Math.min(fullPayload.length, 43); // Peek first part
+                resultPacket.set(fullPayload.slice(0, resultPacket[3]), 4);
+                this.logCallbacks.forEach(cb => cb(resultPacket));
+
                 await this.sendAckAndFinish(true);
             }
             this.blastRxReset();

@@ -43,9 +43,8 @@ enum ColorSet { Red, Green, Blue };
 enum ColorSet current_color = Red;
 
 void single_press_test() {
-  ESP_LOGI(TAG, "test single press: Media Play/Pause");
-  kb_macro_process_action(MEDIA_ACTION_PLAY, true);
-  kb_macro_process_action(MEDIA_ACTION_PLAY, false);
+  ESP_LOGI(TAG, "test single press: Connection Test Beep");
+  splitmod_send_test_beep();
 }
 
 void double_press_test() {
