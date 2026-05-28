@@ -227,7 +227,7 @@ The configurator is the primary client of `cfg_usb_callback()`. Every user actio
 | Edit a macro | GET / SET | `CFG_KEY_MACRO_SINGLE` |
 | Open "Macros & CKs" | GET | `CFG_KEY_CKEYS` |
 | Edit a custom key | GET / SET | `CFG_KEY_CKEY_SINGLE` |
-| Open "Macros & CKs" | GET | `CFG_KEY_COMBOS` |
+| Open "Macros & CKs" | GET | `CFG_KEY_COMBOS`, `CFG_KEY_COMBO_LIMITS` |
 | Edit a combo | GET / SET | `CFG_KEY_COMBO_SINGLE` |
 | Open "Identity" (dev mode) | GET | `CFG_KEY_SYSTEM` |
 | Save identity | SET | `CFG_KEY_SYSTEM` (name, mirror_cols, variant) |

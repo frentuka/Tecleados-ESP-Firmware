@@ -63,7 +63,8 @@ Keys are not just HID constants; they are 16-bit **Action Codes** that define co
 The `kb_combo` engine intercepts keys before they are resolved into single actions. 
 - It monitors the state of all keys pressed.
 - When a combination of keys matches a defined combo, the combo's action is fired.
-- Depending on the combo configuration, it may retroactively release the individual keys (`cancelKeys: true`) or suppress the individual keys during a timeout window (`delayedPress: true`).
+- Depending on the combo configuration, it may retroactively release the individual keys (`cancelKeys: true`) if they were already sent to the host.
+- It supports a **suppression time window** (`delayedPress: true` with a `delayMs` timer) which holds the first key from firing while it waits to see if the other combo keys are pressed. If `delayedPress` is false, it relies purely on the keys being detected in a simultaneous overlapping down-state, which requires more precise timing from the user.
 
 ### 3. The Tap / Hold State Machine
 Specialized "system actions" (like BLE profile switching) are processed via `kb_system_action.c`. This sub-module implements a state machine that distinguishes between:

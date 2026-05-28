@@ -1,6 +1,7 @@
 #include "kb_combo.h"
 
 #include <string.h>
+#include <stdlib.h>
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
@@ -38,6 +39,26 @@ static uint8_t          s_suppressed_count = 0;
 /* ================================================================
  * Internal Helpers
  * ================================================================ */
+
+static bool is_subset(const cfg_combo_t *sub, const cfg_combo_t *super) {
+    for (uint8_t i = 0; i < sub->key_count; i++) {
+        bool found = false;
+        for (uint8_t j = 0; j < super->key_count; j++) {
+            if (sub->keys[i].row == super->keys[j].row && sub->keys[i].col == super->keys[j].col) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) return false;
+    }
+    return true;
+}
+
+static int compare_combo_desc(const void *a, const void *b) {
+    const cfg_combo_t *ca = (const cfg_combo_t *)a;
+    const cfg_combo_t *cb = (const cfg_combo_t *)b;
+    return (int)cb->key_count - (int)ca->key_count;
+}
 
 static void flush_all_suppressed(void) {
     for (uint8_t i = 0; i < s_suppressed_count; i++) {
@@ -93,6 +114,9 @@ static void kb_combo_reload(const char *key) {
         ESP_LOGE(TAG, "Failed to load combos from NVS: 0x%X", (unsigned)err);
     } else {
         ESP_LOGI(TAG, "Loaded %u combo(s) from NVS", (unsigned)s_combo_count);
+        if (s_combo_count > 1) {
+            qsort(s_combos, s_combo_count, sizeof(cfg_combo_t), compare_combo_desc);
+        }
     }
     
     // Reset runtime state
@@ -181,7 +205,32 @@ bool kb_combo_process_key(uint8_t row, uint8_t col, bool is_pressed, uint8_t lay
             }
 
             if (rt->matched_count == cmb->key_count) {
+                // Check if this combo is subsumed by an already active longer combo
+                bool is_subsumed = false;
+                for (size_t j = 0; j < s_combo_count; j++) {
+                    if (s_combo_rt[j].is_active && s_combos[j].key_count > cmb->key_count) {
+                        if (is_subset(cmb, &s_combos[j])) {
+                            is_subsumed = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (is_subsumed) {
+                    continue; // Skip firing this combo
+                }
+
                 // Combo triggered!
+                // Cancel any active smaller combos that are subsets of this new combo
+                for (size_t j = 0; j < s_combo_count; j++) {
+                    if (s_combo_rt[j].is_active && s_combos[j].key_count < cmb->key_count) {
+                        if (is_subset(&s_combos[j], cmb)) {
+                            kb_macro_process_action(s_combos[j].action, false);
+                            s_combo_rt[j].is_active = false;
+                        }
+                    }
+                }
+
                 if (cmb->delayed_press) {
                     discard_all_suppressed_for_combo(cmb);
                 } else if (cmb->cancel_keys) {
@@ -210,18 +259,6 @@ bool kb_combo_process_key(uint8_t row, uint8_t col, bool is_pressed, uint8_t lay
                     rt->is_active = false;
                 }
             }
-            
-            // Remove from suppressed buffer if it was there (never fired)
-            for (uint8_t j = 0; j < s_suppressed_count; ) {
-                if (s_suppressed[j].row == row && s_suppressed[j].col == col) {
-                    for (uint8_t m = j; m < s_suppressed_count - 1; m++) {
-                        s_suppressed[m] = s_suppressed[m + 1];
-                    }
-                    s_suppressed_count--;
-                } else {
-                    j++;
-                }
-            }
         }
     }
 
@@ -241,6 +278,23 @@ bool kb_combo_process_key(uint8_t row, uint8_t col, bool is_pressed, uint8_t lay
         } else {
             // Not a delayed trigger, flush any existing suppressed keys and proceed normally
             flush_all_suppressed();
+        }
+    } else {
+        // Key Up: Remove from suppressed buffer if it was there (never fired)
+        for (uint8_t j = 0; j < s_suppressed_count; ) {
+            if (s_suppressed[j].row == row && s_suppressed[j].col == col) {
+                // Was suppressed and now released before triggering a combo.
+                // Fire the original press and immediate release.
+                kb_macro_process_action(s_suppressed[j].action_code, true);
+                kb_macro_process_action(s_suppressed[j].action_code, false);
+
+                for (uint8_t m = j; m < s_suppressed_count - 1; m++) {
+                    s_suppressed[m] = s_suppressed[m + 1];
+                }
+                s_suppressed_count--;
+            } else {
+                j++;
+            }
         }
     }
 
