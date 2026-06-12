@@ -917,10 +917,34 @@ esp_err_t conn_send_keyboard_report(const uint8_t *v_nkro) {
     
     // Try NKRO if the transport supports it and we're in report protocol
     if (t->send_nkro) {
-        // Check if USB and in boot protocol mode
+        // Check if USB and in boot protocol mode.
+        //
+        // IMPORTANT: usb_keyboard_use_boot_protocol() reflects the
+        // HID Set_Protocol request from the host (Setup packet on
+        // Interface 0). TinyUSB's tud_hid_set_protocol_cb() fires
+        // synchronously when the host switches between Boot (0) and
+        // Report (1) protocol. Our usbmod layer caches this flag in
+        // a static bool that is updated atomically inside that
+        // callback.
+        //
+        // Guarantee: the flag is always up-to-date BEFORE the next
+        // conn_send_keyboard_report() call, because:
+        //   a) The TinyUSB task processes Setup packets before
+        //      handing control back to the poll loop.
+        //   b) The cached bool is written from the USB task and read
+        //      from the kb_mgr task. On ARM Cortex-M / Xtensa, a
+        //      single-byte store is inherently atomic, so no lock is
+        //      needed.
+        //
+        // If the host changes protocol mid-report (extremely rare),
+        // the worst case is one stale report using the previous
+        // protocol, which self-corrects on the very next scan cycle.
+        // This is acceptable: BIOS transitions are one-time events
+        // at boot, not continuous toggles.
         if (s_ctx.active_transport == CONN_TRANSPORT_USB &&
             usb_keyboard_use_boot_protocol()) {
-            // Fall through to 6KRO path
+            // Fall through to 6KRO path — BIOS expects Boot
+            // protocol (8-byte report), never NKRO.
         } else {
             uint8_t modifier = v_nkro[0xE0 >> 3];
             return t->send_nkro(modifier, v_nkro, NKRO_BYTES);
@@ -960,6 +984,18 @@ bool conn_hid_ready(void) {
 
 > [!WARNING]
 > **Performance is critical here.** `conn_send_keyboard_report` is called from the 1200 Hz scan loop. The current `kb_report.c` path is ~50 cycles (two `if` checks + one function call). The new path adds one pointer dereference (vtable lookup) + one function call. This is negligible — the bottleneck is always the USB/BLE stack, not the dispatcher.
+
+> [!IMPORTANT]
+> **USB Boot Protocol state reliability.** The `usb_keyboard_use_boot_protocol()` check in the routing path above is the sole gate between sending NKRO payloads vs. 6KRO payloads over USB. A stale value here would mean sending an NKRO bitmap to a BIOS/UEFI that only understands Boot protocol — resulting in no keystrokes being recognized.
+>
+> **Verification obligation (Phase 1):** Confirm that `usbmod.c` updates its boot-protocol cache **synchronously** inside `tud_hid_set_protocol_cb()`. The flag must be set *before* the callback returns, not deferred to a queue or event. Audit the TinyUSB callback chain:
+>
+> ```
+> Host Set_Protocol(Boot) → tud_task() → tud_hid_set_protocol_cb()
+>   → usbmod: s_use_boot_protocol = true  (synchronous write)
+> ```
+>
+> If TinyUSB's callback runs on a different core than `conn_send_keyboard_report`, add a `__atomic_store_n` / `__atomic_load_n` pair (or `_Atomic bool`) to guarantee cross-core visibility on the ESP32-S3's dual Xtensa LX7.
 
 **System action handler (absorbs `ble_controller.c`):**
 
@@ -1032,27 +1068,49 @@ esp_err_t conn_ble_profile_toggle(uint8_t profile_id) {
 
 **Transport switch (`conn_request_transport`):**
 
+> [!IMPORTANT]
+> **Operation ordering is critical.** Any module that reacts to `CONN_EVENT_TRANSPORT_CHANGED` (e.g., `status_module`) will immediately read both `conn_config` and the legacy `cfg_ble` state. Both domains **must** be fully consistent *before* the event fires. The order below is load-bearing:
+>
+> 1. Update `conn_config` (authoritative source of truth)
+> 2. Write derived `cfg_ble.ble_routing_enabled` to NVS (backward compat)
+> 3. Update BLE routing flag in blemod (so `ble_hid_is_routing_active()` is correct)
+> 4. Resolve active transport (updates `s_ctx.active_transport`)
+> 5. Persist `conn_config` to NVS
+> 6. **Only then** fire `CONN_EVENT_TRANSPORT_CHANGED`
+>
+> Any subscriber that calls `conn_get_status()`, `cfg_ble_get_state()`, or `ble_hid_is_routing_active()` inside their event handler will see fully synchronized state.
+
 ```c
 esp_err_t conn_request_transport(conn_transport_id_t id) {
     if (id >= CONN_TRANSPORT_MAX) return ESP_ERR_INVALID_ARG;
     
     conn_transport_id_t old = s_ctx.active_transport;
+    
+    // ── Step 1: Update authoritative conn_config ──
     s_ctx.preferred_transport = id;
     s_ctx.config.preferred_transport = id;
     
-    // Update BLE routing state to match
+    // ── Step 2: Sync derived cfg_ble.ble_routing_enabled ──
+    //    This MUST happen before any event fires so that
+    //    status_module and split_bridge see consistent state
+    //    when they read cfg_ble_get_state().
+    cfg_ble_state_t *ble_st = cfg_ble_get_state_mutable();
+    ble_st->ble_routing_enabled = (id == CONN_TRANSPORT_BLE);
+    cfg_ble_save_state();
+    
+    // ── Step 3: Update blemod routing flag ──
     bool ble_should_be_active = (id == CONN_TRANSPORT_BLE);
     if (ble_hid_is_routing_active() != ble_should_be_active) {
         ble_hid_set_routing_active(ble_should_be_active);
     }
     
-    // Resolve which transport is actually active
+    // ── Step 4: Resolve which transport is actually active ──
     resolve_active_transport();
     
-    // Persist preference
+    // ── Step 5: Persist conn_config to NVS ──
     conn_config_save(&s_ctx.config);
     
-    // Publish event if transport changed
+    // ── Step 6: Fire event ONLY after all state is consistent ──
     if (old != s_ctx.active_transport) {
         conn_transport_changed_t ev = { .from = old, .to = s_ctx.active_transport };
         esp_event_post(CONN_EVENTS, CONN_EVENT_TRANSPORT_CHANGED,
@@ -1111,6 +1169,13 @@ static void conn_on_ble_event(void *arg, esp_event_base_t base,
 
 **`resolve_active_transport` — the core routing decision:**
 
+> [!CAUTION]
+> **Fallback switches are ephemeral — they MUST NOT persist to NVS.** When `resolve_active_transport()` selects a fallback transport (because the preferred one is unavailable), it only updates `s_ctx.active_transport` — it **never** writes to `s_ctx.config.preferred_transport` and **never** calls `conn_config_save()`. The user's preferred transport preference is sacred and can only be changed by an explicit user action through `conn_request_transport()`.
+>
+> This is critical for flash longevity: if `CONN_FALLBACK_AUTO` is enabled and the user frequently moves in and out of BLE range, each disconnect→fallback→reconnect cycle would trigger 2 NVS writes (one for fallback, one for recovery). At 100K write endurance per sector, a user who disconnects 20 times/day would exhaust a sector in ~14 years — acceptable, but unnecessary. More importantly, if the user's BLE host is temporarily unreachable, they don't want their preferred transport silently overwritten to USB.
+>
+> The invariant is: **`conn_config_save()` is called exclusively from `conn_request_transport()` and `conn_config_init()`** — both of which represent deliberate user/system intent, never automatic reactions.
+
 ```c
 static void resolve_active_transport(void) {
     const conn_transport_ops_t *pref = conn_transport_get(s_ctx.preferred_transport);
@@ -1131,7 +1196,12 @@ static void resolve_active_transport(void) {
         return;
     }
     
-    // Try fallback order
+    // Try fallback order.
+    // NOTE: Fallback selection is EPHEMERAL. We update s_ctx.active_transport
+    // but NOT s_ctx.config.preferred_transport and NOT NVS. The user's
+    // preference is preserved. When the preferred transport becomes
+    // available again, resolve_active_transport() will naturally select it
+    // on the next invocation (triggered by CONN_EVENT_TRANSPORT_CONNECTED).
     for (int i = 0; i < CONN_TRANSPORT_MAX; i++) {
         conn_transport_id_t fb = s_ctx.config.fallback_order[i];
         if (fb == s_ctx.preferred_transport) continue;  // Already tried
@@ -1141,7 +1211,7 @@ static void resolve_active_transport(void) {
             set_active_transport(fb);
             s_ctx.state = CONN_STATE_ACTIVE;
             
-            // Publish fallback event
+            // Publish fallback event (no NVS write!)
             conn_fallback_event_t ev = {
                 .preferred = s_ctx.preferred_transport,
                 .fell_back_to = fb,
@@ -1648,6 +1718,20 @@ Replace the stub in `conn_transport_rf24.c` with a real ESP-NOW based HID transp
 - Pairing: button-triggered, similar to BLE profile pairing
 - Mutual exclusion with Split (both use ESP-NOW over the same radio)
 
+> [!IMPORTANT]
+> **Future Roadmap: RF24 + Split Coexistence via Radio Multiplexing.**
+>
+> The mutual exclusion constraint above is the pragmatic Phase 3 decision. However, users commonly expect split keyboards to work with 2.4 GHz dongles — the master half should aggregate keystrokes from the slave (over ESP-NOW split link) and then forward the merged HID report to the dongle (also over ESP-NOW).
+>
+> This requires a **radio multiplexer** architecture where the master node time-shares the ESP-NOW radio between two peers (slave half and dongle). Key design considerations for a future phase:
+>
+> - **Time-division multiplexing**: The master alternates between polling the slave for matrix state and transmitting HID reports to the dongle. At 1200 Hz scan rate, each cycle has ~830 µs budget. ESP-NOW round-trip is ~2-4 ms, so a reduced scan rate (~200-300 Hz) or async receive model would be needed.
+> - **Channel management**: Split and dongle may need to share the same Wi-Fi channel, or the master performs fast channel hops.
+> - **Aggregation point**: `conn_manager.c` already merges split slave matrix data (via `split_sync`) before routing. The RF24 transport adapter would simply receive the already-merged virtual NKRO bitmap through the normal `conn_send_keyboard_report()` path — no special aggregation logic needed in the transport layer.
+> - **Failure isolation**: If the dongle link drops, split communication must remain unaffected (and vice versa). The radio multiplexer must have independent error handling per peer.
+>
+> This is architecturally feasible because the transport interface already abstracts away the delivery mechanism — the RF24 adapter's `send_keyboard()` just needs to relay pre-merged reports. The complexity lives entirely in the ESP-NOW scheduling layer, not in the connectivity module's state machine.
+
 ### 3.2 Fallback Logic Implementation
 
 Enable `CONN_FALLBACK_AUTO` and `CONN_FALLBACK_USB_ONLY` modes. The `resolve_active_transport()` function already contains the fallback logic (see §1.10). Phase 3 just enables the non-`NONE` paths and adds:
@@ -1655,6 +1739,11 @@ Enable `CONN_FALLBACK_AUTO` and `CONN_FALLBACK_USB_ONLY` modes. The `resolve_act
 - A configurable retry timer (try reconnecting to preferred transport periodically)
 - Status LED feedback during fallback (brief RGB flash)
 - Configurator notification via status push
+
+> [!CAUTION]
+> **Automatic fallback MUST NOT trigger NVS writes.** This is enforced by the design in §1.10: `resolve_active_transport()` only updates `s_ctx.active_transport` (RAM), never `s_ctx.config.preferred_transport` (NVS). The `conn_config_save()` call lives exclusively in `conn_request_transport()`, which is only invoked by explicit user actions (keypress, configurator command).
+>
+> **Verification obligation (Phase 3):** Add an assertion or compile-time guard to ensure no code path from `resolve_active_transport()` or `handle_transport_disconnect()` calls `conn_config_save()`. A user who constantly moves in and out of BLE range with `CONN_FALLBACK_AUTO` enabled must cause zero NVS writes — the fallback is ephemeral, and the preferred transport recovers automatically when it reconnects.
 
 ### 3.3 Configurator Transport Selector
 
@@ -1743,7 +1832,7 @@ These are the open questions from the design document with recommended resolutio
 | 2 | Should `kb_report.c` be eliminated entirely? | **Keep as thin wrapper** | 3 lines of code. Eliminates the need to audit every `kb_send_report` call site in the keyboard module. Provides a stable internal API within the keyboard component. |
 | 3 | Where does NKRO→6KRO conversion live? | **Centrally in `conn_manager.c`** | One implementation, all transports benefit. The conversion is transport-agnostic logic. |
 | 4 | Should `ble_controller.c` be deleted or kept? | **Delete** (Phase 2) | Its 60 lines migrate entirely into `conn_on_kb_sys_action`. No value in keeping a dead file. |
-| 5 | RF24 + Split mutual exclusion or coexistence? | **Mutual exclusion** (Phase 3) | Split master already handles host output. Adding RF24 to a split setup adds no value and creates radio contention. |
+| 5 | RF24 + Split mutual exclusion or coexistence? | **Mutual exclusion** (Phase 3), **radio multiplexer roadmap** (future) | Split master already handles host output. Adding RF24 to a split setup creates radio contention. Phase 3 enforces mutual exclusion. A future phase can introduce time-division radio multiplexing on the master node to enable split+dongle coexistence (see §3.1 roadmap note). |
 | 6 | Should connectivity module own BLE profile selection? | **Yes** — pass-through API | Single API surface (`conn_ble_profile_*`). Internally delegates to `blemod.h`. Gives the connectivity module visibility into profile changes for state tracking. |
 | 7 | Config sync between split halves? | **Yes** — sync `conn_config` | Transport preference should be consistent across halves. Add `CFGMOD_KIND_CONNECTIVITY` to the split config sync list alongside `CFGMOD_KIND_CONNECTION`. |
 
@@ -1755,7 +1844,8 @@ These are the open questions from the design document with recommended resolutio
 |------|-------------|--------|------------|
 | Report latency increase | Low | High | Benchmark Phase 2 with oscilloscope. The added indirection is 1-2 pointer dereferences. |
 | Double BLE suspend/resume during Phase 1 | Medium | Medium | Phase 1 connectivity module tracks state but doesn't call suspend/resume. Only Phase 2 takes over. |
-| Config sync race between `conn_config` and `cfg_ble` | Medium | Medium | Always write `cfg_ble.ble_routing_enabled` as derived field when `conn_config` changes. Order: `conn_config` first, then `cfg_ble`. |
+| Config sync race between `conn_config` and `cfg_ble` | Medium | Medium | Strict operation ordering in `conn_request_transport()`: update conn_config → write derived cfg_ble → update blemod flag → resolve active → persist NVS → fire event. Subscribers always see fully consistent state (see §1.10 ordering note). |
+| Flash wear from automatic fallback | Medium | High | `resolve_active_transport()` only updates RAM (`s_ctx.active_transport`), never NVS. `conn_config_save()` is restricted to explicit user actions via `conn_request_transport()`. See §1.10 and §3.2 for enforcement. |
 | Split role swap drops keystrokes | Low | High | Existing behavior preserved exactly. Connectivity module's `conn_set_split_role` follows same suspend→resume pattern. |
 | Web configurator breaks | Low | Medium | Wire protocol unchanged in Phase 2. `status_module` push format unchanged. |
 | NVS key collision (`k5_conn`) | Very Low | Low | Verify no existing key uses `k5_conn` prefix. |
