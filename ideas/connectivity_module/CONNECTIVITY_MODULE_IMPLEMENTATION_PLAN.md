@@ -228,23 +228,21 @@ typedef enum {
 } conn_state_t;
 
 /* =========================================================================
- * Fallback configuration
- * ========================================================================= */
-
-typedef enum {
-    CONN_FALLBACK_NONE = 0,     // Never fall back (matches current behavior)
-    CONN_FALLBACK_AUTO,         // Auto-switch to next available transport
-    CONN_FALLBACK_USB_ONLY,     // Fall back to USB only (safe default for future)
-} conn_fallback_mode_t;
-
-/* =========================================================================
  * Persisted configuration
  * ========================================================================= */
 
 typedef struct {
-    conn_transport_id_t   preferred_transport;               // User's desired transport
-    conn_fallback_mode_t  fallback_mode;                     // Fallback behavior
-    conn_transport_id_t   fallback_order[CONN_TRANSPORT_MAX]; // Priority list
+    conn_transport_id_t   preferred_transport;                   // User's desired transport
+    
+    // Fallback is configured PER connection type
+    bool                  fallback_enabled[CONN_TRANSPORT_MAX];  // Is fallback enabled for this primary?
+    conn_transport_id_t   fallback_transport[CONN_TRANSPORT_MAX];// Which transport to fall back to
+    
+    // Insist on primary method
+    bool                  insist_on_primary[CONN_TRANSPORT_MAX]; // True to actively try returning to primary
+    uint16_t              insist_interval_s[CONN_TRANSPORT_MAX]; // How often to search for primary (seconds)
+    uint16_t              insist_duration_s[CONN_TRANSPORT_MAX]; // Total time to keep insisting before giving up (seconds)
+    
     bool                  transport_enabled[CONN_TRANSPORT_MAX]; // Per-transport on/off
 } conn_config_t;
 
@@ -256,7 +254,6 @@ typedef struct {
     conn_state_t          state;              // Current state machine state
     conn_transport_id_t   active_transport;   // Which transport is routing reports
     conn_transport_id_t   preferred_transport; // User's preferred transport
-    conn_fallback_mode_t  fallback_mode;      // Current fallback policy
 
     // Per-transport status
     struct {
@@ -313,6 +310,11 @@ typedef enum {
     
     // Fallback
     CONN_EVENT_FALLBACK_ACTIVATED,    // payload: conn_fallback_event_t
+    
+    // Internal (used by conn_manager.c for event-loop serialization;
+    // external modules should not subscribe to these)
+    CONN_EVENT_INSIST_TIMER_TICK,     // payload: none — periodic insist timer
+    CONN_EVENT_USB_STATE_CHANGED,     // payload: bool mounted — USB mount/unmount
 } conn_event_id_t;
 
 /* =========================================================================
@@ -586,24 +588,6 @@ const conn_transport_ops_t *conn_transport_usb_get_ops(void) {
 
 #define TAG "CONN_BLE"
 
-/* ---- NKRO → 6KRO conversion (moved from kb_report.c) ---- */
-
-static void nkro_to_6kro(const uint8_t *v_nkro,
-                          uint8_t *out_modifiers,
-                          uint8_t out_basic_keys[6]) {
-    memset(out_basic_keys, 0, 6);
-    size_t out = 0;
-
-    for (uint16_t kc = 1; kc < 0xE0; ++kc) {
-        if (v_nkro[kc >> 3] & (uint8_t)(1U << (kc & 7U))) {
-            if (out < 6) {
-                out_basic_keys[out++] = (uint8_t)kc;
-            }
-        }
-    }
-    *out_modifiers = v_nkro[0xE0 >> 3];
-}
-
 /* ---- Lifecycle ---- */
 
 static esp_err_t ble_transport_enable(void) {
@@ -675,12 +659,7 @@ const conn_transport_ops_t *conn_transport_ble_get_ops(void) {
 }
 ```
 
-**Key detail:** The NKRO→6KRO conversion lives here because BLE can only do 6KRO. When `conn_manager.c` calls the routing logic, if the active transport is BLE, it calls into a central conversion path (see §1.10) and then invokes `send_keyboard`. The BLE adapter doesn't receive raw NKRO bitmaps — it receives pre-converted 6KRO reports.
-
-> [!TIP]
-> **Alternative placement:** The NKRO→6KRO conversion could live centrally in `conn_manager.c` (the design doc's recommendation). This is actually better because it keeps adapters thin and the conversion is transport-agnostic (RF24 will also need it). The helper `nkro_to_6kro` defined here would be moved to `conn_manager.c` and exported internally. The BLE adapter's `send_keyboard` just forwards the pre-converted 6KRO report.
->
-> **Recommendation: Place it in `conn_manager.c`.** The code above shows it in the BLE adapter for illustration, but the actual implementation should follow the centralized approach.
+**Key detail:** The NKRO→6KRO conversion lives **centrally in `conn_manager.c`** (see §1.10 `virtual_nkro_to_6kro`). The BLE adapter never receives raw NKRO bitmaps — `conn_manager.c` pre-converts to a 6KRO report and then calls `send_keyboard`. This keeps the adapter thin and allows RF24 (which also needs 6KRO) to reuse the same conversion.
 
 ---
 
@@ -746,16 +725,19 @@ Registers `CFGMOD_KIND_CONNECTIVITY` with the config module, providing default/s
 **Config struct (same as `conn_config_t` in `conn_types.h`):**
 
 ```c
-// Default: USB preferred, no fallback, all transports enabled
+// Default: USB preferred, fallback disabled for all transports
 static void conn_config_default(void *dest) {
     conn_config_t *cfg = (conn_config_t *)dest;
     cfg->preferred_transport = CONN_TRANSPORT_USB;
-    cfg->fallback_mode = CONN_FALLBACK_NONE;
-    cfg->fallback_order[0] = CONN_TRANSPORT_BLE;
-    cfg->fallback_order[1] = CONN_TRANSPORT_RF24;
-    cfg->fallback_order[2] = CONN_TRANSPORT_USB;
-    cfg->transport_enabled[CONN_TRANSPORT_USB]  = true;
-    cfg->transport_enabled[CONN_TRANSPORT_BLE]  = true;  // Actual availability depends on hardware
+    
+    for (int i = 0; i < CONN_TRANSPORT_MAX; i++) {
+        cfg->fallback_enabled[i] = false;
+        cfg->fallback_transport[i] = CONN_TRANSPORT_USB;
+        cfg->insist_on_primary[i] = false; // Insist disabled by default
+        cfg->insist_interval_s[i] = 10;
+        cfg->insist_duration_s[i] = 60;    // Default: try for 60 seconds
+        cfg->transport_enabled[i] = true;
+    }
     cfg->transport_enabled[CONN_TRANSPORT_RF24] = false;  // Not available until Phase 3
 }
 ```
@@ -772,7 +754,15 @@ static void conn_config_migrate_from_ble(conn_config_t *cfg) {
     } else {
         cfg->preferred_transport = CONN_TRANSPORT_USB;
     }
-    cfg->fallback_mode = CONN_FALLBACK_NONE;  // Preserve exact current behavior
+    
+    for (int i = 0; i < CONN_TRANSPORT_MAX; i++) {
+        cfg->fallback_enabled[i] = false; // Preserve exact current behavior
+        cfg->fallback_transport[i] = CONN_TRANSPORT_USB;
+        cfg->insist_on_primary[i] = false;
+        cfg->insist_interval_s[i] = 10;
+        cfg->insist_duration_s[i] = 60;
+        cfg->transport_enabled[i] = true;
+    }
 }
 ```
 
@@ -796,6 +786,8 @@ This is the heart of the module. It manages:
 **Internal State:**
 
 ```c
+#include "esp_timer.h"
+
 static struct {
     conn_state_t         state;
     conn_config_t        config;
@@ -809,6 +801,10 @@ static struct {
     
     // Split
     uint8_t  split_role;  // split_role_t
+    
+    // Fallback Timer
+    esp_timer_handle_t   insist_timer;
+    uint32_t             insist_elapsed_s; // Time spent insisting
 } s_ctx = {
     .state              = CONN_STATE_INITIALIZING,
     .active_transport   = CONN_TRANSPORT_USB,     // Safe default
@@ -817,6 +813,8 @@ static struct {
     .ble_pairing_profile  = -1,
     .ble_connected_bitmap = 0,
     .split_role           = 0,  // SPLIT_ROLE_NONE
+    .insist_timer         = NULL,
+    .insist_elapsed_s     = 0,
 };
 ```
 
@@ -834,25 +832,22 @@ esp_err_t conn_init(void) {
     conn_config_load(&s_ctx.config);
     s_ctx.preferred_transport = s_ctx.config.preferred_transport;
     
-    // 3. Determine initial active transport
-    if (s_ctx.config.preferred_transport == CONN_TRANSPORT_BLE) {
-        // Check if BLE is actually available
-        const conn_transport_ops_t *ble = conn_transport_get(CONN_TRANSPORT_BLE);
-        if (ble && ble->is_available() && ble->is_connected()) {
-            s_ctx.active_transport = CONN_TRANSPORT_BLE;
-        }
-        // If BLE is preferred but not connected yet, the report path will
-        // return ESP_ERR_INVALID_STATE until BLE connects. This matches
-        // current behavior exactly.
-    }
+    // 3. Set active transport based on user preference.
+    //    At boot, BLE is almost certainly not connected yet (it's still
+    //    advertising). We set active_transport = preferred and rely on
+    //    the BLE event handler to call resolve_active_transport() when
+    //    BLE_EVENT_PROFILE_CONNECTED fires. This matches the current
+    //    behavior of kb_report.c which checks ble_hid_is_routing_active()
+    //    every scan cycle — reports return ESP_ERR_INVALID_STATE until
+    //    the BLE host connects.
+    s_ctx.active_transport = s_ctx.config.preferred_transport;
     
-    // 4. Sync BLE routing state to match active transport selection
+    // 4. Sync BLE routing state to match preferred transport selection.
     //    This replaces what ble_controller_init() used to do implicitly.
-    if (s_ctx.active_transport == CONN_TRANSPORT_BLE ||
-        s_ctx.preferred_transport == CONN_TRANSPORT_BLE) {
-        ble_hid_set_routing_active(
-            s_ctx.config.preferred_transport == CONN_TRANSPORT_BLE);
-    }
+    //    BLE routing is enabled whenever BLE is the *preferred* transport,
+    //    even if a connection isn't established yet (so advertising starts).
+    ble_hid_set_routing_active(
+        s_ctx.config.preferred_transport == CONN_TRANSPORT_BLE);
     
     // 5. Seed BLE state cache
     const cfg_ble_state_t *ble_st = cfg_ble_get_state();
@@ -875,8 +870,21 @@ esp_err_t conn_init(void) {
     //    — System actions: absorb ble_controller.c logic
     esp_event_handler_register(KB_EVENTS, KB_EVENT_SYSTEM_ACTION,
                                conn_on_kb_sys_action, NULL);
+    //    — Internal events: insist timer tick
+    esp_event_handler_register(CONN_EVENTS, CONN_EVENT_INSIST_TIMER_TICK,
+                               conn_on_insist_tick, NULL);
+    //    — Internal events: USB state changes
+    esp_event_handler_register(CONN_EVENTS, CONN_EVENT_USB_STATE_CHANGED,
+                               conn_on_usb_state_changed, NULL);
+
+    // 7. Initialize the insist timer
+    esp_timer_create_args_t timer_args = {
+        .callback = conn_insist_timer_cb,
+        .name = "conn_insist_tmr"
+    };
+    esp_timer_create(&timer_args, &s_ctx.insist_timer);
     
-    // 7. Transition to READY (or ACTIVE if a transport is already connected)
+    // 8. Transition to READY (or ACTIVE if a transport is already connected)
     s_ctx.state = CONN_STATE_READY;
     resolve_active_transport();  // May transition to ACTIVE
     
@@ -971,31 +979,12 @@ bool conn_hid_ready(void) {
     const conn_transport_ops_t *t = conn_transport_get(s_ctx.active_transport);
     if (!t) return false;
     
-    // If preferred is BLE but BLE isn't ready, DO NOT fall through to USB
-    // (unless fallback is configured). This matches current behavior.
-    if (s_ctx.preferred_transport == CONN_TRANSPORT_BLE &&
-        s_ctx.active_transport == CONN_TRANSPORT_BLE) {
-        return t->is_ready();
-    }
-    
     return t->is_ready();
 }
 ```
 
-> [!WARNING]
-> **Performance is critical here.** `conn_send_keyboard_report` is called from the 1200 Hz scan loop. The current `kb_report.c` path is ~50 cycles (two `if` checks + one function call). The new path adds one pointer dereference (vtable lookup) + one function call. This is negligible — the bottleneck is always the USB/BLE stack, not the dispatcher.
-
-> [!IMPORTANT]
-> **USB Boot Protocol state reliability.** The `usb_keyboard_use_boot_protocol()` check in the routing path above is the sole gate between sending NKRO payloads vs. 6KRO payloads over USB. A stale value here would mean sending an NKRO bitmap to a BIOS/UEFI that only understands Boot protocol — resulting in no keystrokes being recognized.
->
-> **Verification obligation (Phase 1):** Confirm that `usbmod.c` updates its boot-protocol cache **synchronously** inside `tud_hid_set_protocol_cb()`. The flag must be set *before* the callback returns, not deferred to a queue or event. Audit the TinyUSB callback chain:
->
-> ```
-> Host Set_Protocol(Boot) → tud_task() → tud_hid_set_protocol_cb()
->   → usbmod: s_use_boot_protocol = true  (synchronous write)
-> ```
->
-> If TinyUSB's callback runs on a different core than `conn_send_keyboard_report`, add a `__atomic_store_n` / `__atomic_load_n` pair (or `_Atomic bool`) to guarantee cross-core visibility on the ESP32-S3's dual Xtensa LX7.
+> [!NOTE]
+> **Fallback is disabled by default**, matching the behavior of most keyboards. When BLE is the preferred and active transport but not yet connected, `is_ready()` returns false and `kb_send_report()` returns `ESP_ERR_INVALID_STATE`. Reports are silently dropped until the BLE host connects — there is no automatic fallback to USB unless the user explicitly enables it via `fallback_enabled[CONN_TRANSPORT_BLE] = true` in the configurator. This matches the current firmware behavior exactly.
 
 **System action handler (absorbs `ble_controller.c`):**
 
@@ -1011,9 +1000,16 @@ static void conn_on_kb_sys_action(void *arg, esp_event_base_t base,
     kb_action_ev_t event = (kb_action_ev_t)ev->event;
     
     // --- BLE Toggle ---
+    // Uses active_transport (not preferred_transport) so that:
+    //   - If on fallback USB (preferred=BLE, fell back to USB), toggle switches
+    //     the preference to USB (making fallback permanent).
+    //   - If on BLE, toggle switches to USB.
+    //   - If on USB (preferred=USB), toggle switches to BLE.
+    // This matches the original ble_controller.c toggle semantics which
+    // flipped the *actual* routing state, not a preference.
     if (action_code == SYS_ACTION_BLE_TOGGLE) {
         if (event == KB_EV_SINGLE_TAP) {
-            if (s_ctx.preferred_transport == CONN_TRANSPORT_BLE) {
+            if (s_ctx.active_transport == CONN_TRANSPORT_BLE) {
                 conn_request_transport(CONN_TRANSPORT_USB);
             } else {
                 conn_request_transport(CONN_TRANSPORT_BLE);
@@ -1051,12 +1047,19 @@ esp_err_t conn_ble_profile_pair(uint8_t profile_id) {
 }
 
 esp_err_t conn_ble_profile_select(uint8_t profile_id) {
-    // Selecting a BLE profile implicitly means the user wants BLE transport.
-    // Switch preferred transport to BLE if it isn't already.
-    if (s_ctx.preferred_transport != CONN_TRANSPORT_BLE) {
-        conn_request_transport(CONN_TRANSPORT_BLE);
+    // Connect to the given BLE profile. This does NOT change the
+    // preferred transport — the user may want BLE profiles connected
+    // while USB remains the active transport (e.g., multi-device use).
+    // To switch the active transport to BLE, the user presses the
+    // BLE toggle key separately.
+    //
+    // However, we DO enable BLE routing in blemod so the BLE stack
+    // knows it should send reports when a profile connects.
+    if (!ble_hid_is_routing_active()) {
+        ble_hid_set_routing_active(true);
     }
     ble_hid_profile_connect_and_select(profile_id);
+    s_ctx.ble_selected_profile = profile_id;
     return ESP_OK;
 }
 
@@ -1094,9 +1097,10 @@ esp_err_t conn_request_transport(conn_transport_id_t id) {
     //    This MUST happen before any event fires so that
     //    status_module and split_bridge see consistent state
     //    when they read cfg_ble_get_state().
-    cfg_ble_state_t *ble_st = cfg_ble_get_state_mutable();
-    ble_st->ble_routing_enabled = (id == CONN_TRANSPORT_BLE);
-    cfg_ble_save_state();
+    //    Uses the correct API: copy → mutate → save(&copy).
+    cfg_ble_state_t ble_copy = *cfg_ble_get_state();
+    ble_copy.ble_routing_enabled = (id == CONN_TRANSPORT_BLE);
+    cfg_ble_save_state(&ble_copy);
     
     // ── Step 3: Update blemod routing flag ──
     bool ble_should_be_active = (id == CONN_TRANSPORT_BLE);
@@ -1148,7 +1152,12 @@ static void conn_on_ble_event(void *arg, esp_event_base_t base,
         break;
     }
     case BLE_EVENT_ROUTING_CHANGED:
-        // Keep our state consistent with blemod's routing flag
+        // No-op. The connectivity module is the sole authority for routing
+        // changes. This event is fired by blemod when we call
+        // ble_hid_set_routing_active(), which we do from conn_request_transport().
+        // Reacting to it here would create a circular dependency.
+        // Other modules (status_module, split_bridge) subscribe to
+        // CONN_EVENT_TRANSPORT_CHANGED instead.
         break;
     case BLE_EVENT_PAIRING_STARTED:
         s_ctx.ble_pairing_profile = *(int *)data;
@@ -1177,44 +1186,91 @@ static void conn_on_ble_event(void *arg, esp_event_base_t base,
 > The invariant is: **`conn_config_save()` is called exclusively from `conn_request_transport()` and `conn_config_init()`** — both of which represent deliberate user/system intent, never automatic reactions.
 
 ```c
+// Change which transport receives HID reports.
+//
+// IMPORTANT: This does NOT call suspend()/resume() on transports.
+// Suspend/resume is reserved exclusively for split-slave mode (see
+// conn_set_split_role). When the user switches from BLE to USB, BLE
+// remains fully alive (advertising, connected) — it just stops
+// receiving HID reports. This is critical because:
+//   1. During the insist period, BLE must stay alive so it can reconnect.
+//   2. Users may want BLE profiles connected while USB is the active transport.
+//   3. Calling suspend() on BLE would kill advertising and prevent auto-reconnect.
+static void set_active_transport(conn_transport_id_t new_id) {
+    if (s_ctx.active_transport == new_id) return;
+    
+    conn_transport_id_t old_id = s_ctx.active_transport;
+    s_ctx.active_transport = new_id;
+    
+    // Publish transport-level connected/disconnected events for subscribers
+    esp_event_post(CONN_EVENTS, CONN_EVENT_TRANSPORT_DISCONNECTED,
+                   &old_id, sizeof(old_id), 0);
+    esp_event_post(CONN_EVENTS, CONN_EVENT_TRANSPORT_CONNECTED,
+                   &new_id, sizeof(new_id), 0);
+}
+
+// Timer callback runs in esp_timer task. Post an event to stay serialized.
+static void conn_insist_timer_cb(void *arg) {
+    esp_event_post(CONN_EVENTS, CONN_EVENT_INSIST_TIMER_TICK, NULL, 0, 0);
+}
+
 static void resolve_active_transport(void) {
-    const conn_transport_ops_t *pref = conn_transport_get(s_ctx.preferred_transport);
+    conn_transport_id_t pref_id = s_ctx.preferred_transport;
+    const conn_transport_ops_t *pref = conn_transport_get(pref_id);
     
-    // If preferred transport is ready, use it
+    // 1. Check if preferred transport is ready.
     if (pref && pref->is_connected && pref->is_connected()) {
-        set_active_transport(s_ctx.preferred_transport);
+        set_active_transport(pref_id);
         s_ctx.state = CONN_STATE_ACTIVE;
-        return;
-    }
-    
-    // Preferred transport not ready. Check fallback policy.
-    if (s_ctx.config.fallback_mode == CONN_FALLBACK_NONE) {
-        // No fallback: stay on preferred transport even if not ready.
-        // Reports will return ESP_ERR_INVALID_STATE. This matches current behavior.
-        s_ctx.active_transport = s_ctx.preferred_transport;
-        s_ctx.state = CONN_STATE_SEARCHING;
-        return;
-    }
-    
-    // Try fallback order.
-    // NOTE: Fallback selection is EPHEMERAL. We update s_ctx.active_transport
-    // but NOT s_ctx.config.preferred_transport and NOT NVS. The user's
-    // preference is preserved. When the preferred transport becomes
-    // available again, resolve_active_transport() will naturally select it
-    // on the next invocation (triggered by CONN_EVENT_TRANSPORT_CONNECTED).
-    for (int i = 0; i < CONN_TRANSPORT_MAX; i++) {
-        conn_transport_id_t fb = s_ctx.config.fallback_order[i];
-        if (fb == s_ctx.preferred_transport) continue;  // Already tried
         
-        const conn_transport_ops_t *t = conn_transport_get(fb);
-        if (t && t->is_connected && t->is_connected()) {
-            set_active_transport(fb);
+        // Stop timer and reset elapsed time if we are back on primary
+        if (s_ctx.insist_timer && esp_timer_is_active(s_ctx.insist_timer)) {
+            esp_timer_stop(s_ctx.insist_timer);
+        }
+        s_ctx.insist_elapsed_s = 0;
+        return;
+    }
+    
+    // 2. Preferred transport not ready. Check if fallback is enabled for this SPECIFIC transport.
+    if (!s_ctx.config.fallback_enabled[pref_id]) {
+        // No fallback configured for this transport: stay on preferred transport even if not ready.
+        // Reports will return ESP_ERR_INVALID_STATE.
+        set_active_transport(pref_id);
+        s_ctx.state = CONN_STATE_SEARCHING;
+        
+        if (s_ctx.insist_timer && esp_timer_is_active(s_ctx.insist_timer)) {
+            esp_timer_stop(s_ctx.insist_timer);
+        }
+        return;
+    }
+    
+    // 3. Fallback is enabled. Try the specific fallback transport.
+    conn_transport_id_t fb_id = s_ctx.config.fallback_transport[pref_id];
+    if (fb_id != pref_id) {
+        const conn_transport_ops_t *fb = conn_transport_get(fb_id);
+        if (fb && fb->is_connected && fb->is_connected()) {
+            set_active_transport(fb_id);
             s_ctx.state = CONN_STATE_ACTIVE;
+            
+            // Start the insist timer if requested and not expired
+            if (s_ctx.config.insist_on_primary[pref_id] && 
+                s_ctx.insist_elapsed_s < s_ctx.config.insist_duration_s[pref_id]) {
+                
+                if (s_ctx.insist_timer && !esp_timer_is_active(s_ctx.insist_timer)) {
+                    // Start timer to periodically wake primary transport
+                    uint32_t interval_s = s_ctx.config.insist_interval_s[pref_id];
+                    if (interval_s < 1) interval_s = 1; // Enforce minimum interval
+                    esp_timer_start_periodic(s_ctx.insist_timer, (uint64_t)interval_s * 1000000);
+                }
+            } else if (s_ctx.insist_timer && esp_timer_is_active(s_ctx.insist_timer)) {
+                // Duration exceeded, stop insisting
+                esp_timer_stop(s_ctx.insist_timer);
+            }
             
             // Publish fallback event (no NVS write!)
             conn_fallback_event_t ev = {
-                .preferred = s_ctx.preferred_transport,
-                .fell_back_to = fb,
+                .preferred = pref_id,
+                .fell_back_to = fb_id,
             };
             esp_event_post(CONN_EVENTS, CONN_EVENT_FALLBACK_ACTIVATED,
                            &ev, sizeof(ev), 0);
@@ -1224,6 +1280,135 @@ static void resolve_active_transport(void) {
     
     // Nothing available
     s_ctx.state = CONN_STATE_SEARCHING;
+}
+
+// Timer tick event handler (called from the main event loop)
+static void conn_on_insist_tick(void *arg, esp_event_base_t base, int32_t event_id, void *data) {
+    if (s_ctx.state == CONN_STATE_ACTIVE && s_ctx.active_transport != s_ctx.preferred_transport) {
+        conn_transport_id_t pref_id = s_ctx.preferred_transport;
+        
+        // Accumulate time
+        uint32_t interval_s = s_ctx.config.insist_interval_s[pref_id];
+        if (interval_s < 1) interval_s = 1;
+        s_ctx.insist_elapsed_s += interval_s;
+        
+        if (s_ctx.insist_elapsed_s >= s_ctx.config.insist_duration_s[pref_id]) {
+            // Give up insisting. Stop timer, permanently stay on fallback for this session.
+            if (s_ctx.insist_timer && esp_timer_is_active(s_ctx.insist_timer)) {
+                esp_timer_stop(s_ctx.insist_timer);
+            }
+            return; // Don't wake the primary anymore
+        }
+        
+        // We are on a fallback transport and still within insist duration.
+        // Ask the primary to wake up/check connection.
+        const conn_transport_ops_t *pref = conn_transport_get(pref_id);
+        if (pref && pref->resume) {
+            pref->resume();  // Prompt the stack to search/advertise if it went to sleep
+        }
+        
+        // Then re-resolve. If the primary has reconnected, resolve_active_transport will switch to it
+        // and stop the timer, resetting insist_elapsed_s to 0.
+        resolve_active_transport();
+    }
+}
+
+/* ---- Missing implementations ---- */
+
+/**
+ * @brief Publish a state machine transition event.
+ */
+static void publish_state_change(conn_state_t from, conn_state_t to) {
+    if (from == to) return;
+    conn_state_changed_t ev = { .from = from, .to = to };
+    esp_event_post(CONN_EVENTS, CONN_EVENT_STATE_CHANGED,
+                   &ev, sizeof(ev), 0);
+}
+
+/**
+ * @brief Handle transport disconnection — trigger fallback if configured.
+ * Called when the active transport loses its connection.
+ */
+static void handle_transport_disconnect(conn_transport_id_t id) {
+    conn_state_t old = s_ctx.state;
+    
+    // Only trigger fallback logic if the disconnected transport is the active one
+    if (s_ctx.active_transport != id) return;
+    
+    // Reset insist timer state for a fresh fallback attempt
+    s_ctx.insist_elapsed_s = 0;
+    
+    // Re-resolve: will either find a fallback or enter SEARCHING
+    resolve_active_transport();
+    
+    if (old != s_ctx.state) {
+        publish_state_change(old, s_ctx.state);
+    }
+}
+
+/**
+ * @brief USB mount/unmount state change handler.
+ * Invoked via CONN_EVENT_USB_STATE_CHANGED, posted from the TinyUSB
+ * mount/unmount callback (see §1.16 USB State Detection below).
+ */
+static void conn_on_usb_state_changed(void *arg, esp_event_base_t base,
+                                       int32_t event_id, void *data) {
+    bool mounted = *(const bool *)data;
+    
+    if (!mounted && s_ctx.active_transport == CONN_TRANSPORT_USB) {
+        // USB cable was unplugged while USB was the active transport
+        handle_transport_disconnect(CONN_TRANSPORT_USB);
+    } else if (mounted && s_ctx.state == CONN_STATE_SEARCHING) {
+        // USB cable reconnected while we were searching — re-resolve
+        resolve_active_transport();
+    }
+}
+
+/**
+ * @brief Toggle a transport: if it's the active one, switch to USB;
+ * if it's not, switch to it. Used by the configurator's BLE toggle command.
+ *
+ * This is a convenience wrapper around conn_request_transport() that
+ * mirrors the original ble_hid_set_routing_active(!current) toggle pattern.
+ */
+esp_err_t conn_toggle_transport(conn_transport_id_t id) {
+    if (id >= CONN_TRANSPORT_MAX) return ESP_ERR_INVALID_ARG;
+    
+    if (s_ctx.active_transport == id) {
+        // Currently on this transport — switch to USB (safe default)
+        return conn_request_transport(CONN_TRANSPORT_USB);
+    } else {
+        // Not on this transport — switch to it
+        return conn_request_transport(id);
+    }
+}
+
+/**
+ * @brief Snapshot the full connectivity state. Thread-safe: only reads
+ * atomically-sized fields. Used by status_module and the configurator.
+ */
+conn_status_t conn_get_status(void) {
+    conn_status_t st = {
+        .state              = s_ctx.state,
+        .active_transport   = s_ctx.active_transport,
+        .preferred_transport = s_ctx.preferred_transport,
+        .ble_selected_profile = s_ctx.ble_selected_profile,
+        .ble_pairing_profile  = s_ctx.ble_pairing_profile,
+        .ble_connected_bitmap = s_ctx.ble_connected_bitmap,
+        .split_role           = s_ctx.split_role,
+    };
+    
+    // Fill per-transport status
+    for (int i = 0; i < CONN_TRANSPORT_MAX; i++) {
+        const conn_transport_ops_t *t = conn_transport_get((conn_transport_id_t)i);
+        if (t) {
+            st.transports[i].available = t->is_available ? t->is_available() : false;
+            st.transports[i].connected = t->is_connected ? t->is_connected() : false;
+            st.transports[i].ready     = t->is_ready     ? t->is_ready()     : false;
+        }
+    }
+    
+    return st;
 }
 ```
 
@@ -1448,7 +1633,148 @@ Changes:
 
 ---
 
-### 1.16 Phase 1 Verification
+### 1.16 USB State Detection (Cable Plug/Unplug)
+
+The connectivity module needs to react to USB cable connect/disconnect events so it can trigger fallback when the USB cable is unplugged while USB is the active transport. TinyUSB provides mount/unmount callbacks that fire on the USB task.
+
+**File:** [usbmod.c](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/usb_module/usbmod.c)
+
+Add near the existing TinyUSB callbacks:
+
+```c
+#include "conn_events.h"
+
+// TinyUSB mount callback — called when USB cable is plugged in and enumerated
+void tud_mount_cb(void) {
+    bool mounted = true;
+    esp_event_post(CONN_EVENTS, CONN_EVENT_USB_STATE_CHANGED,
+                   &mounted, sizeof(mounted), 0);
+}
+
+// TinyUSB umount callback — called when USB cable is disconnected
+void tud_umount_cb(void) {
+    bool mounted = false;
+    esp_event_post(CONN_EVENTS, CONN_EVENT_USB_STATE_CHANGED,
+                   &mounted, sizeof(mounted), 0);
+}
+```
+
+> [!NOTE]
+> These callbacks are standard TinyUSB device callbacks. They fire from the TinyUSB task context. Since we post to the event loop (fire-and-forget with `portMAX_DELAY=0`), this is safe and non-blocking. The actual state mutation happens in `conn_on_usb_state_changed` on the event loop task (see §1.10).
+
+**Build dependency:** `usbmod` must add `event_bus` (already present) and `connectivity_module` (for `CONN_EVENTS` declaration) to its `REQUIRES`. However, since `CONN_EVENTS` is declared in `event_bus.h` (per §1.13), no new dependency is needed — `usbmod` already depends on `event_bus`.
+
+---
+
+### 1.17 Config Sync for Split (`CFGMOD_KIND_CONNECTIVITY`)
+
+The connectivity config must be synced between split halves so both sides agree on the preferred transport. This mirrors how `CFGMOD_KIND_CONNECTION` (BLE config) is already synced.
+
+**File:** [split_config_sync.c](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/split/split_config_sync.c)
+
+Add to the `SPLIT_SYNC_ENTRIES[]` table (after the existing `CFGMOD_KIND_CONNECTION` entry at line 76):
+
+```c
+const split_sync_entry_t SPLIT_SYNC_ENTRIES[] = {
+    // ... existing entries ...
+    { CFGMOD_KIND_CONNECTION,     "ble_cfg"     },
+    { CFGMOD_KIND_CONNECTIVITY,   "conn_cfg"    },  // NEW: connectivity preferences
+    { CFGMOD_KIND_BLE_BOND,       "all"          },
+};
+```
+
+**File:** [cfgmod.h](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/config_module/include/cfgmod.h)
+
+Add to the `cfgmod_kind_t` enum (after `CFGMOD_KIND_BLE_BOND`):
+
+```c
+  CFGMOD_KIND_CONNECTIVITY,  // Transport preference and fallback config
+```
+
+**Key constraint:** The NVS key used by `conn_config.c` (§1.9) must match the `"conn_cfg"` key registered here. The config migration code in `conn_config_init()` must use this exact key when persisting the initial config.
+
+**Sync behavior:** On split connect, the master pushes `CFGMOD_KIND_CONNECTIVITY` / `"conn_cfg"` to the slave. The slave applies it and uses the same preferred transport. This ensures both halves agree on whether BLE or USB is active, which is important for the slave's suspend/resume logic.
+
+---
+
+### 1.18 Consumer Reports in Split Context
+
+Consumer (media key) reports already flow through `conn_send_consumer_report()` in §1.10, which routes them to the active transport via `t->send_consumer(keycode)`. However, in split mode, consumer reports from the slave need special consideration.
+
+**Current behavior:** The split module forwards raw matrix bitmaps from the slave to the master. The master's `kb_manager` processes the merged matrix, runs the keymap, and generates both keyboard and consumer reports. Consumer reports are already handled correctly because:
+
+1. The slave's raw matrix is forwarded to the master (via `split_sync`)
+2. The master's `kb_manager` processes the merged matrix
+3. `kb_send_consumer_report()` calls `conn_send_consumer_report()`, which routes to the active transport
+
+**No additional implementation needed** for consumer reports in split mode — the existing matrix-level forwarding ensures the master generates all HID reports centrally. This is already the correct architecture.
+
+> [!NOTE]
+> If a future feature adds slave-side autonomous consumer keys (e.g., encoder-driven volume control), those would need a dedicated split protocol message to forward consumer keycodes to the master. For now, all keys flow through the matrix → keymap → report pipeline.
+
+---
+
+### 1.19 Handle `BLE_EVENT_ROUTING_CHANGED`
+
+The BLE event handler in §1.10 subscribes to `ESP_EVENT_ANY_ID` on `BLE_EVENTS`, which includes `BLE_EVENT_ROUTING_CHANGED`. This event fires when `ble_hid_set_routing_active()` is called. Since the connectivity module is the sole caller of this function (after Phase 2), this event is effectively a self-notification.
+
+**Handling strategy:** Explicitly acknowledge and ignore. The connectivity module already owns the routing state — `BLE_EVENT_ROUTING_CHANGED` is a blemod-internal notification that other modules (like the old `split_bridge.c`) used to react to. The connectivity module does NOT need to react to its own mutations.
+
+Add to the BLE event handler in §1.10:
+
+```c
+case BLE_EVENT_ROUTING_CHANGED:
+    // No-op. The connectivity module is the sole authority for routing
+    // changes. This event is fired by blemod when we call
+    // ble_hid_set_routing_active(), which we do from conn_request_transport().
+    // Reacting to it here would create a circular dependency.
+    // Other modules (status_module, split_bridge) subscribe to
+    // CONN_EVENT_TRANSPORT_CHANGED instead.
+    break;
+```
+
+---
+
+### 1.20 Documentation Files
+
+Two documentation files must be created:
+
+#### 1. Universe Module File: `universe/modules/CONNECTIVITY_MODULE.md`
+
+Located at: `universe/modules/CONNECTIVITY_MODULE.md`
+
+This file follows the same format as existing universe module files ([BLE_MODULE.md](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/BLE_MODULE.md), [SPLIT_MODULE.md](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/SPLIT_MODULE.md), etc.). It describes the module's **relationships and connections** to other modules:
+
+- Brief one-paragraph description of what the connectivity module does
+- Dependency diagram (which modules it depends on, which modules depend on it)
+- Event bus interactions (subscribes to, publishes)
+- Config kinds used
+- Init order position
+- Mermaid flowchart showing module relationships
+
+#### 2. Module Root Documentation: `components/connectivity_module/CONNECTIVITY_MODULE.md`
+
+Located at: `components/connectivity_module/CONNECTIVITY_MODULE.md`
+
+This is the **extensive internal documentation** following the same pattern as other module docs ([CONFIG_MODULE.md](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/config_module/CONFIG_MODULE.md), etc.). It must contain:
+
+- Full API reference (all public functions with parameters and return values)
+- State machine diagram (READY → ACTIVE → SEARCHING → SUSPENDED) with Mermaid
+- Transport vtable interface specification
+- Configuration schema (NVS keys, conn_config_t fields, defaults)
+- Fallback behavior specification with per-transport arrays
+- Insist timer mechanics
+- Thread safety analysis
+- Event definitions and payloads
+- Split integration details
+- Troubleshooting matrix
+
+**Timing:** Create both files at the end of Phase 1, before Phase 1 Verification. Update them after Phase 2 and Phase 3 as the module evolves.
+
+---
+
+### 1.21 Phase 1 Verification
+
 
 | Check | How | Expected Result |
 |-------|-----|-----------------|
@@ -1734,16 +2060,16 @@ Replace the stub in `conn_transport_rf24.c` with a real ESP-NOW based HID transp
 
 ### 3.2 Fallback Logic Implementation
 
-Enable `CONN_FALLBACK_AUTO` and `CONN_FALLBACK_USB_ONLY` modes. The `resolve_active_transport()` function already contains the fallback logic (see §1.10). Phase 3 just enables the non-`NONE` paths and adds:
+Enable per-transport fallback via the `fallback_enabled[]` and `fallback_transport[]` arrays in `conn_config_t`. The `resolve_active_transport()` function already contains the full fallback logic (see §1.10). Phase 3 exposes these settings through the configurator and adds:
 
-- A configurable retry timer (try reconnecting to preferred transport periodically)
+- A configurable retry timer (insist interval/duration per transport — already wired in §1.10)
 - Status LED feedback during fallback (brief RGB flash)
 - Configurator notification via status push
 
 > [!CAUTION]
 > **Automatic fallback MUST NOT trigger NVS writes.** This is enforced by the design in §1.10: `resolve_active_transport()` only updates `s_ctx.active_transport` (RAM), never `s_ctx.config.preferred_transport` (NVS). The `conn_config_save()` call lives exclusively in `conn_request_transport()`, which is only invoked by explicit user actions (keypress, configurator command).
 >
-> **Verification obligation (Phase 3):** Add an assertion or compile-time guard to ensure no code path from `resolve_active_transport()` or `handle_transport_disconnect()` calls `conn_config_save()`. A user who constantly moves in and out of BLE range with `CONN_FALLBACK_AUTO` enabled must cause zero NVS writes — the fallback is ephemeral, and the preferred transport recovers automatically when it reconnects.
+> **Verification obligation (Phase 3):** Add an assertion or compile-time guard to ensure no code path from `resolve_active_transport()` or `handle_transport_disconnect()` calls `conn_config_save()`. A user who constantly moves in and out of BLE range with `fallback_enabled[CONN_TRANSPORT_BLE] = true` must cause zero NVS writes — the fallback is ephemeral, and the preferred transport recovers automatically when it reconnects.
 
 ### 3.3 Configurator Transport Selector
 
@@ -1792,11 +2118,11 @@ ESP-IDF's default event loop runs all handlers on a **single task**. So handlers
 | Component | DRAM | PSRAM | Notes |
 |-----------|------|-------|-------|
 | `s_ctx` static state | ~80 bytes | — | Main state struct |
-| `conn_config_t` | ~24 bytes | — | Persisted config |
+| `conn_config_t` | ~56 bytes | — | Persisted config (1 enum + 3 bools + 3 enums + 3 bools + 3×uint16 + 3×uint16 + 3 bools + padding) |
 | Transport registry | 3 × 4 bytes = 12 bytes | — | Pointer array |
 | Transport ops structs | 3 × ~80 bytes = 240 bytes | — | Static const, likely in .rodata (flash) |
-| Event handlers | 5 × ~20 bytes = 100 bytes | — | `esp_event_handler_register` internal |
-| **Total** | **~220 bytes DRAM** | **0** | |
+| Event handlers | 7 × ~20 bytes = 140 bytes | — | `esp_event_handler_register` internal |
+| **Total** | **~290 bytes DRAM** | **0** | |
 
 The module adds negligible memory overhead. All transport ops structs are `const` and live in flash.
 
@@ -1828,7 +2154,7 @@ These are the open questions from the design document with recommended resolutio
 
 | # | Question | Resolution | Rationale |
 |---|----------|------------|-----------|
-| 1 | Should fallback be enabled by default? | **No** (`CONN_FALLBACK_NONE`) | Backward compatibility. Current behavior is strict: if BLE is selected, reports only go to BLE. Users opt in. |
+| 1 | Should fallback be enabled by default? | **No** (Per-transport `fallback_enabled = false`) | Backward compatibility. Current behavior is strict: if BLE is selected, reports only go to BLE. Users configure specific fallbacks and "insist intervals" via the Web Configurator. |
 | 2 | Should `kb_report.c` be eliminated entirely? | **Keep as thin wrapper** | 3 lines of code. Eliminates the need to audit every `kb_send_report` call site in the keyboard module. Provides a stable internal API within the keyboard component. |
 | 3 | Where does NKRO→6KRO conversion live? | **Centrally in `conn_manager.c`** | One implementation, all transports benefit. The conversion is transport-agnostic logic. |
 | 4 | Should `ble_controller.c` be deleted or kept? | **Delete** (Phase 2) | Its 60 lines migrate entirely into `conn_on_kb_sys_action`. No value in keeping a dead file. |
@@ -1870,6 +2196,7 @@ These are the open questions from the design document with recommended resolutio
 | `components/connectivity_module/conn_transport_usb.c` | 1 | USB transport adapter |
 | `components/connectivity_module/conn_transport_ble.c` | 1 | BLE transport adapter |
 | `components/connectivity_module/conn_transport_rf24.c` | 1 | RF24 stub |
+| `universe/modules/CONNECTIVITY_MODULE.md` | 1 | Module relationships doc |
 
 ### Modified Files
 
@@ -1879,6 +2206,8 @@ These are the open questions from the design document with recommended resolutio
 | [cfgmod.h](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/config_module/include/cfgmod.h) | 1 | Add `CFGMOD_KIND_CONNECTIVITY` to enum |
 | [main.c](file:///home/srleg/Projects/Tecleados-ESP-Firmware/main/main.c) | 1 | Replace `ble_controller_init()` → `conn_init()` |
 | [main/CMakeLists.txt](file:///home/srleg/Projects/Tecleados-ESP-Firmware/main/CMakeLists.txt) | 1 | Remove `ble_controller.c`, add `connectivity_module` |
+| [split_config_sync.c](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/split/split_config_sync.c) | 1 | Add `CFGMOD_KIND_CONNECTIVITY` to sync table |
+| [usbmod.c](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/usb_module/usbmod.c) | 1 | Add `tud_mount_cb`/`tud_umount_cb` for USB state events |
 | [kb_report.c](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/kb_report.c) | 2 | Rewrite to delegate to `conn_manager` |
 | [split_bridge.c](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/split/split_bridge.c) | 2 | Replace direct `blemod.h` calls with `conn_*()` |
 | [statusmod.c](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/status_module/statusmod.c) | 2 | Add `CONN_EVENTS` subscription for transport mode |
@@ -1916,8 +2245,9 @@ assert(usb_transport_send_kbd(report, 8) == ESP_OK);  // when mounted
 | **Cold boot BLE** | Previously configured BLE, power on | BLE reconnects, keystroke over BLE |
 | **USB→BLE switch** | Press BLE toggle key | Keystrokes move to BLE host, USB COMMS still works |
 | **BLE→USB switch** | Press BLE toggle key | Keystrokes move to USB host |
-| **BLE disconnect** | Turn off BLE host | `SEARCHING` state. No fallback (CONN_FALLBACK_NONE). Reports return error. |
-| **BLE disconnect + fallback** | Enable CONN_FALLBACK_USB_ONLY, disconnect BLE host | Reports automatically switch to USB |
+| **BLE disconnect** | Turn off BLE host | `SEARCHING` state. No fallback (default). Reports return error. |
+| **BLE disconnect + fallback** | Enable `fallback_enabled[BLE]=true`, disconnect BLE host | Reports automatically switch to USB |
+| **USB disconnect + fallback** | Enable `fallback_enabled[USB]=true`, unplug USB cable | Reports automatically switch to BLE |
 | **Split: master→slave** | Initiate role swap | New slave suspends BLE, new master resumes |
 | **Split slave + configurator** | On slave half, connect USB, open configurator | Configurator works (USB COMMS), no HID reports on USB |
 | **Configurator BLE toggle** | Click toggle in BLE panel of configurator | Transport switches, status push reflects new mode |
