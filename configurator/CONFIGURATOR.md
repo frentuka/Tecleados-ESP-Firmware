@@ -46,7 +46,7 @@ Browser
 
 | Layer            | File                           | Responsibility                                                       |
 |------------------|--------------------------------|----------------------------------------------------------------------|
-| React UI         | `App.tsx`, dashboards, modals  | Rendering, user interaction, section routing (Header Nav)            |
+| React UI         | `App.tsx`, dashboards, modals  | Rendering, user interaction, sidebar navigation, settings/console modals |
 | Zustand stores   | `stores/`                      | Global state shared across components                                |
 | React hooks      | `hooks/`                       | Local async device operations with their own state                   |
 | DeviceController | `services/DeviceController.ts` | Typed commands — fetchStatus, fetchMacros, saveMacro, etc.           |
@@ -60,21 +60,24 @@ Browser
 ```
 configurator/
 ├── src/
-│   ├── App.tsx                         — Top-level: section routing, secret code listener, connection logic
+│   ├── App.tsx                         — Top-level: single-page layout, sidebar state, secret code listener, connection logic
+│   ├── Sidebar.tsx                     — Right-edge icon rail + expandable panel (Macros/CKeys/Combos tabs, Settings/Console buttons)
+│   ├── SettingsModal.tsx               — Device settings modal (wraps DeviceDashboard in a portal overlay)
+│   ├── DevConsoleModal.tsx             — Developer console log viewer modal (replaces DevControlsPanel bottom strip)
 │   ├── main.tsx                        — React entry point, DeviceController instantiation
-│   ├── index.css                       — Global styles, dashboard layouts, utility classes
+│   ├── index.css                       — Global styles, dashboard layouts, utility classes, pointer isolation
 │   ├── HIDService.ts                   — Backward-compat re-export façade (singleton instance)
 │   ├── KeyDefinitions.ts               — HID keycodes, key names, browser key→HID map
-│   ├── KeyboardLayoutEditor.tsx        — "Layout" section: visual matrix editor, KLE/JSON portability
-│   ├── MacrosDashboard.tsx             — "Macros & CKs" column: Macro CRUD + Export/Import
-│   ├── CustomKeysDashboard.tsx         — "Macros & CKs" column: Custom Key CRUD + Export/Import
+│   ├── KeyboardLayoutEditor.tsx        — Always-visible layout editor: visual matrix editor, KLE/JSON portability
+│   ├── MacrosDashboard.tsx             — Sidebar panel: Macro CRUD + Export/Import
+│   ├── CustomKeysDashboard.tsx         — Sidebar panel: Custom Key CRUD + Export/Import
 │   ├── StatusWidget.tsx                — Header widget: BLE/USB/Split status indicators
 │   ├── SplitDashboard.tsx              — "Split" section: Pairing, role swap, latency, remote matrix visualizer
-│   ├── DeviceIdentityDashboard.tsx     — "Identity" section: device naming and split variants (Dev only)
+│   ├── DeviceDashboard.tsx             — Device settings: name, split link, BLE identity (rendered inside SettingsModal)
 │   │
 │   ├── components/
 │   │   ├── Background3D.tsx            — Full-page 3D keyboard background (React Three Fiber; procedural geometry, split detection, Minkowski-sum baseplates)
-│   │   ├── DevControlsPanel.tsx        — Developer Mode panel: config GET/SET form + raw log viewer
+│   │   ├── DevControlsPanel.tsx        — Developer Mode raw log viewer (legacy; now invoked via DevConsoleModal)
 │   │   ├── MacroEditorModal.tsx        — Full macro editor with recording, element list, drag-and-drop
 │   │   ├── MacroModeModal.tsx          — Inline modal to change a macro's execution mode
 │   │   ├── MacroPreview.tsx            — Read-only summary of a macro's elements for the card view

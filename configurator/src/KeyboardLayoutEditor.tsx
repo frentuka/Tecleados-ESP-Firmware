@@ -40,6 +40,7 @@ interface KeyboardLayoutEditorProps {
     macros: Macro[];
     customKeys?: CustomKey[];
     onLog: (text: string) => void;
+    onKeySelected?: (code: number) => void;
 }
 
 // ── Factory default keymaps (mirrors keymaps[] in kb_layout.h) ──
@@ -106,7 +107,7 @@ const DEFAULT_PHYSICAL_LAYOUT: PhysKey[][] = [
 ];
 
 
-export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, macros, customKeys = [], onLog }: KeyboardLayoutEditorProps) {
+export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, macros, customKeys = [], onLog, onKeySelected }: KeyboardLayoutEditorProps) {
     const { showNotification } = useNotificationStore();
     const { physicalLayout, setPhysicalLayout, layers, setLayers, activeLayer, setActiveLayer, pressedCodes, setPressedCodes, heldTestKeys, setHeldTestKeys } = useLayoutStore();
     const [layerStatus, setLayerStatus] = useState<('idle' | 'loading' | 'loaded' | 'error')[]>(['idle', 'idle', 'idle', 'idle']);
@@ -973,6 +974,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                                                 // If it wasn't a drag and not ctrl/shift, open modal
                                                                 if (!isDraggingRef.current && !e.ctrlKey && !e.shiftKey && !isRowColEditMode) {
                                                                     setIsModalOpen(true);
+                                                                    onKeySelected?.(code);
                                                                 }
                                                                 isDraggingRef.current = false;
                                                             }}

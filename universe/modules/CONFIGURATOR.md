@@ -75,15 +75,15 @@ The legacy `HIDService.ts` file is a thin re-export façade that maps old import
 
 | Component | Section / Role | What it manages |
 |---|---|---|
-| `App.tsx` | Root shell | Connection state, section routing (Header Nav), Developer Mode |
-| `KeyboardLayoutEditor.tsx` | "Layout" section | Visual key editor, layer switching, multi-selection (Ctrl+Drag), physical layout management |
-| `MacrosDashboard.tsx` | "Macros & CKs" | Macro list, event sequence editor, CRUD + Export/Import |
-| `CustomKeysDashboard.tsx` | "Macros & CKs" | Press/Release and MultiAction key rule editing + Export/Import |
-| `CombosDashboard.tsx` | "Macros & CKs" | Combos list, combo grid selector + Export/Import |
-| `SplitDashboard.tsx` | "Split" section | Pairing, role swap, latency benchmark, remote matrix visualizer |
-| `DeviceIdentityDashboard.tsx` | "Identity" (Dev) | Device name, split mirror/variant, shared BLE address (Developer Mode only) |
+| `App.tsx` | Root shell | Connection state, sidebar state, Developer Mode |
+| `KeyboardLayoutEditor.tsx` | Always visible | Visual key editor, layer switching, multi-selection (Ctrl+Drag), physical layout management |
+| `Sidebar.tsx` | Right-edge navigation | Icon rail + expandable panel; hosts Macros, Custom Keys, Combos dashboards; Settings + Console button triggers |
+| `MacrosDashboard.tsx` | Sidebar panel | Macro list, event sequence editor, CRUD + Export/Import |
+| `CustomKeysDashboard.tsx` | Sidebar panel | Press/Release and MultiAction key rule editing + Export/Import |
+| `CombosDashboard.tsx` | Sidebar panel | Combos list, combo grid selector + Export/Import |
+| `SettingsModal.tsx` | Modal (gear icon) | Wraps DeviceDashboard for device name, split link, BLE identity settings |
+| `DevConsoleModal.tsx` | Modal (dev mode) | Developer console log viewer (replaces DevControlsPanel bottom strip) |
 | `StatusWidget.tsx` | Header | Always visible indicators for BLE/USB/Split state pushed from [[STATUS_MODULE]] |
-| `DevControlsPanel.tsx` | Dev Mode only | Raw packet log (bottom strip), protocol debug tools |
 
 ---
 
@@ -476,7 +476,10 @@ graph TD
 
 | File | Responsibility |
 |---|---|
-| `App.tsx` | Root component: WebHID connection lifecycle, section routing, Developer Mode, global notification rendering |
+| `App.tsx` | Root component: WebHID connection lifecycle, sidebar state management, Developer Mode, global notification rendering |
+| `Sidebar.tsx` | Right-edge icon rail with expandable panel; hosts Macros, Custom Keys, Combos dashboards; triggers Settings and Console modals |
+| `SettingsModal.tsx` | Device settings modal wrapping DeviceDashboard in a portal overlay |
+| `DevConsoleModal.tsx` | Developer console log viewer modal (replaces DevControlsPanel bottom strip) |
 | `HIDService.ts` | Backward-compat re-export façade — maps old import paths to new module structure |
 | `KeyboardLayoutEditor.tsx` | Main layout editor: layer management, physical layout rendering, KLE/JSON import, save timeout guard |
 | `MacrosDashboard.tsx` | Macro list + event-sequence editor (CRUD + Portability), success/error notifications |

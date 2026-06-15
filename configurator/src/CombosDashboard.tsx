@@ -476,10 +476,23 @@ export default function CombosDashboard({ combos, comboLimits, macros, isDevelop
 
     return (
         <div className="ckey-dashboard" style={{ height: '100%' }}>
-            <div className="ckey-dashboard-header" style={{ position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center', marginBottom: '0', flexShrink: 0, minHeight: '42px' }}>
-                <span className="board-title">Combos</span>
+            <div className="ckey-dashboard-header">
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start' }}>
+                    <span className="sidebar-panel-title">COMBOS</span>
+                </div>
 
-                <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, display: 'flex', alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', justifyContent: 'center' }}>
+                    <span className="ckey-count-badge">{combos.length} / {maxCombos}</span>
+                    <button className="btn-new-action btn-new-success" onClick={handleNew} disabled={combos.length >= maxCombos}>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                        New
+                    </button>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
                     <div className="menu-container" ref={menuRef}>
                         <button className="btn-icon" onClick={() => setIsMenuOpen(!isMenuOpen)} title="Options">
                             <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
@@ -494,17 +507,6 @@ export default function CombosDashboard({ combos, comboLimits, macros, isDevelop
                             </div>
                         )}
                     </div>
-                </div>
-
-                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                    <span className="ckey-count-badge">{combos.length} / {maxCombos}</span>
-                    <button className="btn-new-action btn-new-success" onClick={handleNew} disabled={combos.length >= maxCombos}>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                            <line x1="12" y1="5" x2="12" y2="19"></line>
-                            <line x1="5" y1="12" x2="19" y2="12"></line>
-                        </svg>
-                        New
-                    </button>
                 </div>
             </div>
 

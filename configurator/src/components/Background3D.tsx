@@ -349,7 +349,7 @@ function KeyboardModel({ isAutoRotating, setIsAutoRotating }: { isAutoRotating: 
 
       // Filter out any clicks starting on interactive 2D UI panels, buttons, inputs, and modals
       const target = e.target as HTMLElement
-      if (target.closest('button, input, select, textarea, a, .keyboard-grid, .keyboard-key, .glass-panel, .list-column, .main-header, .selection-actions-overlay, .rowcol-edit-panel, .layout-actions, .devctrl-page, .modal-content, .permissions-help, .dd-sections, .dd-section, .dd-page-header, .dropdown-menu')) return
+      if (target.closest('button, input, select, textarea, a, .keyboard-grid, .keyboard-key, .glass-panel, .list-column, .main-header, .selection-actions-overlay, .rowcol-edit-panel, .layout-actions, .modal-content, .permissions-help, .dd-sections, .dd-section, .dd-page-header, .dropdown-menu, .sidebar-container, .settings-modal-overlay, .devconsole-modal-overlay')) return
 
       isDragging.current = true
       pointerDownPos.current = { x: e.clientX, y: e.clientY }
