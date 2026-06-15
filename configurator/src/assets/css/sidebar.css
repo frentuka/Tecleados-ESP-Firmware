@@ -238,12 +238,14 @@
 
 .settings-modal-body {
     flex: 1;
-    overflow-y: auto;
-    padding: 0.5rem;
+    overflow: hidden;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
 }
 
 /* Override dd-page styles inside settings modal */
-.settings-modal-body .dd-page {
+.settings-modal-body .dd-layout {
     pointer-events: auto;
 }
 

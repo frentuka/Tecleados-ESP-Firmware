@@ -113,6 +113,7 @@ const DeviceDashboard: React.FC<DeviceDashboardProps> = ({
     onLog,
 }) => {
     const { showNotification } = useNotificationStore();
+    const [activeTab, setActiveTab] = useState<'general' | 'split' | 'bluetooth' | 'developer'>('general');
 
     // ── Identity state ────────────────────────────────────────────────────
 
@@ -361,275 +362,305 @@ const DeviceDashboard: React.FC<DeviceDashboardProps> = ({
     const stateCol = stateColor(splitState);
 
     return (
-        <div className="dd-page">
+        <div className="dd-layout">
+            {/* ── Sidebar Navigation ── */}
+            <div className="dd-sidebar">
+                <button
+                    className={`dd-tab ${activeTab === 'general' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('general')}
+                >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                    <span>General</span>
+                </button>
+                <button
+                    className={`dd-tab ${activeTab === 'split' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('split')}
+                >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="12" y1="5" x2="12" y2="19"/></svg>
+                    <span>Split Keyboard</span>
+                </button>
+                {isDeveloperMode && (
+                    <button
+                        className={`dd-tab ${activeTab === 'bluetooth' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('bluetooth')}
+                    >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6.5 6.5 17.5 17.5 12 23 12 1 17.5 6.5 6.5 17.5"/></svg>
+                        <span>Bluetooth</span>
+                    </button>
+                )}
+                {isDeveloperMode && (
+                    <button
+                        className={`dd-tab ${activeTab === 'developer' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('developer')}
+                    >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+                        <span>Developer</span>
+                    </button>
+                )}
 
-            {/* ── Page header ── */}
-            <div className="dd-page-header">
-                <div className="dd-page-header-left">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.6 }}>
-                        <rect x="2" y="5" width="20" height="14" rx="2"/>
-                        <circle cx="8" cy="12" r="2"/>
-                        <path d="M14 9h4M14 12h4M14 15h2"/>
-                    </svg>
-                    <span className="dd-page-title">Device</span>
-                    {isLoading && <span className="dd-loading-hint">loading…</span>}
-                </div>
+                <div className="dd-sidebar-spacer" />
                 <button
                     id="dd-apply-btn"
                     className={applyClass}
                     onClick={handleSave}
                     disabled={!isConnected || isSaving || (!isDirty && saveResult === null)}
                 >
-                    {isSaving ? 'Saving…' : saveResult === 'ok' ? '✓ Saved' : saveResult === 'err' ? '✗ Error' : 'Apply'}
+                    {isSaving ? 'Saving…' : saveResult === 'ok' ? '✓ Saved' : saveResult === 'err' ? '✗ Error' : 'Apply Changes'}
                 </button>
             </div>
 
-            {/* ── Sections ── */}
-            <div className="dd-sections">
-
-                {/* ── Device Name (always visible) ─────────────────── */}
-                <DdSection label="Device Name">
-                    <div className="dd-field-row">
-                        <input
-                            id="dd-device-name"
-                            type="text"
-                            maxLength={31}
-                            value={draft.device_name}
-                            onChange={e => setField('device_name', e.target.value)}
-                            placeholder="Antigravity KB"
-                            className="dd-input"
-                        />
-                        <span className="dd-char-count">{draft.device_name.length}/31</span>
-                    </div>
-                    <p className="dd-hint">
-                        Bluetooth and USB device name shown to hosts on pairing.{' '}
-                        <span className="dd-hint-warn">Name changes take effect after reconnect or restart.</span>
-                    </p>
-                </DdSection>
-
-                {/* ── Split Link (always visible) ──────────────────── */}
-                <DdSection label="Split Link">
-                    {/* Status row */}
-                    <div className="dd-split-status-row">
-                        <div className="dd-split-status-left">
-                            <span
-                                className="dd-split-dot"
-                                style={{
-                                    background: stateCol,
-                                    boxShadow: `0 0 8px ${stateCol}`,
-                                    animation: isPairing ? 'dd-pulse 1.2s infinite ease-in-out' : 'none',
-                                }}
-                            />
-                            <span className="dd-split-state-label">{stateLabel(splitState)}</span>
-                            {splitRole !== SPLIT_ROLE_NONE && (
-                                <span className="dd-split-role-badge">{roleLabel(splitRole)}</span>
-                            )}
-                        </div>
-
-                        {/* Dev-only: Role Swap + Benchmark (shown only when connected) */}
-                        {isDeveloperMode && isConnectedS && (
-                            <div className="dd-split-actions">
-                                <button
-                                    className="btn-banner-action"
-                                    onClick={handleRoleSwap}
-                                    disabled={!isConnected}
-                                    title="Switch Roles"
-                                >
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                        <path d="M16 3l4 4-4 4"/><path d="M20 7H4"/><path d="M8 21l-4-4 4-4"/><path d="M4 17h16"/>
-                                    </svg>
-                                    <span>Switch Roles</span>
-                                </button>
-
-                                {splitRole === SPLIT_ROLE_MASTER && (
-                                    <button
-                                        className={`btn-banner-action ${isBenchmarking ? 'loading' : ''}`}
-                                        onClick={handleRunBenchmark}
-                                        disabled={!isConnected || isBenchmarking}
-                                        title="Run Benchmark"
-                                    >
-                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
-                                        </svg>
-                                        <span>{isBenchmarking ? 'Benchmarking…' : 'Benchmark'}</span>
-                                    </button>
-                                )}
-                            </div>
-                        )}
-                    </div>
-
-                    {/* Pairing controls */}
-                    <div className="dd-split-pairing-row">
-                        {!isPairing ? (
-                            <div className="dd-split-action-row">
-                                {!isConnectedS ? (
-                                    <button className="btn btn-success btn-sm" onClick={handleStartPairing} disabled={!isConnected}>
-                                        Start Pairing
-                                    </button>
-                                ) : (
-                                    <button className="btn btn-danger btn-sm" onClick={handleUnpair} disabled={!isConnected}>
-                                        Unpair
-                                    </button>
-                                )}
-                                {isDeveloperMode && !isConnectedS && (
-                                    <label className="dd-timeout-label">
-                                        Timeout
-                                        <input
-                                            id="dd-pairing-timeout"
-                                            type="number"
-                                            min={5} max={120} step={5}
-                                            value={pairingTimeout}
-                                            onChange={e => setPairingTimeout(Number(e.target.value))}
-                                            className="dd-timeout-input"
-                                        />
-                                        <span style={{ fontSize: 11, opacity: 0.5 }}>s</span>
-                                    </label>
-                                )}
-                            </div>
-                        ) : (
-                            <div className="dd-split-action-row">
-                                <div className="dd-pairing-indicator">
-                                    <span className="dd-pairing-dot" />
-                                    Pairing in progress…
-                                </div>
-                                <button className="btn btn-secondary btn-sm" onClick={handleCancelPairing} disabled={!isConnected}>
-                                    Cancel
-                                </button>
-                            </div>
-                        )}
-                    </div>
-                </DdSection>
-
-                {/* ── Split Configuration (dev mode only) ─────────── */}
-                {isDeveloperMode && (
-                    <DdSection label="Split Configuration">
-                        <div className="dd-toggle-row">
-                            <Toggle
-                                id="dd-is-split"
-                                checked={draft.is_split}
-                                onChange={v => setField('is_split', v)}
-                            />
-                            <label htmlFor="dd-is-split" className="dd-toggle-label">
-                                This device is part of a split keyboard
-                            </label>
-                        </div>
-
-                        <div className={`dd-split-fields ${draft.is_split ? '' : 'disabled'}`}>
-                            <FieldGroup label="Mirror Columns" hint="Column N maps to (MAX_COL−N). Enable on the mirrored half (e.g. right side).">
-                                <div className="dd-toggle-row" style={{ marginTop: 4 }}>
-                                    <Toggle
-                                        id="dd-mirror-cols"
-                                        checked={draft.split_mirror_cols}
-                                        onChange={v => setField('split_mirror_cols', v)}
-                                    />
-                                    <label htmlFor="dd-mirror-cols" className="dd-toggle-label">
-                                        {draft.split_mirror_cols ? 'Enabled' : 'Disabled'}
-                                    </label>
-                                </div>
-                            </FieldGroup>
-
-                            <FieldGroup label="Variant Name" hint={`e.g. "Left", "Right", "Numpad"`}>
-                                <input
-                                    id="dd-split-variant"
-                                    type="text"
-                                    maxLength={15}
-                                    value={draft.split_variant}
-                                    onChange={e => setField('split_variant', e.target.value)}
-                                    placeholder="Left"
-                                    className="dd-input"
-                                />
-                            </FieldGroup>
-                        </div>
-                    </DdSection>
-                )}
-
-                {/* ── BLE Identity (dev mode only) ─────────────────── */}
-                {isDeveloperMode && (
-                    <DdSection label="BLE Identity (Split)">
-                        <p className="dd-hint" style={{ marginTop: 0, marginBottom: 16 }}>
-                            Set these to the same values on both halves so they share one BLE identity.
-                            The host will reconnect automatically when roles swap.
-                        </p>
-                        <div className="dd-ble-fields">
-                            <FieldGroup
-                                label="BLE Name"
-                                hint="Overrides Device Name in BLE advertisements. Leave blank to use Device Name."
-                            >
+            {/* ── Main Content ── */}
+            <div className="dd-content">
+                {isLoading && <div className="dd-loading-overlay"><span className="dd-loading-spinner"/>Loading settings...</div>}
+                
+                <div className="dd-sections">
+                    {/* ── GENERAL TAB ─────────────────────────────────── */}
+                    {activeTab === 'general' && (
+                        <DdSection label="General Settings">
+                            <FieldGroup label="Device Name" hint="Bluetooth and USB device name shown to hosts on pairing. Changes take effect after reconnect or restart.">
                                 <div className="dd-field-row">
                                     <input
-                                        id="dd-ble-shared-name"
+                                        id="dd-device-name"
                                         type="text"
                                         maxLength={31}
-                                        value={draft.ble_shared_name}
-                                        onChange={e => setField('ble_shared_name', e.target.value)}
-                                        placeholder={draft.device_name || 'Antigravity KB'}
+                                        value={draft.device_name}
+                                        onChange={e => setField('device_name', e.target.value)}
+                                        placeholder="Antigravity KB"
                                         className="dd-input"
                                     />
-                                    <span className="dd-char-count">{draft.ble_shared_name.length}/31</span>
+                                    <span className="dd-char-count">{draft.device_name.length}/31</span>
                                 </div>
                             </FieldGroup>
+                        </DdSection>
+                    )}
 
-                            <FieldGroup
-                                label="BLE MAC Address"
-                                hint='Shared static random address base, e.g. "C2:13:57:9B:EF:01". Leave blank for auto. Set bit 7+6 of first byte for Static Random type (e.g. C2:…).'
-                            >
-                                <input
-                                    id="dd-ble-shared-addr"
-                                    type="text"
-                                    maxLength={17}
-                                    value={draft.ble_shared_addr}
-                                    onChange={e => setField('ble_shared_addr', e.target.value.toUpperCase())}
-                                    placeholder="AA:BB:CC:DD:EE:FF"
-                                    className="dd-input dd-input-mono"
-                                />
-                            </FieldGroup>
-                        </div>
-                        <p className="dd-hint" style={{ marginTop: 12 }}>
-                            Changes take effect after restarting both halves.
-                        </p>
-                    </DdSection>
-                )}
+                    {/* ── SPLIT TAB ────────────────────────────────────── */}
+                    {activeTab === 'split' && (
+                        <>
+                            <DdSection label="Split Link Status">
+                                <div className="dd-split-magic-visual">
+                                    <div className="dd-split-half left">
+                                        <div className="dd-split-half-glow" />
+                                    </div>
+                                    <div className={`dd-split-connection-link ${stateCol === 'var(--success-color)' ? 'active' : isPairing ? 'pairing' : ''}`}>
+                                        <div className="dd-split-link-beam" />
+                                    </div>
+                                    <div className={`dd-split-half right ${isConnectedS ? 'connected' : ''}`}>
+                                        <div className="dd-split-half-glow" />
+                                    </div>
+                                </div>
+                                <div className="dd-split-status-row">
+                                    <div className="dd-split-status-left">
+                                        <span
+                                            className="dd-split-dot"
+                                            style={{
+                                                background: stateCol,
+                                                boxShadow: `0 0 12px ${stateCol}`,
+                                                animation: isPairing ? 'dd-pulse 1.2s infinite ease-in-out' : 'none',
+                                            }}
+                                        />
+                                        <span className="dd-split-state-label">{stateLabel(splitState)}</span>
+                                        {splitRole !== SPLIT_ROLE_NONE && (
+                                            <span className="dd-split-role-badge">{roleLabel(splitRole)}</span>
+                                        )}
+                                    </div>
 
-                {/* ── Remote Key Test (dev mode, master, split connected) ── */}
-                {isDeveloperMode && isConnectedS && splitRole === SPLIT_ROLE_MASTER && (
-                    <DdSection label="Remote Key Test">
-                        <div className="dd-section-header-row">
-                            <p className="dd-hint" style={{ margin: 0 }}>
-                                Live-monitor the slave half's key matrix.
+                                    {/* Dev-only: Role Swap + Benchmark (shown only when connected) */}
+                                    {isDeveloperMode && isConnectedS && (
+                                        <div className="dd-split-actions">
+                                            <button
+                                                className="btn-banner-action"
+                                                onClick={handleRoleSwap}
+                                                disabled={!isConnected}
+                                                title="Switch Roles"
+                                            >
+                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                                    <path d="M16 3l4 4-4 4"/><path d="M20 7H4"/><path d="M8 21l-4-4 4-4"/><path d="M4 17h16"/>
+                                                </svg>
+                                                <span>Switch Roles</span>
+                                            </button>
+
+                                            {splitRole === SPLIT_ROLE_MASTER && (
+                                                <button
+                                                    className={`btn-banner-action ${isBenchmarking ? 'loading' : ''}`}
+                                                    onClick={handleRunBenchmark}
+                                                    disabled={!isConnected || isBenchmarking}
+                                                    title="Run Benchmark"
+                                                >
+                                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                                        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                                                    </svg>
+                                                    <span>{isBenchmarking ? 'Benchmarking…' : 'Benchmark'}</span>
+                                                </button>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Pairing controls */}
+                                <div className="dd-split-pairing-row">
+                                    {!isPairing ? (
+                                        <div className="dd-split-action-row">
+                                            {!isConnectedS ? (
+                                                <button className="btn btn-success btn-sm dd-glow-btn" onClick={handleStartPairing} disabled={!isConnected}>
+                                                    Start Pairing
+                                                </button>
+                                            ) : (
+                                                <button className="btn btn-danger btn-sm dd-glow-btn dd-glow-danger" onClick={handleUnpair} disabled={!isConnected}>
+                                                    Unpair
+                                                </button>
+                                            )}
+                                            {isDeveloperMode && !isConnectedS && (
+                                                <label className="dd-timeout-label">
+                                                    Timeout
+                                                    <input
+                                                        id="dd-pairing-timeout"
+                                                        type="number"
+                                                        min={5} max={120} step={5}
+                                                        value={pairingTimeout}
+                                                        onChange={e => setPairingTimeout(Number(e.target.value))}
+                                                        className="dd-timeout-input"
+                                                    />
+                                                    <span style={{ fontSize: 11, opacity: 0.5 }}>s</span>
+                                                </label>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <div className="dd-split-action-row">
+                                            <div className="dd-pairing-indicator">
+                                                <span className="dd-pairing-dot" />
+                                                Pairing in progress…
+                                            </div>
+                                            <button className="btn btn-secondary btn-sm" onClick={handleCancelPairing} disabled={!isConnected}>
+                                                Cancel
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            </DdSection>
+
+                            {/* Benchmark Results Card */}
+                            {benchResult && (
+                                <div style={{ gridColumn: '1 / -1', marginTop: '1rem', width: '100%' }}>
+                                    <BenchResultCard result={benchResult} />
+                                </div>
+                            )}
+                        </>
+                    )}
+
+                    {/* ── BLUETOOTH TAB ────────────────────────────────── */}
+                    {activeTab === 'bluetooth' && isDeveloperMode && (
+                        <DdSection label="BLE Identity (Split)">
+                            <p className="dd-hint" style={{ marginTop: 0, marginBottom: 16 }}>
+                                Set these to the same values on both halves so they share one BLE identity.
+                                The host will reconnect automatically when roles swap. Changes take effect after restarting both halves.
                             </p>
-                            <button
-                                id="dd-test-toggle"
-                                className={`btn btn-sm ${testModeActive ? 'btn-danger' : 'btn-secondary'}`}
-                                onClick={() => setTestModeActive(!testModeActive)}
-                            >
-                                {testModeActive ? 'Stop' : 'Start Test'}
-                            </button>
-                        </div>
-                        {testModeActive && (
-                            <div className="dd-matrix-wrapper">
-                                <MatrixVisualiser bitmap={remoteMatrix} />
+                            <div className="dd-ble-fields">
+                                <FieldGroup
+                                    label="BLE Name"
+                                    hint="Overrides Device Name in BLE advertisements. Leave blank to use Device Name."
+                                >
+                                    <div className="dd-field-row">
+                                        <input
+                                            id="dd-ble-shared-name"
+                                            type="text"
+                                            maxLength={31}
+                                            value={draft.ble_shared_name}
+                                            onChange={e => setField('ble_shared_name', e.target.value)}
+                                            placeholder={draft.device_name || 'Antigravity KB'}
+                                            className="dd-input"
+                                        />
+                                        <span className="dd-char-count">{draft.ble_shared_name.length}/31</span>
+                                    </div>
+                                </FieldGroup>
+
+                                <FieldGroup
+                                    label="BLE MAC Address"
+                                    hint='Shared static random address base. Leave blank for auto. Set bit 7+6 of first byte for Static Random type (e.g. C2:…).'
+                                >
+                                    <input
+                                        id="dd-ble-shared-addr"
+                                        type="text"
+                                        maxLength={17}
+                                        value={draft.ble_shared_addr}
+                                        onChange={e => setField('ble_shared_addr', e.target.value.toUpperCase())}
+                                        placeholder="AA:BB:CC:DD:EE:FF"
+                                        className="dd-input dd-input-mono"
+                                    />
+                                </FieldGroup>
                             </div>
-                        )}
-                    </DdSection>
-                )}
+                        </DdSection>
+                    )}
 
-                {/* Benchmark Results Card */}
-                {benchResult && (
-                    <div style={{ gridColumn: '1 / -1', marginTop: '1rem', width: '100%' }}>
-                        <BenchResultCard result={benchResult} />
-                    </div>
-                )}
+                    {/* ── DEVELOPER TAB ────────────────────────────────── */}
+                    {activeTab === 'developer' && isDeveloperMode && (
+                        <>
+                            <DdSection label="Split Configuration">
+                                <div className="dd-toggle-row">
+                                    <Toggle
+                                        id="dd-is-split"
+                                        checked={draft.is_split}
+                                        onChange={v => setField('is_split', v)}
+                                    />
+                                    <label htmlFor="dd-is-split" className="dd-toggle-label">
+                                        This device is part of a split keyboard
+                                    </label>
+                                </div>
 
+                                <div className={`dd-split-fields ${draft.is_split ? '' : 'disabled'}`}>
+                                    <FieldGroup label="Mirror Columns" hint="Column N maps to (MAX_COL−N). Enable on the mirrored half.">
+                                        <div className="dd-toggle-row" style={{ marginTop: 4 }}>
+                                            <Toggle
+                                                id="dd-mirror-cols"
+                                                checked={draft.split_mirror_cols}
+                                                onChange={v => setField('split_mirror_cols', v)}
+                                            />
+                                            <label htmlFor="dd-mirror-cols" className="dd-toggle-label">
+                                                {draft.split_mirror_cols ? 'Enabled' : 'Disabled'}
+                                            </label>
+                                        </div>
+                                    </FieldGroup>
+
+                                    <FieldGroup label="Variant Name" hint={`e.g. "Left", "Right", "Numpad"`}>
+                                        <input
+                                            id="dd-split-variant"
+                                            type="text"
+                                            maxLength={15}
+                                            value={draft.split_variant}
+                                            onChange={e => setField('split_variant', e.target.value)}
+                                            placeholder="Left"
+                                            className="dd-input"
+                                        />
+                                    </FieldGroup>
+                                </div>
+                            </DdSection>
+
+                            {isConnectedS && splitRole === SPLIT_ROLE_MASTER && (
+                                <DdSection label="Remote Key Test">
+                                    <div className="dd-section-header-row">
+                                        <p className="dd-hint" style={{ margin: 0 }}>
+                                            Live-monitor the slave half's key matrix.
+                                        </p>
+                                        <button
+                                            id="dd-test-toggle"
+                                            className={`btn btn-sm ${testModeActive ? 'btn-danger' : 'btn-secondary'}`}
+                                            onClick={() => setTestModeActive(!testModeActive)}
+                                        >
+                                            {testModeActive ? 'Stop' : 'Start Test'}
+                                        </button>
+                                    </div>
+                                    {testModeActive && (
+                                        <div className="dd-matrix-wrapper">
+                                            <MatrixVisualiser bitmap={remoteMatrix} />
+                                        </div>
+                                    )}
+                                </DdSection>
+                            )}
+                        </>
+                    )}
+
+                </div>
             </div>
-
-
-            <style>{`
-                @keyframes dd-pulse {
-                    0%   { opacity: 1; }
-                    50%  { opacity: 0.25; }
-                    100% { opacity: 1; }
-                }
-            `}</style>
         </div>
     );
 };
