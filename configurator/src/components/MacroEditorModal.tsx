@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import type { Macro, MacroElement, MacroAction } from '../types/macros';
-import { getKeyName, MACRO_BASE, BROWSER_CODE_TO_HID } from '../KeyDefinitions';
+import type { Macro, MacroElement } from '../types/macros';
 import SearchableKeyModal from './SearchableKeyModal';
 import { useConfirm } from '../hooks/useConfirm';
 import MacroModeModal from './MacroModeModal';
-import { ActionTapIcon, ActionPressIcon, ActionReleaseIcon, MoonIcon } from './Icons';
+// Removed unused icons
+import MacroTimelineEditor, { type MacroTimelineRef } from './timeline/MacroTimelineEditor';
 
 interface MacroEditorModalProps {
     macro: Macro;
@@ -42,9 +42,7 @@ export default function MacroEditorModal({ macro: initialMacro, onSave, onClose,
     const [isModeModalOpen, setIsModeModalOpen] = useState(false);
     const [elements, setElements] = useState<MacroElement[]>(initialMacro.elements || []);
     const [isKeyModalOpen, setIsKeyModalOpen] = useState(false);
-    const [editingElementIndex, setEditingElementIndex] = useState<number | null>(null);
-    const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
-    const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+    const timelineRef = useRef<MacroTimelineRef>(null);
 
     const [isRecording, setIsRecording] = useState(false);
     const [recordDelay, setRecordDelay] = useState(true);
@@ -79,89 +77,13 @@ export default function MacroEditorModal({ macro: initialMacro, onSave, onClose,
         };
     }, [showConfigMenu]);
 
-    const recordingStateRef = useRef({
-        isRecording: false,
-        lastEventTime: 0,
-        activeKeys: new Set<string>(),
-    });
+    // Removed recordingStateRef
 
-    useEffect(() => {
-        recordingStateRef.current.isRecording = isRecording;
-        if (isRecording) {
-            recordingStateRef.current.lastEventTime = 0;
-            recordingStateRef.current.activeKeys.clear();
-        }
-    }, [isRecording]);
-
-    useEffect(() => {
-        const handleKeyDown = (e: KeyboardEvent) => {
-            if (!recordingStateRef.current.isRecording) return;
-            const hidCode = BROWSER_CODE_TO_HID[e.code];
-            if (hidCode !== undefined) {
-                e.preventDefault();
-                e.stopPropagation();
-                if (recordingStateRef.current.activeKeys.has(e.code)) return;
-                recordingStateRef.current.activeKeys.add(e.code);
-                const now = Date.now();
-                const diff = recordingStateRef.current.lastEventTime > 0 ? now - recordingStateRef.current.lastEventTime : 0;
-                setElements(prev => {
-                    if (maxEvents !== undefined && prev.length >= maxEvents) return prev;
-                    const newEls = [...prev];
-                    if (recordDelay && diff > 0) {
-                        const lastEl = newEls.length > 0 ? newEls[newEls.length - 1] : null;
-                        if (lastEl && lastEl.type === 'key') {
-                            newEls[newEls.length - 1] = { ...lastEl, inlineSleep: (lastEl.inlineSleep || 0) + diff };
-                        } else if (lastEl && lastEl.type === 'sleep') {
-                            newEls[newEls.length - 1] = { ...lastEl, duration: lastEl.duration + diff };
-                        } else {
-                            newEls.push({ type: 'sleep', duration: diff });
-                        }
-                    }
-                    newEls.push({ type: 'key', key: hidCode, action: 'press' });
-                    return newEls;
-                });
-                recordingStateRef.current.lastEventTime = now;
-            }
-        };
-
-        const handleKeyUp = (e: KeyboardEvent) => {
-            if (!recordingStateRef.current.isRecording) return;
-            const hidCode = BROWSER_CODE_TO_HID[e.code];
-            if (hidCode !== undefined) {
-                e.preventDefault();
-                e.stopPropagation();
-                recordingStateRef.current.activeKeys.delete(e.code);
-                const now = Date.now();
-                const diff = recordingStateRef.current.lastEventTime > 0 ? now - recordingStateRef.current.lastEventTime : 0;
-                setElements(prev => {
-                    if (maxEvents !== undefined && prev.length >= maxEvents) return prev;
-                    const newEls = [...prev];
-                    if (recordDelay && diff > 0) {
-                        const lastEl = newEls.length > 0 ? newEls[newEls.length - 1] : null;
-                        if (lastEl && lastEl.type === 'key') {
-                            newEls[newEls.length - 1] = { ...lastEl, inlineSleep: (lastEl.inlineSleep || 0) + diff };
-                        } else if (lastEl && lastEl.type === 'sleep') {
-                            newEls[newEls.length - 1] = { ...lastEl, duration: lastEl.duration + diff };
-                        } else {
-                            newEls.push({ type: 'sleep', duration: diff });
-                        }
-                    }
-                    newEls.push({ type: 'key', key: hidCode, action: 'release' });
-                    return newEls;
-                });
-                recordingStateRef.current.lastEventTime = now;
-            }
-        };
-
-        if (isRecording) {
-            window.addEventListener('keydown', handleKeyDown, { capture: true });
-            window.addEventListener('keyup', handleKeyUp, { capture: true });
-        }
-        return () => {
-            window.removeEventListener('keydown', handleKeyDown, { capture: true });
-            window.removeEventListener('keyup', handleKeyUp, { capture: true });
-        };
-    }, [isRecording, recordDelay, maxEvents]);
+    const addKey = () => setIsKeyModalOpen(true);
+    const handleSelectKey = (key: number) => {
+        timelineRef.current?.addKeyBlock(key);
+        setIsKeyModalOpen(false);
+    };
 
     useEffect(() => {
         const handleGlobalKeyDown = (e: KeyboardEvent) => {
@@ -176,142 +98,9 @@ export default function MacroEditorModal({ macro: initialMacro, onSave, onClose,
         return () => window.removeEventListener('keydown', handleGlobalKeyDown);
     }, [isRecording, isKeyModalOpen, isModeModalOpen, onClose]);
 
-    const addKey = () => {
-        if (isRecording) setIsRecording(false);
-        setEditingElementIndex(null);
-        setIsKeyModalOpen(true);
-    };
+    // Removed legacy UI functions
 
-    const handleSelectKey = (key: number) => {
-        if (isRecording) setIsRecording(false);
-        if (editingElementIndex !== null) {
-            const newElements = [...elements];
-            const oldEl = newElements[editingElementIndex];
-            newElements[editingElementIndex] = { ...oldEl, type: 'key', key };
-            setElements(newElements);
-        } else {
-            const isMacro = key >= MACRO_BASE && key < MACRO_BASE + 256;
-            const newEl: MacroElement = { type: 'key', key };
-            if (!isMacro) {
-                newEl.pressTime = defaultPressTime;
-            }
-            setElements([...elements, newEl]);
-        }
-        setIsKeyModalOpen(false);
-    };
-
-    const removeElement = (index: number) => {
-        if (isRecording) setIsRecording(false);
-        setElements(elements.filter((_, i) => i !== index));
-    };
-
-    const updateSleep = (index: number, duration: number) => {
-        if (isRecording) setIsRecording(false);
-        const newElements = [...elements];
-        newElements[index] = { type: 'sleep', duration: Math.max(0, duration) };
-        setElements(newElements);
-    };
-
-    const toggleAction = (index: number) => {
-        if (isRecording) setIsRecording(false);
-        const el = elements[index];
-        if (el.type !== 'key') return;
-        if (el.key >= MACRO_BASE && el.key < MACRO_BASE + 256) return;
-        const currentAction = el.action || 'tap';
-        let nextAction: MacroAction = 'tap';
-        if (currentAction === 'tap') nextAction = 'press';
-        else if (currentAction === 'press') nextAction = 'release';
-        else nextAction = 'tap';
-        const newElements = [...elements];
-        const updatedEl: any = { ...el, action: nextAction };
-        if (nextAction === 'tap') {
-            updatedEl.pressTime = el.pressTime !== undefined ? el.pressTime : defaultPressTime;
-        } else {
-            delete updatedEl.pressTime;
-        }
-        newElements[index] = updatedEl;
-        setElements(newElements);
-    };
-
-    const toggleInlineSleep = (index: number) => {
-        if (isRecording) setIsRecording(false);
-        const newElements = [...elements];
-        const el = newElements[index];
-        if (el.type !== 'key') return;
-        if (el.inlineSleep !== undefined) {
-            delete el.inlineSleep;
-        } else {
-            el.inlineSleep = defaultDelay;
-        }
-        setElements(newElements);
-    };
-
-    const updateInlineSleep = (index: number, duration: number) => {
-        if (isRecording) setIsRecording(false);
-        const newElements = [...elements];
-        const el = newElements[index];
-        if (el.type !== 'key') return;
-        el.inlineSleep = Math.max(0, duration);
-        setElements(newElements);
-    };
-
-    const updatePressTime = (index: number, duration: number) => {
-        if (isRecording) setIsRecording(false);
-        const newElements = [...elements];
-        const el = newElements[index];
-        if (el.type !== 'key') return;
-        el.pressTime = Math.max(0, duration);
-        setElements(newElements);
-    };
-
-    const handleDragStart = (e: React.DragEvent, index: number) => {
-        if (isRecording) setIsRecording(false);
-        setDraggedIndex(index);
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/plain', index.toString());
-    };
-
-    const handleDragOver = (e: React.DragEvent, index: number) => {
-        e.preventDefault();
-        setDragOverIndex(index);
-    };
-
-    const handleDrop = (e: React.DragEvent, targetIndex: number) => {
-        if (isRecording) setIsRecording(false);
-        e.preventDefault();
-        if (draggedIndex === null || draggedIndex === targetIndex) {
-            setDraggedIndex(null);
-            setDragOverIndex(null);
-            return;
-        }
-        const newElements = [...elements];
-        const draggedItem = newElements[draggedIndex];
-        const targetItem = newElements[targetIndex];
-        if (draggedItem.type === 'sleep' && targetItem.type === 'key') {
-            newElements[targetIndex] = { ...targetItem, inlineSleep: draggedItem.duration || 10 };
-            newElements.splice(draggedIndex, 1);
-            setElements(newElements);
-        } else {
-            newElements.splice(draggedIndex, 1);
-            newElements.splice(targetIndex, 0, draggedItem);
-            setElements(newElements);
-        }
-        setDraggedIndex(null);
-        setDragOverIndex(null);
-    };
-
-    const duplicateElement = (index: number) => {
-        if (isRecording) setIsRecording(false);
-        const newElements = [...elements];
-        const elementToDuplicate = JSON.parse(JSON.stringify(newElements[index]));
-        newElements.splice(index + 1, 0, elementToDuplicate);
-        setElements(newElements);
-    };
-
-    const handleDragEnd = () => {
-        setDraggedIndex(null);
-        setDragOverIndex(null);
-    };
+    // Removed legacy drag and drop functions
 
     const [mouseDownOnOverlay, setMouseDownOnOverlay] = useState(false);
     const handleOverlayMouseDown = (e: React.MouseEvent) => {
@@ -337,7 +126,7 @@ export default function MacroEditorModal({ macro: initialMacro, onSave, onClose,
                                 </svg>
                                 Action
                             </button>
-                            <button className="btn btn-secondary btn-sm" onClick={() => { if (isRecording) setIsRecording(false); setElements([...elements, { type: 'sleep', duration: defaultDelay || 100 }]); }} disabled={isAtEventLimit} title={isAtEventLimit ? `Maximum actions reached (${maxEvents})` : undefined}>
+                            <button className="btn btn-secondary btn-sm" onClick={() => timelineRef.current?.addSleepBlock(defaultDelay || 100)} disabled={isAtEventLimit} title={isAtEventLimit ? `Maximum actions reached (${maxEvents})` : undefined}>
                                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '4px' }}>
                                     <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
                                 </svg>
@@ -381,7 +170,7 @@ export default function MacroEditorModal({ macro: initialMacro, onSave, onClose,
                                             <div className="config-delay-input"><input type="number" value={defaultPressTime === 0 ? '' : defaultPressTime} onChange={e => { if (isRecording) setIsRecording(false); setDefaultPressTime(e.target.value === '' ? 0 : parseInt(e.target.value) || 0); }} min="0" /></div>
                                         </div>
                                         <div className="config-dropdown-row" style={{ marginTop: '0.5rem' }}>
-                                            <button className="btn btn-sm btn-danger" style={{ width: '100%', padding: '0.4rem' }} onClick={async () => { if (await confirm('Clear Actions', 'Are you sure you want to clear all actions?')) { setElements([]); setShowConfigMenu(false); } }}>Clear all actions</button>
+                                            <button className="btn btn-sm btn-danger" style={{ width: '100%', padding: '0.4rem' }} onClick={async () => { if (await confirm('Clear Actions', 'Are you sure you want to clear all actions?')) { timelineRef.current?.clearAll(); setShowConfigMenu(false); } }}>Clear all actions</button>
                                         </div>
                                     </div>
                                 )}
@@ -390,55 +179,16 @@ export default function MacroEditorModal({ macro: initialMacro, onSave, onClose,
                     </div>
                 </div>
                 <div className="modal-body">
-                    <div className="macro-elements-list">
-                        {elements.length === 0 ? <div className="empty-state">No actions added yet.</div> : elements.map((el, i) => (
-                            <div key={i} className={`macro-element-row ${draggedIndex === i ? 'dragging' : ''} ${dragOverIndex === i && draggedIndex !== null && draggedIndex !== i ? (draggedIndex > i ? 'drag-over-top' : 'drag-over-bottom') : ''}`} draggable="true" onDragStart={(e) => handleDragStart(e, i)} onDragOver={(e) => handleDragOver(e, i)} onDragEnd={handleDragEnd} onDrop={(e) => handleDrop(e, i)}>
-                                <div className="element-content">
-                                    {el.type === 'key' ? (
-                                        <>
-                                            <button className={`btn-action-toggle ${(el.key >= MACRO_BASE && el.key < MACRO_BASE + 256) ? 'disabled' : ''}`} onClick={() => toggleAction(i)} disabled={el.key >= MACRO_BASE && el.key < MACRO_BASE + 256}>
-                                                {(!el.action || el.action === 'tap') && <ActionTapIcon />}
-                                                {el.action === 'press' && <ActionPressIcon />}
-                                                {el.action === 'release' && <ActionReleaseIcon />}
-                                            </button>
-                                            <div className="key-preview" onClick={() => { setEditingElementIndex(i); setIsKeyModalOpen(true); }}>{getKeyName(el.key, macros)}</div>
-                                            {(!el.action || el.action === 'tap') && !(el.key >= MACRO_BASE && el.key < MACRO_BASE + 256) && (
-                                                <div className="press-time-container">
-                                                    <span>Press for</span>
-                                                    <input type="number" value={el.pressTime === 0 ? '' : (el.pressTime ?? defaultPressTime)} onChange={e => updatePressTime(i, e.target.value === '' ? 0 : parseInt(e.target.value) || 0)} min="0" className="press-time-input" />
-                                                    <span>ms</span>
-                                                </div>
-                                            )}
-                                            <div className={`inline-sleep-container ${el.inlineSleep !== undefined ? 'expanded' : ''}`}>
-                                                <div className="inline-sleep-inner">
-                                                    <div className="inline-sleep-fields">
-                                                        <input type="number" value={el.inlineSleep === 0 ? '' : (el.inlineSleep ?? '')} onChange={e => updateInlineSleep(i, e.target.value === '' ? 0 : parseInt(e.target.value) || 0)} min="0" className="inline-sleep-input" />
-                                                        <span>ms</span>
-                                                    </div>
-                                                    <button className={`btn-action-toggle btn-moon-toggle ${el.inlineSleep !== undefined ? 'active' : ''}`} onClick={() => toggleInlineSleep(i)}><MoonIcon /></button>
-                                                </div>
-                                            </div>
-                                        </>
-                                    ) : (
-                                        <div className="sleep-preview">
-                                            <span>Sleep</span>
-                                            <input type="number" value={el.duration === 0 ? '' : el.duration} onChange={e => updateSleep(i, e.target.value === '' ? 0 : parseInt(e.target.value) || 0)} min="0" />
-                                            <span>ms</span>
-                                        </div>
-                                    )}
-                                </div>
-                                <div className="macro-element-actions">
-                                    <button className="btn-icon-sm btn-duplicate" onClick={() => duplicateElement(i)} title="Duplicate">
-                                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                                        </svg>
-                                    </button>
-                                    <button className="btn-remove" onClick={() => removeElement(i)}>&times;</button>
-                                </div>
-                            </div>
-                        ))}
-                        <div ref={listEndRef} />
+                    <div className="macro-elements-list" style={{ padding: 0, height: '100%', overflow: 'hidden' }}>
+                        <MacroTimelineEditor 
+                            ref={timelineRef}
+                            initialElements={initialMacro.elements || []}
+                            macros={macros}
+                            onChange={setElements}
+                            isRecording={isRecording}
+                            recordDelay={recordDelay}
+                            maxEvents={maxEvents}
+                        />
                     </div>
                 </div>
                 <div className="modal-footer">
@@ -449,7 +199,7 @@ export default function MacroEditorModal({ macro: initialMacro, onSave, onClose,
                     }}>Save</button>
                 </div>
                 {isModeModalOpen && <MacroModeModal macro={{ ...initialMacro, ...macroConfig }} onSave={(m) => setMacroConfig({ execMode: m.execMode, stackMax: m.stackMax, repeatCount: m.repeatCount })} onClose={() => setIsModeModalOpen(false)} />}
-                {isKeyModalOpen && <SearchableKeyModal currentValue={editingElementIndex !== null && elements[editingElementIndex].type === 'key' ? (elements[editingElementIndex] as any).key : 0} macros={macros} onSelect={handleSelectKey} onClose={() => setIsKeyModalOpen(false)} />}
+                {isKeyModalOpen && <SearchableKeyModal currentValue={0} macros={macros} onSelect={handleSelectKey} onClose={() => setIsKeyModalOpen(false)} />}
             </div>
         </div>,
         document.body
