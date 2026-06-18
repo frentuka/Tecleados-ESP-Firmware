@@ -1,0 +1,194 @@
+.macro-timeline-editor {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 300px;
+    background-color: var(--bg-surface, #1e1e24);
+    border: 1px solid var(--border-color, #333);
+    border-radius: 8px;
+    overflow: hidden;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    user-select: none;
+}
+
+.timeline-toolbar {
+    display: flex;
+    padding: 10px 16px;
+    gap: 16px;
+    border-bottom: 1px solid var(--border-color, #333);
+    background-color: var(--bg-panel, #2a2a35);
+    align-items: center;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    z-index: 10;
+}
+
+.timeline-toolbar .hint {
+    color: #888;
+    font-size: 12px;
+}
+
+.timeline-track-header {
+    height: 36px;
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--border-color, #333);
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    justify-content: space-between;
+    color: #e2e8f0;
+    font-size: 13px;
+    font-weight: 500;
+    background-color: var(--bg-surface, #1e1e24);
+    transition: background-color 0.2s;
+}
+
+.timeline-track-header:nth-child(even) {
+    background-color: rgba(255, 255, 255, 0.02);
+}
+
+.timeline-track-header:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+.timeline-track-row {
+    position: relative;
+    height: 36px;
+    border-bottom: 1px solid var(--border-color, #333);
+    background-color: transparent;
+}
+
+.timeline-track-row:nth-child(odd) {
+    background-color: rgba(0, 0, 0, 0.15);
+}
+
+.timeline-ruler {
+    height: 28px;
+    position: relative;
+    border-bottom: 1px solid var(--border-color, #333);
+    background-color: var(--bg-panel, #2a2a35);
+    color: #94a3b8;
+    font-size: 11px;
+    overflow: hidden;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    z-index: 5;
+}
+
+.timeline-ruler-tick {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    border-left: 1px solid #475569;
+    padding-left: 4px;
+    padding-top: 4px;
+}
+
+.timeline-ruler-subtick {
+    position: absolute;
+    bottom: 0;
+    height: 6px;
+    border-left: 1px solid #334155;
+}
+
+.timeline-block {
+    position: absolute;
+    height: 26px;
+    top: 5px;
+    border-radius: 4px;
+    cursor: grab;
+    display: flex;
+    align-items: center;
+    user-select: none;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.1);
+    transition: box-shadow 0.15s, filter 0.15s;
+    overflow: hidden;
+}
+
+.timeline-block:active {
+    cursor: grabbing;
+}
+
+.timeline-block.selected {
+    box-shadow: 0 0 0 2px #fff, 0 4px 8px rgba(0,0,0,0.3);
+    z-index: 10;
+}
+
+.timeline-block:hover {
+    filter: brightness(1.1);
+}
+
+.timeline-block-content {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 6px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #fff;
+    pointer-events: none;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+    white-space: nowrap;
+}
+
+.timeline-block.type-tap {
+    background: linear-gradient(180deg, #8b5cf6 0%, #6d28d9 100%);
+    border: 1px solid #5b21b6;
+}
+
+.timeline-block.type-hold {
+    background: linear-gradient(180deg, #3b82f6 0%, #1d4ed8 100%);
+    border: 1px solid #1e3a8a;
+}
+
+.timeline-block.type-press {
+    background: linear-gradient(180deg, #10b981 0%, #047857 100%);
+    border: 1px solid #064e3b;
+}
+
+.timeline-block.type-release {
+    background: linear-gradient(180deg, #ef4444 0%, #b91c1c 100%);
+    border: 1px solid #7f1d1d;
+}
+
+.timeline-block-resize-handle {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 10px;
+    cursor: ew-resize;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.15));
+    border-left: 1px solid rgba(255,255,255,0.1);
+}
+
+.timeline-block-resize-handle:hover {
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3));
+}
+
+.timeline-playhead {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background-color: #f43f5e;
+    z-index: 20;
+    pointer-events: none;
+    box-shadow: 0 0 6px #f43f5e;
+}
+
+.timeline-playhead-top {
+    position: absolute;
+    top: 0;
+    left: -5px;
+    width: 12px;
+    height: 12px;
+    background-color: #f43f5e;
+    clip-path: polygon(0 0, 100% 0, 100% 60%, 50% 100%, 0 60%);
+}
+
+.timeline-marquee {
+    position: absolute;
+    background-color: rgba(59, 130, 246, 0.2);
+    border: 1px solid rgba(59, 130, 246, 0.8);
+    pointer-events: none;
+    z-index: 30;
+}

@@ -5,6 +5,7 @@ import { elementsToTimeline, timelineToElements } from '../../utils/macroTimelin
 import TimelineTrackComponent from './TimelineTrack';
 import TimelineRuler from './TimelineRuler';
 import { BROWSER_CODE_TO_HID, getKeyName } from '../../KeyDefinitions';
+import './timeline.css';
 
 export interface MacroTimelineRef {
     addKeyBlock: (key: number) => void;
@@ -13,25 +14,56 @@ export interface MacroTimelineRef {
 }
 
 interface MacroTimelineEditorProps {
-    initialElements: MacroElement[];
+    elements: MacroElement[];
     macros: Macro[];
     onChange: (elements: MacroElement[]) => void;
     isRecording: boolean;
     recordDelay: boolean;
     maxEvents?: number;
+    isActiveView: boolean;
 }
 
 const MacroTimelineEditor = forwardRef<MacroTimelineRef, MacroTimelineEditorProps>(({ 
-    initialElements, 
+    elements, 
     macros, 
     onChange, 
     isRecording,
     recordDelay,
-    maxEvents
+    maxEvents,
+    isActiveView
 }, ref) => {
-    const [blocks, setBlocks] = useState<TimelineBlock[]>(() => elementsToTimeline(initialElements));
+    const lastElementsRef = useRef<MacroElement[]>(elements);
+    const pendingElementsRef = useRef<MacroElement[] | null>(null);
+
+    const [blocks, setBlocks] = useState<TimelineBlock[]>(() => elementsToTimeline(elements));
+    
+    // 1. Sync blocks from elements if elements changed EXTERNALLY
+    useEffect(() => {
+        // If the incoming elements are the exact array we just emitted, ignore them!
+        if (elements === lastElementsRef.current) return;
+        
+        if (isActiveView) {
+            setBlocks(elementsToTimeline(elements));
+            pendingElementsRef.current = null;
+        } else {
+            pendingElementsRef.current = elements;
+        }
+    }, [elements, isActiveView]);
+
+    // 2. Catch up when becoming active
+    useEffect(() => {
+        if (isActiveView && pendingElementsRef.current) {
+            setBlocks(elementsToTimeline(pendingElementsRef.current));
+            pendingElementsRef.current = null;
+        }
+    }, [isActiveView]);
     const [zoom, setZoom] = useState(1); // 1 = 1px per ms
-    const [selectedBlockId, setSelectedBlockId] = useState<string | undefined>();
+    const [selectedBlockIds, setSelectedBlockIds] = useState<Set<string>>(new Set());
+    
+    // Marquee state
+    const [isSelecting, setIsSelecting] = useState(false);
+    const [selectionBox, setSelectionBox] = useState<{ startX: number, startY: number, endX: number, endY: number } | null>(null);
+
     const scrollContainerRef = useRef<HTMLDivElement>(null);
     const containerInnerRef = useRef<HTMLDivElement>(null);
     const playheadRef = useRef<HTMLDivElement>(null);
@@ -53,49 +85,98 @@ const MacroTimelineEditor = forwardRef<MacroTimelineRef, MacroTimelineEditorProp
                 type: 'tap'
             }]);
         },
-        addSleepBlock: () => {
-            // Sleep blocks are not visible in the absolute timeline (they just create gaps).
-            // But dragging existing blocks effectively creates sleep.
-            // If the user presses "Add Delay", we don't have a specific track to put it on.
-            // Timeline paradigm doesn't use explicit sleep blocks.
-            // We can just shift the `maxTime` cursor for the NEXT added key.
-            // For now, we do nothing visually, because gaps are implicit.
+        addSleepBlock: (duration: number) => {
+            // Shift selected blocks right. If none selected, shift ALL blocks right by duration.
+            // If we are appending delay at the end, shifting all blocks is not what we want.
+            // Wait, "Add Delay" from the toolbar usually means we want a gap.
+            // If the user selects a block and clicks "Add Delay", shift everything starting from that block.
+            setBlocks(prev => {
+                let shiftThreshold = 0;
+                if (selectedBlockIds.size > 0) {
+                    const selectedBlocks = prev.filter(b => selectedBlockIds.has(b.id));
+                    shiftThreshold = Math.min(...selectedBlocks.map(b => b.startTime));
+                } else {
+                    // Shift everything that is after the current absolute max time? No, then delay does nothing.
+                    // Just shift ALL blocks right by 'duration' to insert a delay at the start.
+                    shiftThreshold = -1;
+                }
+                
+                return prev.map(b => ({
+                    ...b,
+                    startTime: b.startTime >= shiftThreshold ? b.startTime + duration : b.startTime
+                }));
+            });
         },
         clearAll: () => {
             setBlocks([]);
+            setSelectedBlockIds(new Set());
         }
     }));
 
-    // Sync back to parent whenever blocks change
+    // 3. Emit internal changes
     useEffect(() => {
-        const elements = timelineToElements(blocks);
-        onChange(elements);
-    }, [blocks]); // Remove onChange from dependency to prevent loop if parent regenerates function without useCallback
+        if (!isActiveView) return;
+        const newElements = timelineToElements(blocks);
+        lastElementsRef.current = newElements;
+        onChange(newElements);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [blocks]);
 
-    // Handle incoming block updates
     const handleBlockChange = (id: string, newStartTime: number, newDuration: number) => {
         setBlocks(prev => prev.map(b => 
             b.id === id ? { ...b, startTime: newStartTime, duration: newDuration } : b
         ));
     };
 
-    const handleRemoveTrack = (trackKey: number) => {
-        setBlocks(prev => prev.filter(b => b.key !== trackKey));
-        setSelectedBlockId(undefined);
+    const handleMoveBlocks = (blockIds: string[], deltaMs: number) => {
+        setBlocks(prev => {
+            const newBlocks = [...prev];
+            blockIds.forEach(id => {
+                const idx = newBlocks.findIndex(b => b.id === id);
+                if (idx !== -1) {
+                    const block = newBlocks[idx];
+                    newBlocks[idx] = { ...block, startTime: Math.max(0, block.startTime + deltaMs) };
+                }
+            });
+            return newBlocks;
+        });
     };
 
-    // Calculate total duration for ruler
+    const handleSelectBlock = (id: string, multi: boolean) => {
+        setSelectedBlockIds(prev => {
+            if (multi) {
+                const next = new Set(prev);
+                if (next.has(id)) next.delete(id);
+                else next.add(id);
+                return next;
+            } else {
+                return new Set([id]);
+            }
+        });
+    };
+
+    const handleRemoveTrack = (trackKey: number) => {
+        setBlocks(prev => {
+            const filtered = prev.filter(b => b.key !== trackKey);
+            return filtered;
+        });
+        setSelectedBlockIds(prev => {
+            const next = new Set(prev);
+            blocks.filter(b => b.key === trackKey).forEach(b => next.delete(b.id));
+            return next;
+        });
+    };
+
     const totalDuration = useMemo(() => {
-        let max = 1000; // Minimum 1 second width
+        let max = 1000;
         for (const b of blocks) {
             if (b.startTime + b.duration > max) {
                 max = b.startTime + b.duration;
             }
         }
-        return max + 500; // Add 500ms padding
+        return max + 500;
     }, [blocks]);
 
-    // Group blocks into tracks
     const tracks = useMemo(() => {
         const map = new Map<number, TimelineTrack>();
         for (const block of blocks) {
@@ -107,6 +188,73 @@ const MacroTimelineEditor = forwardRef<MacroTimelineRef, MacroTimelineEditorProp
         return Array.from(map.values()).sort((a, b) => a.key - b.key);
     }, [blocks]);
 
+    // Marquee selection logic
+    const handleContainerPointerDown = (e: React.PointerEvent) => {
+        if (e.target !== containerInnerRef.current && e.target !== scrollContainerRef.current) return;
+        if (e.button !== 0) return; // Only left click
+
+        e.preventDefault();
+        if (!e.shiftKey && !e.ctrlKey && !e.metaKey) {
+            setSelectedBlockIds(new Set());
+        }
+
+        const rect = containerInnerRef.current!.getBoundingClientRect();
+        const startX = e.clientX - rect.left;
+        const startY = e.clientY - rect.top;
+
+        setIsSelecting(true);
+        setSelectionBox({ startX, startY, endX: startX, endY: startY });
+
+        const onPointerMove = (moveEvent: PointerEvent) => {
+            const moveRect = containerInnerRef.current!.getBoundingClientRect();
+            setSelectionBox(prev => prev ? { ...prev, endX: moveEvent.clientX - moveRect.left, endY: moveEvent.clientY - moveRect.top } : null);
+        };
+
+        const onPointerUp = (upEvent: PointerEvent) => {
+            setIsSelecting(false);
+            setSelectionBox(prev => {
+                if (prev) {
+                    const minX = Math.min(prev.startX, prev.endX);
+                    const maxX = Math.max(prev.startX, prev.endX);
+                    const minY = Math.min(prev.startY, prev.endY);
+                    const maxY = Math.max(prev.startY, prev.endY);
+
+                    // Check which blocks intersect with the marquee box
+                    const newSelection = new Set(selectedBlockIds);
+                    tracks.forEach((track, tIdx) => {
+                        const trackTop = 28 + tIdx * 36; // 28 is ruler height, 36 is track height
+                        const trackBottom = trackTop + 36;
+                        
+                        if (trackBottom > minY && trackTop < maxY) {
+                            track.blocks.forEach(block => {
+                                const blockLeft = block.startTime * zoom;
+                                const blockRight = blockLeft + Math.max(block.duration * zoom, 8);
+                                
+                                if (blockRight > minX && blockLeft < maxX) {
+                                    newSelection.add(block.id);
+                                }
+                            });
+                        }
+                    });
+                    
+                    if (!upEvent.shiftKey && !upEvent.ctrlKey && !upEvent.metaKey && newSelection.size === selectedBlockIds.size) {
+                         // No new selection and no modifier, clear
+                    } else {
+                         setSelectedBlockIds(newSelection);
+                    }
+                }
+                return null;
+            });
+
+            window.removeEventListener('pointermove', onPointerMove);
+            window.removeEventListener('pointerup', onPointerUp);
+        };
+
+        window.addEventListener('pointermove', onPointerMove);
+        window.addEventListener('pointerup', onPointerUp);
+    };
+
+
     // Handle ctrl+wheel for zoom
     useEffect(() => {
         const el = scrollContainerRef.current;
@@ -114,7 +262,7 @@ const MacroTimelineEditor = forwardRef<MacroTimelineRef, MacroTimelineEditorProp
 
         const handleNativeWheel = (e: WheelEvent) => {
             if (e.ctrlKey) {
-                e.preventDefault(); // Prevent browser zoom
+                e.preventDefault();
                 const rect = el.getBoundingClientRect();
                 const mouseX = e.clientX - rect.left;
                 
@@ -155,7 +303,6 @@ const MacroTimelineEditor = forwardRef<MacroTimelineRef, MacroTimelineEditorProp
                     playheadRef.current.style.left = `${currentPx}px`;
                 }
 
-                // Update width of actively recorded blocks
                 recordingStateRef.current.activeKeys.forEach((val) => {
                     const blockEl = document.getElementById(val.id);
                     if (blockEl) {
@@ -164,7 +311,6 @@ const MacroTimelineEditor = forwardRef<MacroTimelineRef, MacroTimelineEditorProp
                     }
                 });
 
-                // Auto-expand container if playhead goes past current width
                 if (containerInnerRef.current) {
                     const currentMinWidth = parseFloat(containerInnerRef.current.style.minWidth || '0');
                     if (currentPx + 500 > currentMinWidth) {
@@ -172,7 +318,6 @@ const MacroTimelineEditor = forwardRef<MacroTimelineRef, MacroTimelineEditorProp
                     }
                 }
 
-                // Auto-scroll timeline to keep playhead in view
                 const el = scrollContainerRef.current;
                 if (el) {
                     const rect = el.getBoundingClientRect();
@@ -215,7 +360,6 @@ const MacroTimelineEditor = forwardRef<MacroTimelineRef, MacroTimelineEditorProp
             if (isRecording) {
                 recordingStateRef.current.startTimeAbsolute = Date.now();
                 
-                // Set the current timeline "cursor" to the end of the existing blocks
                 let maxTime = 0;
                 for (const b of blocks) {
                     if (b.startTime + b.duration > maxTime) maxTime = b.startTime + b.duration;
@@ -223,7 +367,6 @@ const MacroTimelineEditor = forwardRef<MacroTimelineRef, MacroTimelineEditorProp
                 recordingStateRef.current.lastEventTime = maxTime;
                 recordingStateRef.current.activeKeys.clear();
             } else {
-                // When stopping, finish any pending presses as tap/hold blocks
                 const now = Date.now();
                 const deltaMs = now - recordingStateRef.current.startTimeAbsolute;
                 const currentTime = recordDelay ? recordingStateRef.current.lastEventTime + deltaMs : recordingStateRef.current.lastEventTime;
@@ -253,7 +396,7 @@ const MacroTimelineEditor = forwardRef<MacroTimelineRef, MacroTimelineEditorProp
             if (hidCode !== undefined) {
                 e.preventDefault();
                 e.stopPropagation();
-                if (recordingStateRef.current.activeKeys.has(e.code)) return; // Auto-repeat ignore
+                if (recordingStateRef.current.activeKeys.has(e.code)) return;
 
                 const now = Date.now();
                 const deltaMs = now - recordingStateRef.current.startTimeAbsolute;
@@ -269,8 +412,8 @@ const MacroTimelineEditor = forwardRef<MacroTimelineRef, MacroTimelineEditorProp
                         trackId: `trk-${hidCode}`,
                         key: hidCode,
                         startTime,
-                        duration: 0, // Starts at 0, grows until keyup
-                        type: 'hold' // Defaults to hold until release
+                        duration: 0,
+                        type: 'hold'
                     }
                 ]);
             }
@@ -314,26 +457,21 @@ const MacroTimelineEditor = forwardRef<MacroTimelineRef, MacroTimelineEditorProp
         };
     }, [isRecording, recordDelay]);
 
-    const handleContainerClick = (e: React.MouseEvent) => {
-        if (e.target === e.currentTarget) {
-            setSelectedBlockId(undefined);
-        }
-    };
-
     return (
-        <div className="macro-timeline-editor" style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: '300px', backgroundColor: '#111', border: '1px solid #333', borderRadius: '4px' }}>
+        <div className="macro-timeline-editor">
             {/* Toolbar */}
-            <div className="timeline-toolbar" style={{ display: 'flex', padding: '8px', gap: '16px', borderBottom: '1px solid #333', backgroundColor: '#1a1a1a', alignItems: 'center' }}>
-                <span style={{ color: '#aaa', fontSize: '12px' }}><i>Ctrl+Scroll to Zoom</i></span>
+            <div className="timeline-toolbar">
+                <span className="hint">Ctrl+Scroll to Zoom</span>
+                <span className="hint">Drag box to multi-select</span>
                 <button 
                     className="btn btn-sm" 
                     onClick={() => {
-                        if (selectedBlockId) {
-                            setBlocks(prev => prev.filter(b => b.id !== selectedBlockId));
-                            setSelectedBlockId(undefined);
+                        if (selectedBlockIds.size > 0) {
+                            setBlocks(prev => prev.filter(b => !selectedBlockIds.has(b.id)));
+                            setSelectedBlockIds(new Set());
                         }
                     }}
-                    disabled={!selectedBlockId}
+                    disabled={selectedBlockIds.size === 0}
                 >
                     Delete Selected
                 </button>
@@ -343,25 +481,22 @@ const MacroTimelineEditor = forwardRef<MacroTimelineRef, MacroTimelineEditorProp
             </div>
 
             {/* Canvas Area */}
-            <div 
-                style={{ display: 'flex', flexGrow: 1, overflow: 'hidden' }}
-                onClick={handleContainerClick}
-            >
-                {/* Track Headers Container - fixed width */}
-                <div style={{ width: '150px', flexShrink: 0, backgroundColor: '#1a1a1a', zIndex: 2, borderRight: '1px solid #333', display: 'flex', flexDirection: 'column' }}>
-                    <div style={{ height: '24px', flexShrink: 0, borderBottom: '1px solid #444' }}></div> {/* Empty corner over ruler */}
-                    {tracks.length === 0 && <div style={{ padding: '8px', color: '#666', fontSize: '12px', fontStyle: 'italic' }}>No actions</div>}
+            <div style={{ display: 'flex', flexGrow: 1, overflow: 'hidden' }}>
+                {/* Track Headers */}
+                <div style={{ width: '150px', flexShrink: 0, backgroundColor: 'var(--bg-panel, #2a2a35)', zIndex: 12, borderRight: '1px solid var(--border-color, #333)', display: 'flex', flexDirection: 'column' }}>
+                    <div style={{ height: '28px', flexShrink: 0, borderBottom: '1px solid var(--border-color, #333)' }}></div>
+                    {tracks.length === 0 && <div style={{ padding: '12px', color: '#64748b', fontSize: '12px', fontStyle: 'italic', textAlign: 'center' }}>No actions recorded</div>}
                     {tracks.map(track => (
-                        <div key={track.id} style={{ height: '32px', flexShrink: 0, borderBottom: '1px solid #333', display: 'flex', alignItems: 'center', padding: '0 8px', justifyContent: 'space-between', color: '#ddd', fontSize: '12px' }}>
+                        <div key={track.id} className="timeline-track-header">
                             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                 {getKeyName(track.key, macros)}
                             </span>
                             <button 
                                 onClick={() => handleRemoveTrack(track.key)}
-                                style={{ background: 'none', border: 'none', color: '#888', cursor: 'pointer', padding: '0 4px' }}
+                                style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', padding: '4px' }}
                                 title="Remove Track"
                             >
-                                &times;
+                                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                             </button>
                         </div>
                     ))}
@@ -371,39 +506,39 @@ const MacroTimelineEditor = forwardRef<MacroTimelineRef, MacroTimelineEditorProp
                 <div 
                     ref={scrollContainerRef}
                     style={{ flexGrow: 1, overflowX: 'auto', overflowY: 'auto', position: 'relative' }}
+                    onPointerDown={handleContainerPointerDown}
                 >
-                    {/* Inner wrapper to enforce width */}
-                    <div ref={containerInnerRef} style={{ minWidth: `${totalDuration * zoom}px`, position: 'relative', minHeight: '100%' }}>
+                    <div ref={containerInnerRef} style={{ minWidth: `${totalDuration * zoom}px`, position: 'relative', minHeight: '100%', cursor: isSelecting ? 'crosshair' : 'default' }}>
                         <TimelineRuler pxPerMs={zoom} totalMs={totalDuration} />
                         
-                        <div style={{ position: 'absolute', top: '24px', left: 0, right: 0, bottom: 0 }}>
+                        <div style={{ position: 'absolute', top: '28px', left: 0, right: 0, bottom: 0 }}>
                             {tracks.map(track => (
                                 <TimelineTrackComponent 
                                     key={track.id}
                                     track={track}
                                     pxPerMs={zoom}
                                     onChangeBlock={handleBlockChange}
-                                    selectedBlockId={selectedBlockId}
-                                    onSelectBlock={setSelectedBlockId}
+                                    onMoveBlocks={handleMoveBlocks}
+                                    selectedBlockIds={selectedBlockIds}
+                                    onSelectBlock={handleSelectBlock}
                                 />
                             ))}
                         </div>
 
+                        {/* Marquee Selection Box */}
+                        {isSelecting && selectionBox && (
+                            <div className="timeline-marquee" style={{
+                                left: Math.min(selectionBox.startX, selectionBox.endX),
+                                top: Math.min(selectionBox.startY, selectionBox.endY),
+                                width: Math.abs(selectionBox.endX - selectionBox.startX),
+                                height: Math.abs(selectionBox.endY - selectionBox.startY)
+                            }} />
+                        )}
+
                         {/* Playhead */}
-                        <div 
-                            ref={playheadRef}
-                            style={{
-                                display: 'none',
-                                position: 'absolute',
-                                top: 0,
-                                bottom: 0,
-                                width: '2px',
-                                backgroundColor: 'red',
-                                zIndex: 10,
-                                pointerEvents: 'none',
-                                boxShadow: '0 0 4px rgba(255,0,0,0.5)'
-                            }}
-                        />
+                        <div ref={playheadRef} className="timeline-playhead">
+                            <div className="timeline-playhead-top" />
+                        </div>
                     </div>
                 </div>
             </div>
@@ -411,4 +546,4 @@ const MacroTimelineEditor = forwardRef<MacroTimelineRef, MacroTimelineEditorProp
     );
 });
 
-export default MacroTimelineEditor;
+export default React.memo(MacroTimelineEditor);

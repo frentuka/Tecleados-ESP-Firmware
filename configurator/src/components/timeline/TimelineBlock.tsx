@@ -5,30 +5,45 @@ interface TimelineBlockProps {
     block: TimelineBlock;
     pxPerMs: number;
     onChange: (id: string, newStartTime: number, newDuration: number) => void;
-    onSelect?: (id: string) => void;
-    isSelected?: boolean;
+    onMove: (ids: string[], deltaMs: number) => void;
+    onSelect: (id: string, multi: boolean) => void;
+    isSelected: boolean;
+    selectedIds: Set<string>;
 }
 
-export default function TimelineBlockComponent({ block, pxPerMs, onChange, onSelect, isSelected }: TimelineBlockProps) {
+export default function TimelineBlockComponent({ block, pxPerMs, onChange, onMove, onSelect, isSelected, selectedIds }: TimelineBlockProps) {
     const blockRef = useRef<HTMLDivElement>(null);
     const leftPx = block.startTime * pxPerMs;
-    // For visual purposes, we give 'press' and 'release' a minimum visual width, 
-    // but tap and hold get their actual width (with a minimum so they are clickable)
     const rawWidthPx = block.duration * pxPerMs;
     const widthPx = Math.max(rawWidthPx, 8); // Minimum 8px wide
 
+    const snapDelta = (ms: number) => {
+        const step = pxPerMs > 0.5 ? 10 : 50;
+        return Math.round(ms / step) * step;
+    };
+
     const handlePointerDown = (e: React.PointerEvent) => {
-        if (onSelect) onSelect(block.id);
-        
         e.stopPropagation();
+        
+        const isMulti = e.shiftKey || e.ctrlKey || e.metaKey;
+        if (!isSelected) {
+            onSelect(block.id, isMulti);
+        }
+
         const startClientX = e.clientX;
-        const initialStartTime = block.startTime;
+        const targetIds = isSelected || isMulti ? Array.from(selectedIds.has(block.id) ? selectedIds : new Set([...selectedIds, block.id])) : [block.id];
+
+        let accumulatedDeltaMs = 0;
 
         const onPointerMove = (moveEvent: PointerEvent) => {
             const deltaX = moveEvent.clientX - startClientX;
-            const deltaMs = deltaX / pxPerMs;
-            const newStartTime = Math.max(0, initialStartTime + deltaMs);
-            onChange(block.id, newStartTime, block.duration);
+            const deltaMs = snapDelta(deltaX / pxPerMs);
+            
+            if (deltaMs !== accumulatedDeltaMs) {
+                const step = deltaMs - accumulatedDeltaMs;
+                accumulatedDeltaMs = deltaMs;
+                onMove(targetIds, step);
+            }
         };
 
         const onPointerUp = () => {
@@ -41,17 +56,19 @@ export default function TimelineBlockComponent({ block, pxPerMs, onChange, onSel
     };
 
     const handleResizePointerDown = (e: React.PointerEvent) => {
-        if (block.type === 'press' || block.type === 'release') return; // Cannot resize these
+        if (block.type === 'press' || block.type === 'release') return;
         
         e.stopPropagation();
-        if (onSelect) onSelect(block.id);
+        if (!isSelected) {
+            onSelect(block.id, false);
+        }
 
         const startClientX = e.clientX;
         const initialDuration = block.duration;
 
         const onPointerMove = (moveEvent: PointerEvent) => {
             const deltaX = moveEvent.clientX - startClientX;
-            const deltaMs = deltaX / pxPerMs;
+            const deltaMs = snapDelta(deltaX / pxPerMs);
             const newDuration = Math.max(0, initialDuration + deltaMs); // Min 0ms
             onChange(block.id, block.startTime, newDuration);
         };
@@ -65,53 +82,44 @@ export default function TimelineBlockComponent({ block, pxPerMs, onChange, onSel
         window.addEventListener('pointerup', onPointerUp);
     };
 
-    let bgColor = 'var(--accent-color, #6436b5)';
-    if (block.type === 'press') bgColor = '#2a7a3b';
-    if (block.type === 'release') bgColor = '#d94141';
+    // Icons
+    const renderIcon = () => {
+        switch (block.type) {
+            case 'tap':
+                return <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="3"></circle></svg>;
+            case 'hold':
+                return <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg>;
+            case 'press':
+                return <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12l7 7 7-7"></path></svg>;
+            case 'release':
+                return <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5M5 12l7-7 7 7"></path></svg>;
+            default:
+                return null;
+        }
+    };
 
     return (
         <div 
             id={block.id}
             ref={blockRef}
-            className={`timeline-block ${isSelected ? 'selected' : ''}`}
+            className={`timeline-block type-${block.type} ${isSelected ? 'selected' : ''}`}
             style={{
-                position: 'absolute',
                 left: `${leftPx}px`,
-                width: `${widthPx}px`,
-                height: '24px',
-                top: '4px',
-                backgroundColor: bgColor,
-                borderRadius: '4px',
-                cursor: 'grab',
-                opacity: 0.9,
-                display: 'flex',
-                alignItems: 'center',
-                boxShadow: isSelected ? '0 0 0 2px #fff' : 'none',
-                userSelect: 'none'
+                width: `${widthPx}px`
             }}
             onPointerDown={handlePointerDown}
+            title={`${block.type} (${block.startTime}ms - ${block.startTime + block.duration}ms)`}
         >
-            <div style={{ overflow: 'hidden', whiteSpace: 'nowrap', fontSize: '10px', color: '#fff', padding: '0 4px', pointerEvents: 'none' }}>
-                {block.type === 'tap' && 'Tap'}
-                {block.type === 'hold' && 'Hold'}
-                {block.type === 'press' && 'Press'}
-                {block.type === 'release' && 'Release'}
+            <div className="timeline-block-content">
+                {renderIcon()}
+                {widthPx > 30 && (
+                    <span style={{ textTransform: 'capitalize' }}>{block.type}</span>
+                )}
             </div>
             
             {(block.type === 'tap' || block.type === 'hold') && (
                 <div 
                     className="timeline-block-resize-handle"
-                    style={{
-                        position: 'absolute',
-                        right: 0,
-                        top: 0,
-                        bottom: 0,
-                        width: '8px',
-                        cursor: 'ew-resize',
-                        backgroundColor: 'rgba(255,255,255,0.2)',
-                        borderTopRightRadius: '4px',
-                        borderBottomRightRadius: '4px'
-                    }}
                     onPointerDown={handleResizePointerDown}
                 />
             )}
