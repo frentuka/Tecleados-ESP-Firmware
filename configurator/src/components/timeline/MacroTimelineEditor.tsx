@@ -447,7 +447,7 @@ const MacroTimelineEditor = forwardRef<MacroTimelineRef, MacroTimelineEditorProp
             }
         };
 
-        if (isRecording) {
+        if (isRecording && isActiveView) {
             window.addEventListener('keydown', handleKeyDown, { capture: true });
             window.addEventListener('keyup', handleKeyUp, { capture: true });
         }
@@ -455,7 +455,7 @@ const MacroTimelineEditor = forwardRef<MacroTimelineRef, MacroTimelineEditorProp
             window.removeEventListener('keydown', handleKeyDown, { capture: true });
             window.removeEventListener('keyup', handleKeyUp, { capture: true });
         };
-    }, [isRecording, recordDelay]);
+    }, [isRecording, recordDelay, isActiveView]);
 
     return (
         <div className="macro-timeline-editor">

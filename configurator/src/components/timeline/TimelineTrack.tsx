@@ -1,4 +1,3 @@
-import React from 'react';
 import type { TimelineTrack as TrackType } from '../../types/timeline';
 import TimelineBlockComponent from './TimelineBlock';
 

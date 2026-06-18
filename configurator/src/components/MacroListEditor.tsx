@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useImperativeHandle, forwardRef } from 'react';
 import type { MacroElement, Macro, MacroAction } from '../types/macros';
 import { getKeyName, MACRO_BASE, BROWSER_CODE_TO_HID } from '../KeyDefinitions';
-import { ActionTapIcon, ActionPressIcon, ActionReleaseIcon, MoonIcon } from './Icons';
+import { ActionTapIcon, ActionPressIcon, ActionReleaseIcon } from './Icons';
 
 export interface MacroListRef {
     addKeyBlock: (key: number) => void;
@@ -15,13 +15,14 @@ export interface MacroListRef {
 interface MacroListEditorProps {
     elements: MacroElement[];
     macros: Macro[];
-    onChange: (elements: MacroElement[]) => void;
+    onChange: React.Dispatch<React.SetStateAction<MacroElement[]>>;
     isRecording: boolean;
     recordDelay: boolean;
     maxEvents?: number;
     defaultPressTime: number;
     defaultDelay: number;
     onRequestKeyModal: (index: number | null) => void;
+    isActiveView?: boolean;
 }
 
 const MacroListEditor = forwardRef<MacroListRef, MacroListEditorProps>(({
@@ -33,7 +34,8 @@ const MacroListEditor = forwardRef<MacroListRef, MacroListEditorProps>(({
     maxEvents,
     defaultPressTime,
     defaultDelay,
-    onRequestKeyModal
+    onRequestKeyModal,
+    isActiveView = true
 }, ref) => {
     const setElements = (updater: any) => {
         const nextElements = typeof updater === 'function' ? updater(elements) : updater;
@@ -61,10 +63,10 @@ const MacroListEditor = forwardRef<MacroListRef, MacroListEditorProps>(({
             if (!isMacro) {
                 newEl.pressTime = defaultPressTime;
             }
-            setElements(prev => [...prev, newEl]);
+            setElements((prev: MacroElement[]) => [...prev, newEl]);
         },
         addSleepBlock: (duration: number) => {
-            setElements(prev => [...prev, { type: 'sleep', duration }]);
+            setElements((prev: MacroElement[]) => [...prev, { type: 'sleep', duration }]);
         },
         clearAll: () => {
             setElements([]);
@@ -75,7 +77,7 @@ const MacroListEditor = forwardRef<MacroListRef, MacroListEditorProps>(({
         getEditingIndex: () => editingIndex,
         commitKeyEdit: (key: number) => {
             if (editingIndex !== null) {
-                setElements(prev => {
+                setElements((prev: MacroElement[]) => {
                     const newElements = [...prev];
                     const oldEl = newElements[editingIndex];
                     newElements[editingIndex] = { ...oldEl, type: 'key', key };
@@ -111,7 +113,7 @@ const MacroListEditor = forwardRef<MacroListRef, MacroListEditorProps>(({
                 recordingStateRef.current.activeKeys.add(e.code);
                 const now = Date.now();
                 const diff = recordingStateRef.current.lastEventTime > 0 ? now - recordingStateRef.current.lastEventTime : 0;
-                setElements(prev => {
+                setElements((prev: MacroElement[]) => {
                     if (maxEvents !== undefined && prev.length >= maxEvents) return prev;
                     const newEls = [...prev];
                     if (recordDelay && diff > 0) {
@@ -140,7 +142,7 @@ const MacroListEditor = forwardRef<MacroListRef, MacroListEditorProps>(({
                 recordingStateRef.current.activeKeys.delete(e.code);
                 const now = Date.now();
                 const diff = recordingStateRef.current.lastEventTime > 0 ? now - recordingStateRef.current.lastEventTime : 0;
-                setElements(prev => {
+                setElements((prev: MacroElement[]) => {
                     if (maxEvents !== undefined && prev.length >= maxEvents) return prev;
                     const newEls = [...prev];
                     if (recordDelay && diff > 0) {
@@ -160,7 +162,7 @@ const MacroListEditor = forwardRef<MacroListRef, MacroListEditorProps>(({
             }
         };
 
-        if (isRecording) {
+        if (isRecording && isActiveView) {
             window.addEventListener('keydown', handleKeyDown, { capture: true });
             window.addEventListener('keyup', handleKeyUp, { capture: true });
         }
@@ -168,16 +170,16 @@ const MacroListEditor = forwardRef<MacroListRef, MacroListEditorProps>(({
             window.removeEventListener('keydown', handleKeyDown, { capture: true });
             window.removeEventListener('keyup', handleKeyUp, { capture: true });
         };
-    }, [isRecording, recordDelay, maxEvents]);
+    }, [isRecording, recordDelay, maxEvents, isActiveView]);
 
     const removeElement = (index: number) => {
-        setElements(prev => prev.filter((_, i) => i !== index));
+        setElements((prev: MacroElement[]) => prev.filter((_, i) => i !== index));
     };
 
     const MAX_DELAY = 4294967295;
 
     const updateSleep = (index: number, duration: number) => {
-        setElements(prev => {
+        setElements((prev: MacroElement[]) => {
             const newElements = [...prev];
             newElements[index] = { type: 'sleep', duration: Math.min(MAX_DELAY, Math.max(0, duration)) };
             return newElements;
@@ -185,7 +187,7 @@ const MacroListEditor = forwardRef<MacroListRef, MacroListEditorProps>(({
     };
 
     const toggleAction = (index: number) => {
-        setElements(prev => {
+        setElements((prev: MacroElement[]) => {
             const el = prev[index];
             if (el.type !== 'key') return prev;
             if (el.key >= MACRO_BASE && el.key < MACRO_BASE + 256) return prev;
@@ -207,7 +209,7 @@ const MacroListEditor = forwardRef<MacroListRef, MacroListEditorProps>(({
     };
 
     const toggleInlineSleep = (index: number) => {
-        setElements(prev => {
+        setElements((prev: MacroElement[]) => {
             const newElements = [...prev];
             const el = { ...newElements[index] };
             if (el.type !== 'key') return prev;
@@ -222,7 +224,7 @@ const MacroListEditor = forwardRef<MacroListRef, MacroListEditorProps>(({
     };
 
     const updateInlineSleep = (index: number, duration: number) => {
-        setElements(prev => {
+        setElements((prev: MacroElement[]) => {
             const newElements = [...prev];
             const el = { ...newElements[index] };
             if (el.type !== 'key') return prev;
@@ -233,7 +235,7 @@ const MacroListEditor = forwardRef<MacroListRef, MacroListEditorProps>(({
     };
 
     const updatePressTime = (index: number, duration: number) => {
-        setElements(prev => {
+        setElements((prev: MacroElement[]) => {
             const newElements = [...prev];
             const el = { ...newElements[index] };
             if (el.type !== 'key') return prev;
@@ -261,7 +263,7 @@ const MacroListEditor = forwardRef<MacroListRef, MacroListEditorProps>(({
             setDragOverIndex(null);
             return;
         }
-        setElements(prev => {
+        setElements((prev: MacroElement[]) => {
             const newElements = [...prev];
             const draggedItem = newElements[draggedIndex];
             const targetItem = newElements[targetIndex];
@@ -280,7 +282,7 @@ const MacroListEditor = forwardRef<MacroListRef, MacroListEditorProps>(({
     };
 
     const duplicateElement = (index: number) => {
-        setElements(prev => {
+        setElements((prev: MacroElement[]) => {
             const newElements = [...prev];
             const elementToDuplicate = JSON.parse(JSON.stringify(newElements[index]));
             newElements.splice(index + 1, 0, elementToDuplicate);

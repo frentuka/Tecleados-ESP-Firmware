@@ -4,7 +4,7 @@ import type { Macro, MacroElement } from '../types/macros';
 import SearchableKeyModal from './SearchableKeyModal';
 import { useConfirm } from '../hooks/useConfirm';
 import MacroModeModal from './MacroModeModal';
-import MacroTimelineEditor, { type MacroTimelineRef } from './timeline/MacroTimelineEditor';
+import MacroTimelineEditor from './timeline/MacroTimelineEditor';
 import MacroListEditor, { type MacroListRef } from './MacroListEditor';
 
 interface MacroEditorModalProps {
@@ -331,6 +331,7 @@ export default function MacroEditorModal({ macro: initialMacro, onSave, onClose,
                                     defaultDelay={defaultDelay}
                                     defaultPressTime={defaultPressTime}
                                     onRequestKeyModal={handleRequestKeyModal}
+                                    isActiveView={viewMode === 'list'}
                                 />
                             </div>
                             <div className="macro-elements-list" style={{ display: viewMode === 'timeline' ? 'flex' : 'none', padding: 0, flex: 1, overflow: 'hidden', animation: 'viewFadeIn 0.25s cubic-bezier(0.2, 0.8, 0.2, 1)' }}>
@@ -355,7 +356,7 @@ export default function MacroEditorModal({ macro: initialMacro, onSave, onClose,
                         onSave({ ...initialMacro, ...macroConfig, name, elements: filteredElements });
                     }}>Save</button>
                 </div>
-                {isModeModalOpen && <MacroModeModal macro={{ ...initialMacro, ...macroConfig }} onSave={(m) => setMacroConfig({ execMode: m.execMode, stackMax: m.stackMax, repeatCount: m.repeatCount })} onClose={() => setIsModeModalOpen(false)} />}
+                {isModeModalOpen && <MacroModeModal macro={{ ...initialMacro, ...macroConfig }} onSave={(m) => setMacroConfig({ execMode: m.execMode ?? 0, stackMax: m.stackMax ?? 0, repeatCount: m.repeatCount ?? 0 })} onClose={() => setIsModeModalOpen(false)} />}
                 {isKeyModalOpen && (
                     <SearchableKeyModal
                         currentValue={0}
