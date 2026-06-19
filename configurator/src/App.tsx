@@ -454,7 +454,7 @@ function App() {
   return (
     <div className="app-container">
       <Background3D />
-      
+
 
 
       <header className="main-header">
@@ -543,7 +543,7 @@ function App() {
                 isActive={sidebarTab === 'macros'}
               />
             </div>
-            
+
             <div className={`sidebar-tab-content ${sidebarTab === 'ckeys' ? 'active' : ''}`}>
               <CustomKeysDashboard
                 customKeys={customKeys}

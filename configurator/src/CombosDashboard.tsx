@@ -538,16 +538,17 @@ export default function CombosDashboard({ combos, comboLimits, macros, isDevelop
                         <div className="empty-state">No combos defined yet.</div>
                     ) : (
                         sortedCombos.map((c, index) => (
-                            <ComboCard
-                                key={c.id}
-                                combo={c}
-                                index={index}
-                                isSelected={selected?.id === c.id}
-                                onClick={() => setSelected(c)}
-                                onDelete={handleDelete}
-                                macros={macros}
-                                isDeveloperMode={isDeveloperMode}
-                            />
+                            <div key={c.id} style={{ '--stagger-idx': index } as React.CSSProperties}>
+                                <ComboCard
+                                    combo={c}
+                                    index={index}
+                                    isSelected={selected?.id === c.id}
+                                    onClick={() => setSelected(c)}
+                                    onDelete={handleDelete}
+                                    macros={macros}
+                                    isDeveloperMode={isDeveloperMode}
+                                />
+                            </div>
                         ))
                     )}
                 </div>

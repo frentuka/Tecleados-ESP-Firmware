@@ -264,11 +264,12 @@ export default function MacrosDashboard({
                     <div className="empty-state">No macros defined yet.</div>
                 ) : (
                     <div className="macro-cards-list">
-                        {sortedMacros.map(m => (
+                        {sortedMacros.map((m, index) => (
                             <div
                                 key={m.id}
                                 ref={el => { if (el) cardRefs.current.set(m.id, el); else cardRefs.current.delete(m.id); }}
                                 className={`macro-card ${busyMacroIds.has(m.id) ? 'macro-card-busy' : ''} ${activeHighlight === m.id ? 'macro-card-highlighted' : ''}`}
+                                style={{ '--stagger-idx': index } as React.CSSProperties}
                                 onClick={() => !busyMacroIds.has(m.id) && handleEdit(m)}
                             >
                                 {busyMacroIds.has(m.id) && (

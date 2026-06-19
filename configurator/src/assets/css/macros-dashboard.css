@@ -83,12 +83,32 @@
   overflow: hidden;
   gap: 1rem;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  opacity: 1;
+  transform: none;
+}
+
+.sidebar-tab-content.active .macro-card {
+  animation: staggerSlideIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  animation-delay: calc(0.15s + var(--stagger-idx, 0) * 0.04s);
+}
+
+@keyframes staggerSlideIn {
+  0% {
+    opacity: 0;
+    transform: translateX(20px) scale(0.96);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
 }
 
 .macro-card:hover {
-  background: rgba(22, 27, 34, 0.9);
-  border-color: rgba(255, 255, 255, 0.2);
-  transform: translateX(4px);
+  background: rgba(35, 45, 60, 0.95);
+  border-color: rgba(88, 166, 255, 0.4);
+  transform: translateX(4px) scale(1.01);
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.4), 0 0 15px rgba(88, 166, 255, 0.15);
+  z-index: 2;
 }
 
 .macro-card-content-wrapper {

@@ -654,11 +654,12 @@ export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMod
                     {sortedKeys.length === 0 ? (
                         <div className="empty-state">No custom keys defined yet.</div>
                     ) : (
-                        sortedKeys.map(ck => (
+                        sortedKeys.map((ck, index) => (
                             <div
                                 key={ck.id}
                                 ref={el => { if (el) cardRefs.current.set(ck.id, el); else cardRefs.current.delete(ck.id); }}
                                 className={activeHighlight === ck.id ? 'macro-card-highlighted-wrapper' : ''}
+                                style={{ '--stagger-idx': index } as React.CSSProperties}
                             >
                                 <CKeyCard
                                     ck={ck}
