@@ -88,7 +88,7 @@ export default function TimelineBlockComponent({ block, pxPerMs, onChange, onMov
             case 'tap':
                 return <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="3"></circle></svg>;
             case 'hold':
-                return <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg>;
+                return null;
             case 'press':
                 return <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12l7 7 7-7"></path></svg>;
             case 'release':
@@ -112,9 +112,6 @@ export default function TimelineBlockComponent({ block, pxPerMs, onChange, onMov
         >
             <div className="timeline-block-content">
                 {renderIcon()}
-                {widthPx > 30 && (
-                    <span style={{ textTransform: 'capitalize' }}>{block.type}</span>
-                )}
             </div>
             
             {(block.type === 'tap' || block.type === 'hold') && (

@@ -350,6 +350,7 @@ const MacroTimelineEditor = forwardRef<MacroTimelineRef, MacroTimelineEditorProp
         isRecording,
         lastEventTime: 0,
         startTimeAbsolute: 0,
+        hasRecordedFirstEvent: false,
         activeKeys: new Map<string, { id: string, startTime: number }>(),
         nextBlockId: Date.now()
     });
@@ -359,6 +360,7 @@ const MacroTimelineEditor = forwardRef<MacroTimelineRef, MacroTimelineEditorProp
             recordingStateRef.current.isRecording = isRecording;
             if (isRecording) {
                 recordingStateRef.current.startTimeAbsolute = Date.now();
+                recordingStateRef.current.hasRecordedFirstEvent = false;
                 
                 let maxTime = 0;
                 for (const b of blocks) {
@@ -399,7 +401,15 @@ const MacroTimelineEditor = forwardRef<MacroTimelineRef, MacroTimelineEditorProp
                 if (recordingStateRef.current.activeKeys.has(e.code)) return;
 
                 const now = Date.now();
-                const deltaMs = now - recordingStateRef.current.startTimeAbsolute;
+                let deltaMs = now - recordingStateRef.current.startTimeAbsolute;
+                
+                // If the macro is empty and this is the very first keystroke, don't record the leading delay
+                if (!recordingStateRef.current.hasRecordedFirstEvent && recordingStateRef.current.lastEventTime === 0) {
+                    recordingStateRef.current.startTimeAbsolute = now;
+                    deltaMs = 0;
+                }
+                recordingStateRef.current.hasRecordedFirstEvent = true;
+
                 const startTime = recordDelay ? recordingStateRef.current.lastEventTime + deltaMs : recordingStateRef.current.lastEventTime;
                 
                 const blockId = `blk-${nextBlockIdRef.current++}`;
@@ -460,24 +470,26 @@ const MacroTimelineEditor = forwardRef<MacroTimelineRef, MacroTimelineEditorProp
     return (
         <div className="macro-timeline-editor">
             {/* Toolbar */}
-            <div className="timeline-toolbar">
-                <span className="hint">Ctrl+Scroll to Zoom</span>
-                <span className="hint">Drag box to multi-select</span>
-                <button 
-                    className="btn btn-sm" 
-                    onClick={() => {
-                        if (selectedBlockIds.size > 0) {
-                            setBlocks(prev => prev.filter(b => !selectedBlockIds.has(b.id)));
-                            setSelectedBlockIds(new Set());
-                        }
-                    }}
-                    disabled={selectedBlockIds.size === 0}
-                >
-                    Delete Selected
-                </button>
-                <div style={{ marginLeft: 'auto', color: '#888', fontSize: '12px' }}>
+            <div className="timeline-toolbar" style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
+                <div style={{ color: '#888', fontSize: '12px' }}>
                     {blocks.length} events {maxEvents ? `/ ${maxEvents}` : ''}
                 </div>
+                {selectedBlockIds.size > 0 && (
+                    <button 
+                        className="btn-icon btn-danger" 
+                        style={{ marginLeft: 'auto', padding: '4px', height: 'auto', width: 'auto' }}
+                        onClick={() => {
+                            setBlocks(prev => prev.filter(b => !selectedBlockIds.has(b.id)));
+                            setSelectedBlockIds(new Set());
+                        }}
+                        title="Delete Selected"
+                    >
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                        </svg>
+                    </button>
+                )}
             </div>
 
             {/* Canvas Area */}

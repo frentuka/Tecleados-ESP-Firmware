@@ -28,7 +28,7 @@ interface MacroListEditorProps {
 const MacroListEditor = forwardRef<MacroListRef, MacroListEditorProps>(({
     elements,
     macros,
-    onChange,
+    onChange: setElements,
     isRecording,
     recordDelay,
     maxEvents,
@@ -37,10 +37,6 @@ const MacroListEditor = forwardRef<MacroListRef, MacroListEditorProps>(({
     onRequestKeyModal,
     isActiveView = true
 }, ref) => {
-    const setElements = (updater: any) => {
-        const nextElements = typeof updater === 'function' ? updater(elements) : updater;
-        onChange(nextElements);
-    };
 
     const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
     const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
