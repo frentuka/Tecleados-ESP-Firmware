@@ -141,6 +141,38 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  // Sidebar Keyboard Shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isModifier = e.ctrlKey || e.metaKey;
+      if (!isModifier) return;
+
+      if (e.key === '1') {
+        e.preventDefault();
+        setSidebarTab('macros');
+      } else if (e.key === '2') {
+        e.preventDefault();
+        setSidebarTab('ckeys');
+      } else if (e.key === '3') {
+        e.preventDefault();
+        setSidebarTab('combos');
+      } else if (e.key.toLowerCase() === 'f') {
+        // Only trigger if sidebar is already open
+        if (sidebarTab !== null) {
+          e.preventDefault();
+          const searchInput = document.querySelector('.sidebar-tab-content.active .sidebar-search-input') as HTMLInputElement | null;
+          if (searchInput) {
+            searchInput.focus();
+            searchInput.select();
+          }
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [sidebarTab]);
+
   // Subscribe to HIDService connection state (auto-reconnect, disconnect detection)
   useEffect(() => {
     const handler = (connected: boolean) => {
