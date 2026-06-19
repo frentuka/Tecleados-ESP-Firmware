@@ -20,6 +20,7 @@ interface MacrosDashboardProps {
     onReload: () => void;
     onFetchSingleMacro: (id: number) => Promise<Macro | null>;
     highlightId?: number | null;
+    isActive?: boolean;
 }
 
 export default function MacrosDashboard({ 
@@ -31,6 +32,7 @@ export default function MacrosDashboard({
     onReload, 
     onFetchSingleMacro,
     highlightId,
+    isActive = true,
 }: MacrosDashboardProps) {
     const { showNotification } = useNotificationStore();
     const [editingMacro, setEditingMacro] = useState<Macro | null>(null);
@@ -50,6 +52,13 @@ export default function MacrosDashboard({
     const importGuardRef = useRef(false);
     const cardRefs = useRef<Map<number, HTMLDivElement>>(new Map());
     const [activeHighlight, setActiveHighlight] = useState<number | null>(null);
+    const [searchTerm, setSearchTerm] = useState('');
+
+    useEffect(() => {
+        if (!isActive) {
+            setSearchTerm('');
+        }
+    }, [isActive]);
 
     // Auto-scroll and highlight when highlightId changes
     useEffect(() => {
@@ -66,8 +75,13 @@ export default function MacrosDashboard({
     const isAtMacroLimit = macroLimits != null && macros.length >= macroLimits.maxMacros;
 
     const sortedMacros = useMemo(() => {
-        return [...macros].sort((a, b) => a.name.localeCompare(b.name));
-    }, [macros]);
+        let result = [...macros];
+        if (searchTerm.trim()) {
+            const lower = searchTerm.toLowerCase();
+            result = result.filter(m => m.name.toLowerCase().includes(lower));
+        }
+        return result.sort((a, b) => a.name.localeCompare(b.name));
+    }, [macros, searchTerm]);
 
     const markBusy = (id: number, label: string) => {
         setBusyMacroIds(prev => new Map(prev).set(id, label));
@@ -233,6 +247,16 @@ export default function MacrosDashboard({
                         )}
                     </div>
                 </div>
+            </div>
+
+            <div className="sidebar-search-container">
+                <input 
+                    type="text" 
+                    className="sidebar-search-input" 
+                    placeholder="Search macros..." 
+                    value={searchTerm} 
+                    onChange={e => setSearchTerm(e.target.value)} 
+                />
             </div>
 
             <div className="ckey-list-full list-scroll-area">

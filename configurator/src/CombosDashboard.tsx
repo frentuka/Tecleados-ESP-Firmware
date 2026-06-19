@@ -19,6 +19,7 @@ interface CombosDashboardProps {
     onSave: (combo: Combo) => Promise<void>;
     onDelete: (id: number) => Promise<void>;
     onReload?: () => void;
+    isActive?: boolean;
 }
 
 const LAYER_NAMES = ['Base', 'FN1', 'FN2', 'FN3'];
@@ -338,7 +339,7 @@ function ComboEditorModal({ combo, index, maxCombos, macros, isSaving, error, on
     );
 }
 
-export default function CombosDashboard({ combos, comboLimits, macros, isDeveloperMode, onSave, onDelete, onReload }: CombosDashboardProps) {
+export default function CombosDashboard({ combos, comboLimits, macros, isDeveloperMode, onSave, onDelete, onReload, isActive = true }: CombosDashboardProps) {
     const { showNotification } = useNotificationStore();
     const [selected, setSelected] = useState<Combo | null>(null);
     const [isSaving, setIsSaving] = useState(false);
@@ -348,6 +349,13 @@ export default function CombosDashboard({ combos, comboLimits, macros, isDevelop
 
     const menuRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const [searchTerm, setSearchTerm] = useState('');
+
+    useEffect(() => {
+        if (!isActive) {
+            setSearchTerm('');
+        }
+    }, [isActive]);
 
     useEffect(() => {
         function handleClickOutside(event: MouseEvent) {
@@ -472,7 +480,11 @@ export default function CombosDashboard({ combos, comboLimits, macros, isDevelop
         }
     };
 
-    const sortedCombos = [...combos].sort((a, b) => a.id - b.id);
+    const sortedCombos = [...combos].filter(c => {
+        if (!searchTerm.trim()) return true;
+        const lower = searchTerm.toLowerCase();
+        return c.name.toLowerCase().includes(lower) || `combo[${c.id}]`.includes(lower);
+    }).sort((a, b) => a.id - b.id);
 
     return (
         <div className="ckey-dashboard" style={{ height: '100%' }}>
@@ -508,6 +520,16 @@ export default function CombosDashboard({ combos, comboLimits, macros, isDevelop
                         )}
                     </div>
                 </div>
+            </div>
+
+            <div className="sidebar-search-container">
+                <input 
+                    type="text" 
+                    className="sidebar-search-input" 
+                    placeholder="Search combos..." 
+                    value={searchTerm} 
+                    onChange={e => setSearchTerm(e.target.value)} 
+                />
             </div>
 
             <div className="ckey-list-full list-scroll-area">

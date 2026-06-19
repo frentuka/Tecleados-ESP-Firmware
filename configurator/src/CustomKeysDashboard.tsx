@@ -19,6 +19,7 @@ interface CustomKeysDashboardProps {
     onDelete: (id: number) => Promise<void>;
     onReload?: () => void;
     highlightId?: number | null;
+    isActive?: boolean;
 }
 
 // ── Default values ─────────────────────────────────────────────────────────────
@@ -471,7 +472,7 @@ function CKeyEditorModal({ ckey, macros, isSaving, error, onSave, onDelete, onCl
 
 const CKEY_MAX = 120;
 
-export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMode, onSave, onDelete, onReload, highlightId }: CustomKeysDashboardProps) {
+export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMode, onSave, onDelete, onReload, highlightId, isActive = true }: CustomKeysDashboardProps) {
     const { showNotification } = useNotificationStore();
     const [selected, setSelected] = useState<CustomKey | null>(null);
     const [isSaving, setIsSaving] = useState(false);
@@ -482,6 +483,13 @@ export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMod
     const fileInputRef = useRef<HTMLInputElement>(null);
     const cardRefs = useRef<Map<number, HTMLDivElement>>(new Map());
     const [activeHighlight, setActiveHighlight] = useState<number | null>(null);
+    const [searchTerm, setSearchTerm] = useState('');
+
+    useEffect(() => {
+        if (!isActive) {
+            setSearchTerm('');
+        }
+    }, [isActive]);
 
     // Auto-scroll and highlight when highlightId changes
     useEffect(() => {
@@ -589,7 +597,11 @@ export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMod
         }
     };
 
-    const sortedKeys = [...customKeys].sort((a, b) => a.id - b.id);
+    const sortedKeys = [...customKeys].filter(ck => {
+        if (!searchTerm.trim()) return true;
+        const lower = searchTerm.toLowerCase();
+        return ck.name.toLowerCase().includes(lower) || `ck[${ck.id}]`.includes(lower);
+    }).sort((a, b) => a.id - b.id);
 
     return (
         <div className="ckey-dashboard" style={{ height: '100%' }}>
@@ -625,6 +637,16 @@ export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMod
                         )}
                     </div>
                 </div>
+            </div>
+
+            <div className="sidebar-search-container">
+                <input 
+                    type="text" 
+                    className="sidebar-search-input" 
+                    placeholder="Search custom keys..." 
+                    value={searchTerm} 
+                    onChange={e => setSearchTerm(e.target.value)} 
+                />
             </div>
 
             <div className="ckey-list-full list-scroll-area">

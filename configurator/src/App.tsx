@@ -508,6 +508,7 @@ function App() {
                 onReload={fetchMacros}
                 onFetchSingleMacro={fetchSingleMacro}
                 highlightId={highlightMacroId}
+                isActive={sidebarTab === 'macros'}
               />
             </div>
             
@@ -520,6 +521,7 @@ function App() {
                 onDelete={handleDeleteCustomKey}
                 onReload={fetchCustomKeys}
                 highlightId={highlightCkeyId}
+                isActive={sidebarTab === 'ckeys'}
               />
             </div>
 
@@ -532,6 +534,7 @@ function App() {
                 onSave={handleSaveCombo}
                 onDelete={handleDeleteCombo}
                 onReload={fetchCombos}
+                isActive={sidebarTab === 'combos'}
               />
             </div>
           </Sidebar>
