@@ -14,8 +14,10 @@ import {
     getKeyName,
     getSecondaryKeyName,
     BROWSER_CODE_TO_HID,
+    CKEY_BASE,
 } from './KeyDefinitions';
 import SearchableKeyModal from './components/SearchableKeyModal';
+import KeyActionPopover from './components/KeyActionPopover';
 import type { Macro } from './types/macros';
 import { parseKleJson } from './utils/kleParser';
 import { parsePhysicalLayoutJson, serializePhysicalLayout } from './utils/layoutUtils';
@@ -41,6 +43,7 @@ interface KeyboardLayoutEditorProps {
     customKeys?: CustomKey[];
     onLog: (text: string) => void;
     onKeySelected?: (code: number) => void;
+    onEditEntity?: (code: number) => void;
 }
 
 // ── Factory default keymaps (mirrors keymaps[] in kb_layout.h) ──
@@ -107,7 +110,7 @@ const DEFAULT_PHYSICAL_LAYOUT: PhysKey[][] = [
 ];
 
 
-export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, macros, customKeys = [], onLog, onKeySelected }: KeyboardLayoutEditorProps) {
+export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, macros, customKeys = [], onLog, onKeySelected, onEditEntity }: KeyboardLayoutEditorProps) {
     const { showNotification } = useNotificationStore();
     const { physicalLayout, setPhysicalLayout, layers, setLayers, activeLayer, setActiveLayer, pressedCodes, setPressedCodes, heldTestKeys, setHeldTestKeys } = useLayoutStore();
     const [layerStatus, setLayerStatus] = useState<('idle' | 'loading' | 'loaded' | 'error')[]>(['idle', 'idle', 'idle', 'idle']);
@@ -131,6 +134,54 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
     const isDraggingRef = useRef(false);
     const dragStartedInEditorRef = useRef(false);
     const keysTouchedInDragRef = useRef<Set<string>>(new Set());
+
+    const [hoveredKeyId, setHoveredKeyId] = useState<string | null>(null);
+    const [hoverAnchorEl, setHoverAnchorEl] = useState<HTMLElement | null>(null);
+    const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const hideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    const handleMouseEnterKey = useCallback((physKeyId: string, el: HTMLElement, code: number) => {
+        if (isKeyTestMode || isDraggingRef.current || dragStartedInEditorRef.current) return;
+        
+        // Only show popover for special keys (Macros, Custom Keys)
+        if (code < CKEY_BASE) return;
+        
+        if (hideTimeoutRef.current) clearTimeout(hideTimeoutRef.current);
+        
+        if (hoveredKeyId !== physKeyId) {
+            if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+            hoverTimeoutRef.current = setTimeout(() => {
+                setHoveredKeyId(physKeyId);
+                setHoverAnchorEl(el);
+            }, 250);
+        }
+    }, [isKeyTestMode, hoveredKeyId]);
+
+    const handleMouseLeaveKey = useCallback(() => {
+        if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+        if (hideTimeoutRef.current) clearTimeout(hideTimeoutRef.current);
+        
+        hideTimeoutRef.current = setTimeout(() => {
+            setHoveredKeyId(null);
+            setHoverAnchorEl(null);
+        }, 150);
+    }, []);
+
+    const handlePopoverMouseEnter = useCallback(() => {
+        if (hideTimeoutRef.current) clearTimeout(hideTimeoutRef.current);
+    }, []);
+
+    const handlePopoverMouseLeave = useCallback(() => {
+        handleMouseLeaveKey();
+    }, [handleMouseLeaveKey]);
+
+    // Cleanup timeouts on unmount
+    useEffect(() => {
+        return () => {
+            if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+            if (hideTimeoutRef.current) clearTimeout(hideTimeoutRef.current);
+        };
+    }, []);
 
     // Sync rowInput/colInput when selection changes
     useEffect(() => {
@@ -957,6 +1008,8 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                                                         // Normal Drag: Add to selection
                                                                         setSelectedKeys(prev => new Set(prev).add(physKeyId));
                                                                     }
+                                                                } else {
+                                                                    handleMouseEnterKey(physKeyId, e.currentTarget, code);
                                                                 }
                                                             }}
                                                             onMouseUp={(e) => {
@@ -974,11 +1027,13 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                                                 // If it wasn't a drag and not ctrl/shift, open modal
                                                                 if (!isDraggingRef.current && !e.ctrlKey && !e.shiftKey && !isRowColEditMode) {
                                                                     setIsModalOpen(true);
-                                                                    onKeySelected?.(code);
+                                                                    // Do not call onKeySelected here, so it only opens the modal
+                                                                    // The popover's Edit button handles jumping to sidebar
                                                                 }
                                                                 isDraggingRef.current = false;
                                                             }}
                                                             onMouseLeave={(e) => {
+                                                                handleMouseLeaveKey();
                                                                 if (isKeyTestMode && e.buttons === 1) {
                                                                     e.preventDefault();
                                                                     hidService.sendInjectKey(pk.row, pk.col, false);
@@ -1150,6 +1205,28 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                             );
                         })()
                     }
+
+                    {/* Contextual Popover */}
+                    {hoveredKeyId && hoverAnchorEl && (() => {
+                        const [r, c] = hoveredKeyId.split('-').map(Number);
+                        const rowData = currentLayer?.[r];
+                        const code = (rowData && c < rowData.length) ? (rowData[c] ?? 0) : 0;
+                        return (
+                            <KeyActionPopover
+                                code={code}
+                                anchorEl={hoverAnchorEl}
+                                macros={macros}
+                                customKeys={customKeys}
+                                onEditEntity={(code) => {
+                                    setHoveredKeyId(null);
+                                    setHoverAnchorEl(null);
+                                    onEditEntity?.(code);
+                                }}
+                                onMouseEnter={handlePopoverMouseEnter}
+                                onMouseLeave={handlePopoverMouseLeave}
+                            />
+                        );
+                    })()}
 
                     {/* Row/Col Edit Panel (single-key only) */}
                     {isRowColEditMode && selectedKeys.size === 1 && (() => {

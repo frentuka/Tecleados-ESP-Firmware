@@ -19,7 +19,9 @@ interface CustomKeysDashboardProps {
     onDelete: (id: number) => Promise<void>;
     onReload?: () => void;
     highlightId?: number | null;
-    isActive?: boolean;
+    editId?: number | null;
+    onClearEditId?: () => void;
+    isActive: boolean;
 }
 
 // ── Default values ─────────────────────────────────────────────────────────────
@@ -472,7 +474,7 @@ function CKeyEditorModal({ ckey, macros, isSaving, error, onSave, onDelete, onCl
 
 const CKEY_MAX = 120;
 
-export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMode, onSave, onDelete, onReload, highlightId, isActive = true }: CustomKeysDashboardProps) {
+export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMode, onSave, onDelete, onReload, highlightId, editId, onClearEditId, isActive }: CustomKeysDashboardProps) {
     const { showNotification } = useNotificationStore();
     const [selected, setSelected] = useState<CustomKey | null>(null);
     const [isSaving, setIsSaving] = useState(false);
@@ -502,6 +504,16 @@ export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMod
         const timer = setTimeout(() => setActiveHighlight(null), 2500);
         return () => clearTimeout(timer);
     }, [highlightId]);
+
+    // Handle direct edit triggers from parent
+    useEffect(() => {
+        if (editId != null) {
+            const ck = customKeys.find(c => c.id === editId);
+            if (ck) {
+                setSelected(ck);
+            }
+        }
+    }, [editId, customKeys]);
 
     useEffect(() => {
         function handleClickOutside(event: MouseEvent) {
@@ -572,6 +584,7 @@ export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMod
         try {
             await onSave(ckey);
             setSelected(null);
+            if (onClearEditId) onClearEditId();
             showNotification(`Custom key "${ckey.name}" saved`, "success");
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : 'Save failed';
@@ -587,6 +600,7 @@ export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMod
         try {
             await onDelete(id);
             setSelected(null);
+            if (onClearEditId) onClearEditId();
             showNotification("Custom key deleted", "success");
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : 'Delete failed';
@@ -683,7 +697,10 @@ export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMod
                     error={error}
                     onSave={handleSave}
                     onDelete={handleDeleteKey}
-                    onClose={() => setSelected(null)}
+                    onClose={() => {
+                        setSelected(null);
+                        if (onClearEditId) onClearEditId();
+                    }}
                 />
             )}
             <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept=".json" onChange={handleImport} />

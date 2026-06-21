@@ -50,6 +50,11 @@ function App() {
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
   const [highlightMacroId, setHighlightMacroId] = useState<number | null>(null);
   const [highlightCkeyId, setHighlightCkeyId] = useState<number | null>(null);
+  
+  // State for directly opening the editor modal without changing sidebar tab
+  const [editMacroId, setEditMacroId] = useState<number | null>(null);
+  const [editCkeyId, setEditCkeyId] = useState<number | null>(null);
+
   const [isConnected, setIsConnected] = useState(false);
   const setLayoutIsConnected = useLayoutStore(state => state.setIsConnected);
   const { notification, setNotification, showNotification } = useNotificationStore();
@@ -402,18 +407,15 @@ function App() {
   const handleKeySelected = useCallback((code: number) => {
     if (code >= MACRO_BASE && code <= 0x40FF) {
       const macroId = code - MACRO_BASE;
-      setSidebarTab('macros');
-      // Use a fresh value to force the useEffect even if same id is re-selected
-      setHighlightMacroId(null);
-      requestAnimationFrame(() => setHighlightMacroId(macroId));
+      setEditMacroId(null);
+      requestAnimationFrame(() => setEditMacroId(macroId));
     } else if (code >= CKEY_BASE && code <= 0x3FFF) {
       const ckeyId = code - CKEY_BASE;
-      setSidebarTab('ckeys');
-      setHighlightCkeyId(null);
-      requestAnimationFrame(() => setHighlightCkeyId(ckeyId));
+      setEditCkeyId(null);
+      requestAnimationFrame(() => setEditCkeyId(ckeyId));
     }
     // For normal HID codes (not macros/ckeys) do nothing — just let the modal open normally
-  }, [MACRO_BASE, CKEY_BASE]);
+  }, []);
 
 
   const DISCONNECTED_MESSAGES = [
@@ -519,7 +521,7 @@ function App() {
               macros={macros}
               customKeys={customKeys}
               onLog={addLog}
-              onKeySelected={handleKeySelected}
+              onEditEntity={handleKeySelected}
             />
           </div>
 
@@ -540,6 +542,8 @@ function App() {
                 onReload={fetchMacros}
                 onFetchSingleMacro={fetchSingleMacro}
                 highlightId={highlightMacroId}
+                editId={editMacroId}
+                onClearEditId={() => setEditMacroId(null)}
                 isActive={sidebarTab === 'macros'}
               />
             </div>
@@ -553,6 +557,8 @@ function App() {
                 onDelete={handleDeleteCustomKey}
                 onReload={fetchCustomKeys}
                 highlightId={highlightCkeyId}
+                editId={editCkeyId}
+                onClearEditId={() => setEditCkeyId(null)}
                 isActive={sidebarTab === 'ckeys'}
               />
             </div>

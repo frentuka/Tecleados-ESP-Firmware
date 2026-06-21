@@ -20,6 +20,8 @@ interface MacrosDashboardProps {
     onReload: () => void;
     onFetchSingleMacro: (id: number) => Promise<Macro | null>;
     highlightId?: number | null;
+    editId?: number | null;
+    onClearEditId?: () => void;
     isActive?: boolean;
 }
 
@@ -32,6 +34,8 @@ export default function MacrosDashboard({
     onReload, 
     onFetchSingleMacro,
     highlightId,
+    editId,
+    onClearEditId,
     isActive = true,
 }: MacrosDashboardProps) {
     const { showNotification } = useNotificationStore();
@@ -71,6 +75,23 @@ export default function MacrosDashboard({
         const timer = setTimeout(() => setActiveHighlight(null), 2500);
         return () => clearTimeout(timer);
     }, [highlightId]);
+
+    // Handle direct edit triggers from parent
+    useEffect(() => {
+        if (editId != null) {
+            const m = macros.find(macro => macro.id === editId);
+            if (m) {
+                // If it's empty we need to fetch it first, same as clicking
+                if (!m.elements || m.elements.length === 0) {
+                    onFetchSingleMacro(m.id).then(fullMacro => {
+                        if (fullMacro) setEditingMacro(fullMacro);
+                    });
+                } else {
+                    setEditingMacro(m);
+                }
+            }
+        }
+    }, [editId, macros, onFetchSingleMacro]);
 
     const isAtMacroLimit = macroLimits != null && macros.length >= macroLimits.maxMacros;
 
@@ -354,6 +375,7 @@ export default function MacrosDashboard({
                     maxEvents={macroLimits?.maxEvents}
                     onSave={async (m) => {
                         setEditingMacro(null);
+                        if (onClearEditId) onClearEditId();
                         const isNew = m.id === -1;
                         if (isNew) setIsCreating(true);
                         else markBusy(m.id, 'Saving...');
@@ -367,7 +389,10 @@ export default function MacrosDashboard({
                             else clearBusy(m.id);
                         }
                     }}
-                    onClose={() => setEditingMacro(null)}
+                    onClose={() => {
+                        setEditingMacro(null);
+                        if (onClearEditId) onClearEditId();
+                    }}
                 />
             )}
 

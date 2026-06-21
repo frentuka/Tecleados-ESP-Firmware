@@ -294,11 +294,34 @@ const MacroTimelineEditor = forwardRef<MacroTimelineRef, MacroTimelineEditorProp
         const updatePlayhead = () => {
             if (recordingStateRef.current.isRecording) {
                 const now = Date.now();
-                const deltaMs = now - recordingStateRef.current.startTimeAbsolute;
+                let deltaMs = now - recordingStateRef.current.startTimeAbsolute;
+                
+                // If the macro is empty and no key has been pressed yet, the playhead should wait at 0
+                if (!recordingStateRef.current.hasRecordedFirstEvent && recordingStateRef.current.lastEventTime === 0) {
+                    deltaMs = 0;
+                }
+                
                 const current = recordDelay ? recordingStateRef.current.lastEventTime + deltaMs : recordingStateRef.current.lastEventTime;
                 
-                const currentPx = current * zoom;
+                // Clamp to 10 million pixels to avoid browser layout engine crashes/thrashing
+                const currentPx = Math.min(current * zoom, 10000000);
                 
+                // === 1. DOM READ PHASE ===
+                let currentMinWidth = 0;
+                let elWidth = 0;
+                let elScrollLeft = 0;
+                
+                if (containerInnerRef.current) {
+                    currentMinWidth = parseFloat(containerInnerRef.current.style.minWidth || '0');
+                }
+                
+                const el = scrollContainerRef.current;
+                if (el) {
+                    elWidth = el.clientWidth;
+                    elScrollLeft = el.scrollLeft;
+                }
+                
+                // === 2. DOM WRITE PHASE ===
                 if (playheadRef.current) {
                     playheadRef.current.style.left = `${currentPx}px`;
                 }
@@ -311,21 +334,24 @@ const MacroTimelineEditor = forwardRef<MacroTimelineRef, MacroTimelineEditorProp
                     }
                 });
 
-                if (containerInnerRef.current) {
-                    const currentMinWidth = parseFloat(containerInnerRef.current.style.minWidth || '0');
-                    if (currentPx + 500 > currentMinWidth) {
-                        containerInnerRef.current.style.minWidth = `${currentPx + 500}px`;
-                    }
+                if (containerInnerRef.current && currentPx + 500 > currentMinWidth && currentMinWidth < 10000000) {
+                    // Expand in 2000px chunks instead of 1px at a time to reduce layout invalidations
+                    containerInnerRef.current.style.minWidth = `${Math.min(currentPx + 2000, 10000000)}px`;
                 }
 
-                const el = scrollContainerRef.current;
                 if (el) {
-                    const rect = el.getBoundingClientRect();
-                    const relativeX = currentPx - el.scrollLeft;
-                    if (relativeX > rect.width * 0.8) {
-                        el.scrollLeft = currentPx - rect.width * 0.8;
-                    } else if (relativeX < rect.width * 0.1 && el.scrollLeft > 0) {
-                        el.scrollLeft = Math.max(0, currentPx - rect.width * 0.1);
+                    const relativeX = currentPx - elScrollLeft;
+                    
+                    if (relativeX > elWidth * 0.8) {
+                        const targetScroll = currentPx - elWidth * 0.8;
+                        if (Math.abs(elScrollLeft - targetScroll) > 2) {
+                            el.scrollLeft = targetScroll;
+                        }
+                    } else if (relativeX < elWidth * 0.1 && elScrollLeft > 0) {
+                        const targetScroll = Math.max(0, currentPx - elWidth * 0.1);
+                        if (Math.abs(elScrollLeft - targetScroll) > 2) {
+                            el.scrollLeft = targetScroll;
+                        }
                     }
                 }
                 
@@ -520,7 +546,7 @@ const MacroTimelineEditor = forwardRef<MacroTimelineRef, MacroTimelineEditorProp
                     style={{ flexGrow: 1, overflowX: 'auto', overflowY: 'auto', position: 'relative' }}
                     onPointerDown={handleContainerPointerDown}
                 >
-                    <div ref={containerInnerRef} style={{ minWidth: `${totalDuration * zoom}px`, position: 'relative', minHeight: '100%', cursor: isSelecting ? 'crosshair' : 'default' }}>
+                    <div ref={containerInnerRef} style={{ minWidth: `${Math.min(totalDuration * zoom, 10000000)}px`, position: 'relative', minHeight: '100%', cursor: isSelecting ? 'crosshair' : 'default' }}>
                         <TimelineRuler pxPerMs={zoom} totalMs={totalDuration} />
                         
                         <div style={{ position: 'absolute', top: '28px', left: 0, right: 0, bottom: 0 }}>

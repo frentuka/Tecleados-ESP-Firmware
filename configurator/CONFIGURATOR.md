@@ -343,6 +343,7 @@ In `MacroEditorModal`, clicking **Record** starts a `keydown`/`keyup` listener. 
 - Each physical key press appends a `{ type: 'key', key: hid_code, action: 'tap' }` element.
 - The `BROWSER_CODE_TO_HID` map in `KeyDefinitions.ts` converts browser `event.code` strings to HID usage codes.
 - A `recordingStateRef` mirrors `isRecording` state for use inside imperative event listeners (prevents stale closure).
+- **Timeline Performance Optimization**: The `updatePlayhead` animation loop explicitly separates DOM Reads (e.g. `el.clientWidth`, `el.scrollLeft`) from DOM Writes (e.g. `style.width`, `style.left`, `style.minWidth`) into discrete phases. It also batches container width expansion in large 2000px chunks. This strict enforcement of the DOM Read-Write cycle completely eliminates synchronous layout thrashing (forced reflows) ensuring recording remains fluid at 60 FPS without high CPU usage.
 
 Elements can also be added manually from a searchable key picker, re-ordered by drag-and-drop, and each element allows customizing the action (`tap`/`press`/`release`) and `inlineSleep`.
 

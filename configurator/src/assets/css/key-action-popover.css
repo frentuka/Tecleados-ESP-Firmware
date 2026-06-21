@@ -1,0 +1,122 @@
+.key-action-popover {
+    position: absolute;
+    z-index: 10000;
+    background: rgba(13, 17, 23, 0.85);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 1rem;
+    min-width: 220px;
+    max-width: 280px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.05);
+    pointer-events: auto;
+    
+    /* Animation base */
+    opacity: 0;
+    transform: translateY(10px) scale(0.95);
+    transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.key-action-popover.visible {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+}
+
+.key-action-popover-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.key-action-popover-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-secondary);
+    flex-shrink: 0;
+}
+
+.key-action-popover-icon.macro {
+    color: #58a6ff;
+    background: rgba(88, 166, 255, 0.1);
+}
+
+.key-action-popover-icon.ckey {
+    color: #a371f7;
+    background: rgba(163, 113, 247, 0.1);
+}
+
+.key-action-popover-icon.combo {
+    color: #3fb950;
+    background: rgba(63, 185, 80, 0.1);
+}
+
+.key-action-popover-info {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.key-action-popover-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.key-action-popover-subtitle {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    line-height: 1.4;
+    margin-top: 0.1rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.key-action-popover-actions {
+    margin-top: 1rem;
+    display: flex;
+    gap: 0.5rem;
+}
+
+.key-action-popover-btn {
+    flex: 1;
+    padding: 0.4rem 0.75rem;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: var(--text-primary);
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+}
+
+.key-action-popover-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.15);
+}
+
+.key-action-popover-btn.primary {
+    background: rgba(88, 166, 255, 0.15);
+    border-color: rgba(88, 166, 255, 0.3);
+    color: #58a6ff;
+}
+
+.key-action-popover-btn.primary:hover {
+    background: rgba(88, 166, 255, 0.25);
+    border-color: rgba(88, 166, 255, 0.4);
+}
