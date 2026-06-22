@@ -149,6 +149,34 @@ function App() {
   // Sidebar Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (e.defaultPrevented) return;
+
+        // Close modals managed by App.tsx first
+        let handled = false;
+        if (isConsoleOpen) {
+          setIsConsoleOpen(false);
+          handled = true;
+        }
+        if (isSettingsOpen) {
+          setIsSettingsOpen(false);
+          handled = true;
+        }
+        if (handled) return;
+
+        // Don't close sidebar if a child modal or popover is open
+        if (document.querySelector('.modal-overlay') || document.querySelector('.key-action-popover')) {
+          return;
+        }
+
+        // Close sidebar
+        if (sidebarTab !== null) {
+          e.preventDefault();
+          setSidebarTab(null);
+        }
+        return;
+      }
+
       const isModifier = e.ctrlKey || e.metaKey;
       if (!isModifier) return;
 
@@ -176,7 +204,7 @@ function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [sidebarTab]);
+  }, [sidebarTab, isConsoleOpen, isSettingsOpen]);
 
   // Subscribe to HIDService connection state (auto-reconnect, disconnect detection)
   useEffect(() => {

@@ -183,6 +183,29 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
         };
     }, []);
 
+    // Handle Escape key
+    useEffect(() => {
+        const handleGlobalKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') {
+                let handled = false;
+                if (hoverAnchorEl) {
+                    setHoverAnchorEl(null);
+                    setHoveredKeyId(null);
+                    handled = true;
+                }
+                if (selectedKeys.size > 0) {
+                    setSelectedKeys(new Set());
+                    handled = true;
+                }
+                if (handled) {
+                    e.preventDefault();
+                }
+            }
+        };
+        window.addEventListener('keydown', handleGlobalKeyDown);
+        return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+    }, [hoverAnchorEl, selectedKeys]);
+
     // Sync rowInput/colInput when selection changes
     useEffect(() => {
         if (selectedKeys.size === 1 && isRowColEditMode) {
