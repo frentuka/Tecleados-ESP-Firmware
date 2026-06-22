@@ -61,7 +61,7 @@ Browser
 configurator/
 ├── src/
 │   ├── App.tsx                         — Top-level: single-page layout, sidebar state, secret code listener, connection logic
-│   ├── Sidebar.tsx                     — Right-edge icon rail + expandable panel (Macros/CKeys/Combos tabs, Settings/Console buttons)
+│   ├── Sidebar.tsx                     — Right-edge 76px icon rail + glassmorphic expandable panel (Macros/CKeys/Combos tabs, Settings/Console buttons)
 │   ├── SettingsModal.tsx               — Device settings modal (wraps DeviceDashboard in a portal overlay)
 │   ├── DevConsoleModal.tsx             — Developer console log viewer modal (replaces DevControlsPanel bottom strip)
 │   ├── main.tsx                        — React entry point, DeviceController instantiation

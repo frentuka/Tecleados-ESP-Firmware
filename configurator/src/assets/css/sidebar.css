@@ -13,12 +13,12 @@
 
 /* ── Icon Rail ── */
 .sidebar-rail {
-    width: 64px;
+    width: 76px;
     display: flex;
     flex-direction: column;
     justify-content: space-between;
     align-items: center;
-    padding: 1rem 0;
+    padding: 1rem 0.5rem;
     background: rgba(13, 17, 23, 0.6);
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
@@ -50,7 +50,7 @@
 
 /* ── Icon Buttons ── */
 .sidebar-icon-btn {
-    width: 52px;
+    width: 60px;
     height: 44px;
     border-radius: 12px;
     border: 1px solid transparent;
@@ -139,18 +139,41 @@
     width: 0;
     overflow: hidden;
     transition: width 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-    background: rgba(13, 17, 23, 0.88);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
+    background: rgba(13, 17, 23, 0.55);
+    backdrop-filter: blur(28px) saturate(1.3);
+    -webkit-backdrop-filter: blur(28px) saturate(1.3);
     border-left: 1px solid transparent;
     pointer-events: none;
+    position: relative;
+}
+
+.sidebar-panel::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+        180deg,
+        rgba(255, 255, 255, 0.03) 0%,
+        transparent 15%,
+        transparent 85%,
+        rgba(0, 0, 0, 0.08) 100%
+    );
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.4s ease 0.15s;
 }
 
 .sidebar-container.open .sidebar-panel {
     width: 420px;
-    max-width: calc(100vw - 56px - 2rem);
-    border-left-color: rgba(255, 255, 255, 0.06);
+    max-width: calc(100vw - 68px - 2rem);
+    border-left-color: rgba(255, 255, 255, 0.08);
     pointer-events: auto;
+    box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.04),
+               -8px 0 40px rgba(0, 0, 0, 0.2);
+}
+
+.sidebar-container.open .sidebar-panel::after {
+    opacity: 1;
 }
 
 .sidebar-panel-content {
@@ -464,7 +487,7 @@
 
     .sidebar-panel {
         position: absolute;
-        right: 64px; /* Attached to left of icon rail */
+        right: 76px; /* Attached to left of icon rail */
         top: 0;
         bottom: 0;
     }
@@ -485,7 +508,7 @@
         content: '';
         position: fixed;
         inset: 0;
-        right: 64px;
+        right: 76px;
         background: rgba(0, 0, 0, 0.4);
         backdrop-filter: blur(2px);
         -webkit-backdrop-filter: blur(2px);

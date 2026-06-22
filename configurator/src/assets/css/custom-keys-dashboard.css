@@ -59,9 +59,19 @@
 }
 
 .ckey-card-selected {
-  border-color: var(--accent-color);
-  background: rgba(88, 166, 255, 0.08) !important;
-  box-shadow: 0 0 15px rgba(88, 166, 255, 0.1), inset 0 0 10px rgba(88, 166, 255, 0.05);
+  border-color: rgba(88, 166, 255, 0.45) !important;
+  border-top-color: rgba(88, 166, 255, 0.5) !important;
+  background: linear-gradient(
+    165deg,
+    rgba(30, 42, 60, 0.55) 0%,
+    rgba(20, 30, 48, 0.45) 100%
+  ) !important;
+  box-shadow:
+    0 4px 12px rgba(0, 0, 0, 0.3),
+    0 12px 32px rgba(0, 0, 0, 0.15),
+    0 0 24px rgba(88, 166, 255, 0.08),
+    inset 0 1px 0 rgba(88, 166, 255, 0.12),
+    inset 0 0 30px rgba(88, 166, 255, 0.04);
 }
 
 .ckey-card-title-row {
