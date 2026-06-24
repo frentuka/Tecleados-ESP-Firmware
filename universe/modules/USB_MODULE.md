@@ -201,8 +201,8 @@ typedef enum usb_msg_module : uint8_t {
     MODULE_CONFIG = 0,    // cfg_usb_callback()   in cfgmod.c
     MODULE_SYSTEM,        // kb_system_usb_callback() in kb_manager.c
     MODULE_ACTION,        // (unused/reserved)
-    MODULE_STATUS,        // status_module_callback() in [[STATUS_MODULE]]
-    MODULE_SPLIT,         // split_usb_callback()  in [[SPLIT_MODULE]]
+    MODULE_STATUS,        // status_module_callback() in [STATUS_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/STATUS_MODULE.md)
+    MODULE_SPLIT,         // split_usb_callback()  in [SPLIT_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/SPLIT_MODULE.md)
     MODULE_BLE,           // ble_usb_callback()    in splitmod.c
     USB_MODULE_COUNT
 } usb_msg_module_t;
@@ -214,7 +214,7 @@ typedef enum usb_msg_module : uint8_t {
 
 ---
 
-### 1. [[KEYBOARD_MODULE]] — HID Report Output (Keyboard → USB)
+### 1. [KEYBOARD_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/KEYBOARD_MODULE.md) — HID Report Output (Keyboard → USB)
 
 **Files:** `components/keyboard/kb_report.c`, `components/keyboard/kb_manager.c`
 
@@ -289,7 +289,7 @@ These injected keys are merged into the hardware scan matrix **before debounce**
 
 ---
 
-### 2. [[CONFIG_MODULE]] — Configuration Read/Write (Configurator ↔ NVS)
+### 2. [CONFIG_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/CONFIG_MODULE.md) — Configuration Read/Write (Configurator ↔ NVS)
 
 **Files:** `components/config_module/cfgmod.c`
 
@@ -327,7 +327,7 @@ All payloads are **JSON** (minified). On SET, they are deserialized into typed s
 
 ---
 
-### 3. [[SPLIT_MODULE]] — Split Keyboard Control (Configurator ↔ Both Halves)
+### 3. [SPLIT_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/SPLIT_MODULE.md) — Split Keyboard Control (Configurator ↔ Both Halves)
 
 **Files:** `components/split/splitmod.c` — two callbacks registered
 
@@ -372,13 +372,13 @@ split_ble_cmd_payload_t payload = {.cmd = cmd, .arg = arg};
 split_transport_send(s_peer_mac, SPLIT_PROTO_SPLIT, SPLIT_MSG_BLE_CMD, ...);
 ```
 
-The master receives `SPLIT_MSG_BLE_CMD`, calls `execute_ble_cmd()`, runs the BLE operation, and the resulting BLE event propagates back via `SPLIT_MSG_BLE_STATUS` → `SPLIT_EVENT_BLE_STATUS_UPDATED` → [[STATUS_MODULE]] → USB COMM response to the configurator.
+The master receives `SPLIT_MSG_BLE_CMD`, calls `execute_ble_cmd()`, runs the BLE operation, and the resulting BLE event propagates back via `SPLIT_MSG_BLE_STATUS` → `SPLIT_EVENT_BLE_STATUS_UPDATED` → [STATUS_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/STATUS_MODULE.md) → USB COMM response to the configurator.
 
 **Why is this callback registered in `splitmod.c` and not `blemod.c`?** Because the routing decision (am I SLAVE? do I need to forward this?) requires knowledge of the split state. `blemod` knows nothing about split roles. `splitmod` knows both — it owns the role state and can call `blemod` directly. Registering the callback in `splitmod` keeps the dependency direction correct: `splitmod` → `blemod`, not the other way around.
 
 ---
 
-### 4. [[STATUS_MODULE]] — Status Push on Demand
+### 4. [STATUS_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/STATUS_MODULE.md) — Status Push on Demand
 
 **Files:** `components/status_module/statusmod.c`
 
@@ -416,7 +416,7 @@ The response flows back through `send_payload()`, prefixed with `MODULE_STATUS`,
 
 ---
 
-### 5. [[BLE_MODULE]] — Mutual Exclusivity (Passive Relationship)
+### 5. [BLE_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/BLE_MODULE.md) — Mutual Exclusivity (Passive Relationship)
 
 **Files:** `components/keyboard/kb_report.c`
 
@@ -432,7 +432,7 @@ The **only explicit interaction** between USB and BLE is the `MODULE_BLE` callba
 
 ## Device Descriptor and Identification
 
-`usb_init()` reads from [[CONFIG_MODULE]] (`cfg_system_get()`) before calling `tinyusb_driver_install()` to override two USB string descriptors dynamically:
+`usb_init()` reads from [CONFIG_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/CONFIG_MODULE.md) (`cfg_system_get()`) before calling `tinyusb_driver_install()` to override two USB string descriptors dynamically:
 
 | Descriptor | Default | Dynamic override |
 |---|---|---|

@@ -20,13 +20,13 @@ Central to the module is the `s_cache` static structure. It maintains the "autho
 - **Split**: Current role (Master/Slave) and connection health status.
 
 ### 2. Event-Driven Propagation
-Instead of polling other modules (which would be inefficient), the Status Module subscribes to the system-wide Event Bus. Whenever a change is detected in the [[BLE_MODULE]], [[SPLIT_MODULE]], or [[CONFIG_MODULE]], the cache is updated and a push is automatically triggered.
+Instead of polling other modules (which would be inefficient), the Status Module subscribes to the system-wide Event Bus. Whenever a change is detected in the [BLE_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/BLE_MODULE.md), [SPLIT_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/SPLIT_MODULE.md), or [CONFIG_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/CONFIG_MODULE.md), the cache is updated and a push is automatically triggered.
 
 ### 3. The Push Mechanism
 Every cache update triggers `send_status_push()`. This function performs three steps:
 1.  **Serialization**: Formats the `s_cache` into a minified JSON string.
 2.  **Framing**: Attaches the `MODULE_STATUS` wire header.
-3.  **Transmission**: Hands the packet to the [[USB_MODULE]] for physical delivery to the host.
+3.  **Transmission**: Hands the packet to the [USB_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/USB_MODULE.md) for physical delivery to the host.
 
 ---
 
@@ -34,20 +34,20 @@ Every cache update triggers `send_status_push()`. This function performs three s
 
 The Status Module sits at the intersection of all major subsystems, acting as their collective voice.
 
-### [[USB_MODULE]] — The Delivery Vehicle
+### [USB_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/USB_MODULE.md) — The Delivery Vehicle
 - **Manual Polling**: Registers a callback via `usbmod_register_callback`. If the Configurator app sends a manual request, the Status Module forces an immediate cache refresh and push.
 - **Payload Transport**: Uses the high-priority `send_payload` API to ensure status updates reach the PC even during heavy keyboard activity.
 
-### [[BLE_MODULE]] — Connection Authority
+### [BLE_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/BLE_MODULE.md) — Connection Authority
 - Subscribes to `BLE_EVENTS`. It tracks profile connection/disconnection, routing toggles, and pairing timer statuses.
 - It translates binary stack events into user-friendly status bits (e.g., bit 2 of the bitmap means "Profile 3 is connected").
 
-### [[SPLIT_MODULE]] — Synchronization Bridge
+### [SPLIT_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/SPLIT_MODULE.md) — Synchronization Bridge
 - **Master Authority**: In split configurations, the Master half is the authority for BLE connectivity. 
 - **Authoritative Sync**: The Master pushes its live BLE state to the Slave via `SPLIT_EVENT_BLE_STATUS_UPDATED`.
 - **Slave Logic**: When in the Slave role, the Status Module ignores local BLE hardware events (since the radio is suspended) and relies entirely on these authoritative pushes from the Master to update its local cache.
 
-### [[CONFIG_MODULE]] — Settings Source
+### [CONFIG_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/CONFIG_MODULE.md) — Settings Source
 - Monitors `CONFIG_EVENTS` to catch user configuration changes (like switching the default boot profile) that aren't triggered by physical key presses.
 
 ---

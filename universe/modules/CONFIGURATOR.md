@@ -4,7 +4,7 @@
 > **Entry point:** `configurator/src/main.tsx` → `App.tsx`
 > **Tech stack:** React 19 + TypeScript + Vite — runs entirely in the browser, no backend server.
 
-The **Configurator** is the browser-based GUI for the keyboard firmware. It communicates with the device over [[USB_MODULE|the USB COMM channel]] using the **WebHID API**, implementing the exact same Blast+Reconcile transport protocol as the firmware. The user never installs a driver or companion app — they open a URL, click Connect, and the browser talks directly to the keyboard. 
+The **Configurator** is the browser-based GUI for the keyboard firmware. It communicates with the device over [the USB COMM channel](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/USB_MODULE.md) using the **WebHID API**, implementing the exact same Blast+Reconcile transport protocol as the firmware. The user never installs a driver or companion app — they open a URL, click Connect, and the browser talks directly to the keyboard. 
 
 > [!NOTE]
 > Because WebHID is a high-privilege device API, browsers strictly require a **Secure Context (HTTPS)** to enable it. Consequently, for local testing and development purposes only, the server runs over HTTPS using `@vitejs/plugin-basic-ssl` (`https://localhost:5173`) with a self-signed certificate. Any production/public hosting must be configured with a standard trusted SSL/TLS certificate (such as Let's Encrypt).
@@ -84,7 +84,7 @@ The legacy `HIDService.ts` file is a thin re-export façade that maps old import
 | `CombosDashboard.tsx` | Sidebar panel | Combos list, `ComboKeySelector` + Export/Import, Search bar |
 | `SettingsModal.tsx` | Modal (gear icon) | Wraps DeviceDashboard for device name, split link, BLE identity settings |
 | `DevConsoleModal.tsx` | Modal (dev mode) | Developer console log viewer (replaces DevControlsPanel bottom strip) |
-| `StatusWidget.tsx` | Header | Always visible indicators for BLE/USB/Split state pushed from [[STATUS_MODULE]] |
+| `StatusWidget.tsx` | Header | Always visible indicators for BLE/USB/Split state pushed from [STATUS_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/STATUS_MODULE.md) |
 | `SearchableKeyModal.tsx` | Modal Picker | Searchable HID key picker modal with custom title support |
 
 ### 4. Global UI Interactions
@@ -99,7 +99,7 @@ The legacy `HIDService.ts` file is a thin re-export façade that maps old import
 
 ## Cross-Module Connections
 
-### [[USB_MODULE]] — The Communication Pipe
+### [USB_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/USB_MODULE.md) — The Communication Pipe
 
 All configurator↔firmware traffic flows through the USB COMM channel (`ITF_NUM_HID_COMM`). The configurator mirrors the firmware's protocol constants word-for-word in `types/protocol.ts`:
 - Same `VID/PID` for device discovery
@@ -109,7 +109,7 @@ All configurator↔firmware traffic flows through the USB COMM channel (`ITF_NUM
 
 Any mismatch between `types/protocol.ts` and `usb_defs.h` / `cfgmod.h` will break communication silently (packets will CRC-fail or be routed to the wrong module).
 
-### [[CONFIG_MODULE]] — Read/Write Everything
+### [CONFIG_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/CONFIG_MODULE.md) — Read/Write Everything
 
 The configurator is the primary client of `cfg_usb_callback()`. Every user action maps to a GET or SET command on a specific `key_id`:
 
@@ -128,7 +128,7 @@ The configurator is the primary client of `cfg_usb_callback()`. Every user actio
 | Open "Identity" (dev mode) | GET | `CFG_KEY_SYSTEM` |
 | Save identity | SET | `CFG_KEY_SYSTEM` (name, mirror_cols, variant) |
 
-### [[STATUS_MODULE]] — Live State Display
+### [STATUS_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/STATUS_MODULE.md) — Live State Display
 
 The `StatusWidget.tsx` component subscribes to unsolicited status pushes from the firmware. On initial connection, `App.tsx` sends a `MODULE_STATUS` poll to request an immediate snapshot before any BLE or split event fires. The widget maps the JSON fields to human-readable indicators:
 
@@ -136,11 +136,11 @@ The `StatusWidget.tsx` component subscribes to unsolicited status pushes from th
 { "mode": 1, "profile": 2, "pairing": -1, "bitmap": 7, "split_state": 4, "split_role": 1 }
 ```
 
-### [[SPLIT_MODULE]] — Split Keyboard Control
+### [SPLIT_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/SPLIT_MODULE.md) — Split Keyboard Control
 
 `SplitDashboard.tsx` sends `MODULE_SPLIT` commands for pairing, unpairing, role swap, and RTT benchmarking. It also uses `MODULE_BLE` to toggle BLE routing or connect/pair profiles. If the plugged-in half is the slave, the firmware transparently proxies these BLE commands to the master over the ESP-NOW link — the configurator does not need to know which half it is talking to.
 
-### [[KEYBOARD_MODULE]] — Key Test Mode
+### [KEYBOARD_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/KEYBOARD_MODULE.md) — Key Test Mode
 
 The "Key Test" feature in `KeyboardLayoutEditor.tsx` uses `MODULE_SYSTEM` to inject simulated key presses into the firmware's matrix scanner:
 

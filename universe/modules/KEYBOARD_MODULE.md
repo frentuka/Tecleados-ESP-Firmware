@@ -5,7 +5,7 @@
 
 The Keyboard module is the **central nervous system** of the firmware. It is responsible for the entire lifecycle of a keypress: from high-frequency hardware scanning and debouncing to the complex logic of layers, macros, and multi-transport HID reporting.
 
-It acts as the primary "Producer" of data in the system, either fulfilling reports locally via [[USB_MODULE]] or delegating to [[BLE_MODULE]] and [[SPLIT_MODULE]].
+It acts as the primary "Producer" of data in the system, either fulfilling reports locally via [USB_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/USB_MODULE.md) or delegating to [BLE_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/BLE_MODULE.md) and [SPLIT_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/SPLIT_MODULE.md).
 
 ---
 
@@ -72,26 +72,26 @@ Specialized "system actions" (like BLE profile switching) are processed via `kb_
 - **Hold**: Press sustained for >500ms.
 - **Double Tap**: Two consecutive presses within <300ms of each other.
 
-Whenever a complex gesture is completed, the keyboard module **publishes an event** to the system bus: `KB_EVENTS / KB_EVENT_SYSTEM_ACTION`. This decouples the keyboard logic from the [[BLE_MODULE]], which listens for these events to trigger profile swaps.
+Whenever a complex gesture is completed, the keyboard module **publishes an event** to the system bus: `KB_EVENTS / KB_EVENT_SYSTEM_ACTION`. This decouples the keyboard logic from the [BLE_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/BLE_MODULE.md), which listens for these events to trigger profile swaps.
 
 ---
 
 ##  Module Connections
 
-### [[USB_MODULE]] — Direct Wire Interface
+### [USB_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/USB_MODULE.md) — Direct Wire Interface
 *   **Routing**: If BLE is inactive, HID reports are formatted for USB.
 *   **Boot vs NKRO**: The module detects if the PC is in BIOS mode via `usb_keyboard_use_boot_protocol()` and automatically switches from the 231-key NKRO bitmap to the legacy 6KRO report.
-*   **Remote Injection**: Used by the [[CONFIGURATOR]] to simulate matrix activity for testing.
+*   **Remote Injection**: Used by the [CONFIGURATOR](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/CONFIGURATOR.md) to simulate matrix activity for testing.
 
-### [[BLE_MODULE]] — Radio Management
+### [BLE_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/BLE_MODULE.md) — Radio Management
 *   **The Routing Gate**: `kb_report.c` uses `ble_hid_is_routing_active()` as a master switch. When enabled, it performs the **NKRO → 6KRO conversion** (splitting the bitmap into 6 slots + modifiers) before passing it to the BLE stack.
-*   **Decoupled Control**: Instead of calling BLE functions directly, the keyboard broadcasts events. The `ble_controller.c` file in the [[BLE_MODULE]] consumes these to select profiles or pair devices.
+*   **Decoupled Control**: Instead of calling BLE functions directly, the keyboard broadcasts events. The `ble_controller.c` file in the [BLE_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/BLE_MODULE.md) consumes these to select profiles or pair devices.
 
-### [[SPLIT_MODULE]] — Logical Merging
+### [SPLIT_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/SPLIT_MODULE.md) — Logical Merging
 *   **Slave Role**: The keyboard provides a callback (`kb_manager_set_matrix_cb`). When the split module detects this device is a slave, it hooks into this to intercept raw matrix deltas and send them to the master.
 *   **Master Role**: The Master half receives these deltas and calls `kb_manager_set_remote_matrix()`. The keyboard task OR-es this remote bitmap with the local hardware scan, processing the entire split unit as a single virtual matrix.
 
-### [[CONFIGURATOR]] — NVS Persistence
+### [CONFIGURATOR](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/CONFIGURATOR.md) — NVS Persistence
 *   **Layout Resolution**: Uses `cfg_layouts.h` to pull keymaps from NVS. If a key is `KB_KEY_TRANSPARENT`, the lookup engine recursively falls back to the base layer.
 *   **Live Reloading**: Listens to `CFGMOD_KIND_MACRO` updates. When you save a macro in the browser, the keyboard engine instantly reloads the runtime structures without a reboot.
 
