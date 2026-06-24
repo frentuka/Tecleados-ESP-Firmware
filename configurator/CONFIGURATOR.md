@@ -10,8 +10,9 @@ The configurator lets you:
 - Edit key mappings across 4 independent layers (Base, FN1, FN2, FN3)
 - Create, edit, and delete macros with rich action types and execution modes
 - Create, edit, and delete custom keys (PressRelease and MultiAction modes)
+- Create, edit, and delete combos to trigger actions on simultaneous key presses
 - Import physical layouts from KLE (Keyboard Layout Editor) JSON
-- Export and import full layouts, macros, and custom keys as portable JSON files
+- Export and import full layouts, macros, custom keys, and combos as portable JSON files
 - Monitor raw HID communication in Developer Mode
 - Receive non-intrusive in-app feedback for every device operation via the global notification system
 
@@ -71,26 +72,34 @@ configurator/
 │   ├── KeyboardLayoutEditor.tsx        — Always-visible layout editor: visual matrix editor, KLE/JSON portability
 │   ├── MacrosDashboard.tsx             — Sidebar panel: Macro CRUD + Export/Import
 │   ├── CustomKeysDashboard.tsx         — Sidebar panel: Custom Key CRUD + Export/Import
+│   ├── CombosDashboard.tsx             — Sidebar panel: Combo CRUD + Export/Import
 │   ├── StatusWidget.tsx                — Header widget: BLE/USB/Split status indicators
 │   ├── SplitDashboard.tsx              — "Split" section: Pairing, role swap, latency, remote matrix visualizer
-│   ├── DeviceDashboard.tsx             — Device settings: name, split link, BLE identity (rendered inside SettingsModal)
+│   ├── DeviceDashboard.tsx             — Device settings: name, split link (rendered inside SettingsModal)
+│   ├── DeviceIdentityDashboard.tsx     — Device identity: name, split variant, and shared BLE ID
 │   │
 │   ├── components/
 │   │   ├── Background3D.tsx            — Full-page 3D keyboard background (React Three Fiber; procedural geometry, split detection, Minkowski-sum baseplates)
-│   │   ├── DevControlsPanel.tsx        — Developer Mode raw log viewer (legacy; now invoked via DevConsoleModal)
-│   │   ├── MacroEditorModal.tsx        — Full macro editor with recording, element list, drag-and-drop
+│   │   ├── DevControlsPanel.tsx        — Developer Mode raw log viewer
+│   │   ├── MacroEditorModal.tsx        — Wraps timeline editor and manages mode selection
 │   │   ├── MacroModeModal.tsx          — Inline modal to change a macro's execution mode
-│   │   ├── MacroPreview.tsx            — Read-only summary of a macro's elements for the card view
-│   │   ├── MacroIcons.tsx              — Execution mode icon components + getModeBadge() helper
-│   │   ├── ExportModal.tsx             — Multi-select modal to choose which macros to export
-│   │   ├── ImportModal.tsx             — Preview + confirm modal for importing a JSON macro file
+│   │   ├── MacroListEditor.tsx         — Linear list-based macro event editor
+│   │   ├── MacroPreview.tsx            — Visual preview widget for macros
+│   │   ├── MacroIcons.tsx              — SVG icons specific to macro modes
+│   │   ├── timeline/                   — Visual macro timeline (`MacroTimelineEditor.tsx`, `TimelineBlock.tsx`, etc)
+│   │   ├── ComboKeySelector.tsx        — Visual grid selector for physical keys in combos
+│   │   ├── ComboPreview.tsx            — Visual read-only preview of combo keys
 │   │   ├── SearchableKeyModal.tsx      — Searchable key picker (HID keys, custom keys, macros, transparent)
 │   │   ├── SidebarIcons.tsx            — SVG icons used in the main application navigation sidebar/header
-│   │   └── Icons.tsx                   — Reusable SVG icon components (ActionTapIcon, etc.)
+│   │   ├── Icons.tsx                   — Reusable SVG icon components (ActionTapIcon, etc.)
+│   │   ├── ExportModal.tsx             — Modal for exporting configurations
+│   │   ├── ImportModal.tsx             — Modal for importing configurations
+│   │   └── KeyActionPopover.tsx        — Contextual popover for key assignments
 │   │
 │   ├── hooks/
 │   │   ├── useMacros.ts                — Macro state + all device operations (fetch, save, delete)
 │   │   ├── useCustomKeys.ts            — Custom key state + all device operations
+│   │   ├── useCombos.ts                — Combo state + device operations enforcing combo limits
 │   │   └── useConfirm.tsx              — Promise-based confirm dialog (renders portal, resolves on OK/Cancel)
 │   │
 │   ├── services/
@@ -110,6 +119,8 @@ configurator/
 │   │   ├── device.ts                   — CommandResponse, DeviceStatus, LogMessage, PhysKey, LayerData, callbacks, NotificationType
 │   │   ├── macros.ts                   — Macro, MacroElement, MacroAction, MacroLimits, ImportableMacro
 │   │   ├── customKeys.ts               — CustomKey, CustomKeyPR, CustomKeyMA
+│   │   ├── combos.ts                   — Combo definition types
+│   │   ├── timeline.ts                 — Visual timeline block types
 │   │   └── index.ts                    — Barrel re-export
 │   │
 │   └── utils/
@@ -117,7 +128,11 @@ configurator/
 │       ├── kleParser.ts                — Parses KLE (Keyboard Layout Editor) JSON into PhysKey[][]
 │       ├── layoutUtils.ts              — Physical layout JSON parse + serialize
 │       ├── fileUtils.ts                — saveJsonFile(): File System Access API + <a> fallback
-│       └── withTimeout.ts              — withTimeout<T>(promise, ms): wraps any promise with a deadline; throws TimeoutError on expiry
+│       ├── keycapGeometry.ts           — 3D CSG generation for keycaps via three-bvh-csg
+│       ├── macroTimelineAdapter.ts     — Converter between MacroElements and visual TimelineBlocks
+│       ├── withTimeout.ts              — withTimeout<T>(promise, ms): wraps any promise with a deadline; throws TimeoutError on expiry
+│       ├── keyColors.ts                — Color constants and mapping for 3D visual renderer
+│       └── layoutProcessor.tsx         — Helper for physical layout coordinate processing
 ```
 
 ---
@@ -237,7 +252,7 @@ If the device disconnects unexpectedly while `wantConnection` is true, `HIDTrans
 
 The stores hold **typed actions** that accept a `DeviceController` argument, keeping the async device logic inside the store rather than leaking into components.
 
-> **Note:** The current `App.tsx` + hooks architecture does **not** read from the device/macro/customKey Zustand stores — it manages its own local state and uses `useMacros` / `useCustomKeys` hooks directly. The Zustand stores are prepared infrastructure for a future refactor. The exception is `notificationStore`, which **is actively used** by all dashboard components and `App.tsx` for UI feedback.
+> **Note:** The current `App.tsx` + hooks architecture reads and mutates state via dedicated hooks (`useMacros`, `useCustomKeys`, `useCombos`). The global Zustand stores (except `notificationStore` and `layoutStore`) are prepared infrastructure for a future refactor. `notificationStore` is actively used by all dashboard components for UI feedback.
 
 ### React hooks (`src/hooks/`)
 
@@ -245,7 +260,8 @@ The stores hold **typed actions** that accept a `DeviceController` argument, kee
 |-----------------|------------------------------------------|------------------------------|
 | `useMacros`     | macros[], macroLimits, fetch/save/delete | `App.tsx`                    |
 | `useCustomKeys` | customKeys[], fetch/save/delete          | `App.tsx`                    |
-| `useConfirm`    | confirmation dialog                      | `useMacros`, `useCustomKeys` |
+| `useCombos`     | combos[], comboLimits, fetch/save/delete | `App.tsx`                    |
+| `useConfirm`    | confirmation dialog                      | `useMacros`, `useCustomKeys`, `useCombos` |
 
 **`useMacros` internal pattern:** Uses a `macrosRef` (always up-to-date) alongside `useState` because async callbacks (e.g. the retry loop in `fetchMacros`) run as microtasks and would read stale closure state from `useState`. The ref is always the authoritative list; `setMacros` is called alongside every `macrosRef` update via the internal `syncMacros()` helper. An `optimistic reservation` pattern is used for new macros: the ID is reserved in state before the USB write, preventing collisions when multiple macros are created quickly.
 
@@ -278,18 +294,102 @@ Layer 0 (Base) is the active layout by default. Layers 1–3 (FN1–FN3) are act
 
 Each layer is a `number[][]` (6 × 18 matrix of action codes). The configurator loads all 4 layers from the device on connect, lets you edit them visually, and saves them one at a time via `CFG_KEY_LAYER_0`–`CFG_KEY_LAYER_3`.
 
-### Physical layout
+## The Physical Layout System
 
-A "physical layout" is a flat `PhysKey[]` array describing the visual position and size of each key (`row`, `col`, `x`, `y`, `w`, `h` in key units). It is stored on the device separately from keymaps (as `CFG_KEY_PHYSICAL_LAYOUT`) and controls how the visual editor renders keys.
+The physical layout describes **where each key sits on the desk** — not what it does. It drives the visual rendering in `KeyboardLayoutEditor.tsx` and is stored persistently by [[CONFIG_MODULE|`cfg_physical.c`]] on the device.
 
-If no physical layout is stored on the device, the editor falls back to a generic grid.
+### On-Wire Format
 
-### KLE import
+The firmware stores and returns a JSON blob (up to 4096 bytes):
 
-The editor accepts **KLE (Keyboard Layout Editor) raw JSON** pasted into a text area. `parseKleJson()` in `utils/kleParser.ts` converts it into a `PhysKey[][]`. After parsing:
+```json
+{
+  "rows": 6,
+  "cols": 18,
+  "layout": [
+    [row, col, w×100, h×100, x×100, y×100,  ...repeat per key...],
+    ...one array per visual row...
+  ],
+  "rotation": {
+    "row-col": [r×10, rx×100, ry×100]
+  }
+}
+```
 
-1. Bounds validation checks that no key has `row >= MATRIX_ROWS` or `col >= MATRIX_COLS`. Out-of-bounds keys show an error and abort.
-2. On success, `setPhysicalLayout(parsed)` updates the local state and the "Save Physical Layout" button pushes it to the device.
+- Each key occupies **6 consecutive integers** in its visual-row array. Dimensions are scaled by 100 to avoid floating-point in NVS.
+- The optional `rotation` side-map records rotation data for keys that are not axis-aligned (e.g., angled thumb clusters). It is keyed by `"row-col"` string so old firmware that ignores unknown JSON fields is unaffected.
+- `r` is scaled by **10** (not 100) to preserve one decimal place of precision for common angles like `±15.5°`.
+
+Parsing and serialization live in `configurator/src/utils/layoutUtils.ts` (`parsePhysicalLayoutJson` / `serializePhysicalLayout`).
+
+### In-App Representation (`PhysKey`)
+
+```ts
+interface PhysKey {
+    row: number;   // matrix row (used to look up action codes in layer data)
+    col: number;   // matrix column
+    w: number;     // width in KLE units
+    h: number;     // height in KLE units
+    x: number;     // absolute X position (top-left corner, KLE units)
+    y: number;     // absolute Y position (top-left corner, KLE units)
+    r?: number;    // rotation angle in degrees (positive = clockwise)
+    rx?: number;   // rotation origin X (KLE units, absolute)
+    ry?: number;   // rotation origin Y (KLE units, absolute)
+}
+```
+
+### Visual Rendering
+
+`KeyboardLayoutEditor.tsx` renders each `PhysKey` as an absolutely-positioned `<button>` inside a single `position: relative` container:
+
+```
+left  = (pk.x - minKeyX) × 3.2rem
+top   = (pk.y - minKeyY) × 3.2rem
+width = pk.w × 3.2rem − 0.25rem   (gap)
+height = pk.h × 3.2rem − 0.25rem  (gap)
+```
+
+For rotated keys, a CSS transform is applied so the visual rotation matches KLE exactly:
+```css
+transform: rotate(pk.r deg);
+transform-origin: (pk.rx − pk.x) × 3.2rem  (pk.ry − pk.y) × 3.2rem;
+```
+
+The bounding box of the container is computed by rotating the four corners of every key mathematically, so rotated thumb clusters never clip or overflow the container.
+
+---
+
+## KLE Import Pipeline
+
+The configurator can import a physical layout directly from **Keyboard Layout Editor** JSON (copy-pasted from keyboard-layout-editor.com). The pipeline lives in `configurator/src/utils/kleParser.ts`.
+
+### KLE Parser Rules
+
+The parser implements the full KLE state machine, including the rotation spec that most community parsers get wrong:
+
+| State variable | Reset behaviour |
+|---|---|
+| `currentX` | Resets to `0` at the start of each KLE row |
+| `currentY` | Accumulates; advances by `+1` at end of each row |
+| `currentR`, `currentRx`, `currentRy` | **Persistent** across rows — only change when explicitly set |
+
+Critical ordering inside each property object `{...}`:
+1. `rx` → `currentX = rx`, **`currentY = currentRy`** (Y snaps back to the stored rotation origin)
+2. `ry` → `currentY = ry`, `currentRy = ry`
+3. `r` → `currentR = r`
+4. `x`, `y` → applied as **offsets** on top of the (possibly reset) position
+
+Step 1 is the most commonly mis-implemented rule. When `rx` is set without `ry`, `currentY` must still snap to the last stored `currentRy`. This is what makes asymmetric thumb-cluster pairs (where only the first key sets `ry`) land in the correct symmetric position.
+
+### Post-Parse Corrections
+
+After the raw parse, two normalization passes run:
+
+1. **Auto-anchor**: Shifts the entire layout so the minimum `(x, y)` across all keys is `(0, 0)`. The rotation origins `(rx, ry)` are shifted by the same amount to preserve geometry.
+
+2. **Collision resolution**: `Math.round(x)` and `Math.round(y)` are used as the matrix `col`/`row`. For split keyboards, rotated thumb-cluster keys often round to the same integer pair as a key in the main body. When a collision is detected, `col` is incremented until a free slot is found, guaranteeing every physical key has a unique `{row, col}` identity. The user can then correct the matrix assignments using the row/col overlay in Developer Mode.
+
+---
 
 ### Test mode / Row-Col Edit
 
@@ -337,15 +437,21 @@ type MacroElement =
 | 6          | ↺⏻   | repeat   | Toggle: press to start looping, press again to cancel immediately       |
 | 7          | N×    | burst    | Run exactly `repeatCount` times in rapid succession                     |
 
-### Recording flow
+### Recording flow & Visual Timeline Editor
+
+Macros are managed using both a traditional linear list-view and a visual track-based timeline editor (`components/timeline/MacroTimelineEditor.tsx`). The two views live together and are switchable. `macroTimelineAdapter.ts` converts the linear `MacroElement` array into layered `TimelineBlock` tracks per physical key for the timeline representation.
 
 In `MacroEditorModal`, clicking **Record** starts a `keydown`/`keyup` listener. While recording:
-- Each physical key press appends a `{ type: 'key', key: hid_code, action: 'tap' }` element.
+- Each physical key generates a discrete block representing its hold duration. 
 - The `BROWSER_CODE_TO_HID` map in `KeyDefinitions.ts` converts browser `event.code` strings to HID usage codes.
-- A `recordingStateRef` mirrors `isRecording` state for use inside imperative event listeners (prevents stale closure).
+- **Immediate Execution:** Leading delays on the first keypress are deliberately ignored to ensure the macro triggers instantly.
 - **Timeline Performance Optimization**: The `updatePlayhead` animation loop explicitly separates DOM Reads (e.g. `el.clientWidth`, `el.scrollLeft`) from DOM Writes (e.g. `style.width`, `style.left`, `style.minWidth`) into discrete phases. It also batches container width expansion in large 2000px chunks. This strict enforcement of the DOM Read-Write cycle completely eliminates synchronous layout thrashing (forced reflows) ensuring recording remains fluid at 60 FPS without high CPU usage.
 
-Elements can also be added manually from a searchable key picker, re-ordered by drag-and-drop, and each element allows customizing the action (`tap`/`press`/`release`) and `inlineSleep`.
+**Interactive Timeline Features:**
+- **Zooming:** Scroll with `Ctrl` to zoom the timeline dynamically. Default scale is 1px-per-ms.
+- **Marquee Selection:** Click and drag in the timeline background to multi-select blocks.
+- **Drag & Drop:** Selected blocks can be dragged horizontally to adjust timing or right-clicked to add precise delays.
+- **Add Key/Sleep:** Use the toolbar to insert manual `sleep` delays or search for specific HID keys to insert via `SearchableKeyModal`.
 
 ### Device limits
 
@@ -453,11 +559,29 @@ Fetch single: `CFG_KEY_COMBO_SINGLE` (GET, body: `{ id }`).
 Save: `CFG_KEY_COMBO_SINGLE` (SET, body: full `Combo` object).
 Delete: `CFG_KEY_COMBO_SINGLE` (SET, body: `{ delete: id }`).
 
-Up to 32 combos are supported per device (`COMBO_MAX`).
+Up to 32 combos are supported per device (`COMBO_MAX`). The UI enforces combo limit checks upon initial fetch.
+
+### UI Components
+
+Combos are visually built using the `ComboKeySelector.tsx` component, which overlays an interactive grid representing the physical layout. Users select the target physical keys by clicking them directly on the grid, and `ComboPreview.tsx` generates a visual summary for the dashboard cards.
 
 ---
 
-## 10. Developer Mode
+
+## 10. Data Portability (Export/Import)
+
+The configurator supports full configuration portability via JSON files, allowing users to backup their settings or share layouts:
+
+- **Full Layouts**: The "..." menu in the Layout section provides options to export or import the entire layer set and (in Dev Mode) the physical layout geometry.
+- **Macros**: The Macros dashboard allows selective export of macro sequences and batch import from JSON.
+- **Custom Keys**: Similar to macros, custom key rules can be exported and imported to preserve complex behaviors.
+- **Combos**: Combo definitions can also be fully exported and imported from JSON.
+
+Imported data is validated against matrix bounds and device limits before being written to the device.
+
+---
+
+## 11. Developer Mode
 
 Developer Mode is toggled by typing the **Developer Code** while the application is focused. There is no visible button for this to prevent accidental activation:
 `↑` `↑` `↓` `↓` `←` `→` `←` `→` `B` `A`
@@ -496,7 +620,63 @@ In Developer Mode, each macro card shows its raw HID action code: `ID: 0x4000` t
 
 ---
 
-## 11. Notification System
+## 12. Cross-Module Connections
+
+### [[USB_MODULE]] — The Communication Pipe
+
+All configurator↔firmware traffic flows through the USB COMM channel (`ITF_NUM_HID_COMM`). The configurator mirrors the firmware's protocol constants word-for-word in `types/protocol.ts`:
+- Same `VID/PID` for device discovery
+- Same `COMM_REPORT_SIZE = 63`, `MAX_PAYLOAD_LENGTH = 58`
+- Same flag byte definitions (`FIRST`, `MID`, `LAST`, `ACK`, `NAK`, etc.)
+- Same CRC-8 polynomial and table
+
+Any mismatch between `types/protocol.ts` and `usb_defs.h` / `cfgmod.h` will break communication silently (packets will CRC-fail or be routed to the wrong module).
+
+### [[CONFIG_MODULE]] — Read/Write Everything
+
+The configurator is the primary client of `cfg_usb_callback()`. Every user action maps to a GET or SET command on a specific `key_id`:
+
+| User Action | Command | Key ID |
+|---|---|---|
+| Open "Layout" section | GET | `CFG_KEY_LAYER_0..3` |
+| Save layer changes | SET | `CFG_KEY_LAYER_0..3` |
+| Open "Layout" (dev mode) | GET | `CFG_KEY_PHYSICAL_LAYOUT` |
+| Save physical layout | SET | `CFG_KEY_PHYSICAL_LAYOUT` |
+| Open "Macros & CKs" | GET | `CFG_KEY_MACROS`, `CFG_KEY_MACRO_LIMITS` |
+| Edit a macro | GET / SET | `CFG_KEY_MACRO_SINGLE` |
+| Open "Macros & CKs" | GET | `CFG_KEY_CKEYS` |
+| Edit a custom key | GET / SET | `CFG_KEY_CKEY_SINGLE` |
+| Open "Macros & CKs" | GET | `CFG_KEY_COMBOS`, `CFG_KEY_COMBO_LIMITS` |
+| Edit a combo | GET / SET | `CFG_KEY_COMBO_SINGLE` |
+| Open "Identity" (dev mode) | GET | `CFG_KEY_SYSTEM` |
+| Save identity | SET | `CFG_KEY_SYSTEM` (name, mirror_cols, variant) |
+
+### [[STATUS_MODULE]] — Live State Display
+
+The `StatusWidget.tsx` component subscribes to unsolicited status pushes from the firmware. On initial connection, `App.tsx` sends a `MODULE_STATUS` poll to request an immediate snapshot before any BLE or split event fires. The widget maps the JSON fields to human-readable indicators:
+
+```json
+{ "mode": 1, "profile": 2, "pairing": -1, "bitmap": 7, "split_state": 4, "split_role": 1 }
+```
+
+### [[SPLIT_MODULE]] — Split Keyboard Control
+
+`SplitDashboard.tsx` sends `MODULE_SPLIT` commands for pairing, unpairing, role swap, and RTT benchmarking. It also uses `MODULE_BLE` to toggle BLE routing or connect/pair profiles. If the plugged-in half is the slave, the firmware transparently proxies these BLE commands to the master over the ESP-NOW link — the configurator does not need to know which half it is talking to.
+
+### [[KEYBOARD_MODULE]] — Key Test Mode
+
+The "Key Test" feature in `KeyboardLayoutEditor.tsx` uses `MODULE_SYSTEM` to inject simulated key presses into the firmware's matrix scanner:
+
+| Command | Byte | Effect |
+|---|---|---|
+| `SYS_CMD_INJECT_KEY` | `0x01` | Simulate press/release at `[row, col]` |
+| `SYS_CMD_CLEAR_INJECTED` | `0x02` | Release all injected keys |
+
+Injected keys pass through the full keyboard pipeline (layers, macros, custom keys) and produce real HID output. This lets the user verify that a layout change works before saving.
+
+---
+
+## 13. Notification System
 
 A global, non-intrusive toast notification system provides consistent user feedback across all dashboards. It replaces any use of `alert()` or local error state.
 
@@ -541,7 +721,7 @@ The notification system is used in every dashboard for all save, delete, import,
 
 ---
 
-## 12. Save Timeout Guard (`src/utils/withTimeout.ts`)
+## 14. Save Timeout Guard (`src/utils/withTimeout.ts`)
 
 All write operations to the device are wrapped with a 7-second timeout to prevent the UI from hanging indefinitely if the firmware does not respond.
 
@@ -565,7 +745,7 @@ On timeout, a `TimeoutError` is caught and surfaced as an `error` notification w
 
 ---
 
-## 13. Packet Flow: End-to-End Example
+## 15. Packet Flow: End-to-End Example
 
 **Fetching a single macro (id=2):**
 
@@ -597,7 +777,7 @@ App               useMacros           HIDTransport           Device
 
 ---
 
-## 14. Key Definitions & Action Code Ranges
+## 16. Key Definitions & Action Code Ranges
 
 Defined in `types/protocol.ts` and `KeyDefinitions.ts`:
 
@@ -613,7 +793,7 @@ Defined in `types/protocol.ts` and `KeyDefinitions.ts`:
 
 ---
 
-## 15. 3D Background Studio Environment (`Background3D.tsx` / `App.tsx` / `index.css`)
+## 17. 3D Background Studio Environment (`Background3D.tsx` / `App.tsx` / `index.css`)
 
 The configurator features a highly immersive, multi-layered background environment combining a **procedurally generated real-time 3D keyboard canvas** with an ultra-clean, minimalist studio vignette backdrop. It requires no external assets and relies entirely on runtime generation for lightweight execution.
 
@@ -639,7 +819,8 @@ To achieve a premium, high-end studio feel, the keyboard model avoids continuous
 ### 4. 3D Model Rendering Pipeline
 
 1. **Geometry source** — `Background3D.tsx` reads `physicalLayout` from `layoutStore`. If no layout is loaded, it renders a hardcoded 65% keyboard with realistic key colour assignments.
-2. **Key colouring** — each keycap is coloured according to the action code stored in the active layer at the key's `{row, col}` position, using `getKeyClass()` from `KeyDefinitions.ts`:
+2. **Keycap Geometry CSG** — `utils/keycapGeometry.ts` uses Constructive Solid Geometry via `three-bvh-csg` to generate high-fidelity physical representations of keycaps. Instead of standard prisms, it dynamically subtracts a rounded spherical capsule from a bevelled rectangular base extrusion. This provides extremely realistic geometric keycap dishes identical to physical OEM profiles without needing a single static model asset.
+3. **Key colouring** — each keycap is coloured according to the action code stored in the active layer at the key's `{row, col}` position, using `getKeyClass()` from `KeyDefinitions.ts`:
 
    | Key class | Colour |
    |---|---|
@@ -649,9 +830,9 @@ To achieve a premium, high-end studio feel, the keyboard model avoids continuous
    | System actions, macros, custom keys | Deep purple (`#6436b5`) |
    | Unassigned / transparent | Near-black (`#080b0f`) |
 
-3. **Split detection** — column gaps in the middle of the physical layout signal a split keyboard. The layout is split into two clusters, each rendered with independent ergonomic tenting (Z-axis roll) and a lateral gap.
-4. **Custom baseplates** — each cluster gets a backplate whose outline is computed via a **Minkowski sum on its 2D Convex Hull**: the hull of all key corners is inflated with smooth circular arcs at every vertex, then extruded into a bevelled 3D slab. This produces a rounded, organic silhouette that exactly matches each half's physical outline.
-5. **Rotation correctness** — KLE rotation pivots `(rx, ry)` are fully replicated in 3D: keys are placed inside a `<group>` at the pivot position, then the group is rotated, so angled thumb clusters land in their correct world positions without clipping.
+4. **Split detection** — column gaps in the middle of the physical layout signal a split keyboard. The layout is split into two clusters, each rendered with independent ergonomic tenting (Z-axis roll) and a lateral gap.
+5. **Custom baseplates** — each cluster gets a backplate whose outline is computed via a **Minkowski sum on its 2D Convex Hull**: the hull of all key corners is inflated with smooth circular arcs at every vertex, then extruded into a bevelled 3D slab. This produces a rounded, organic silhouette that exactly matches each half's physical outline.
+6. **Rotation correctness** — KLE rotation pivots `(rx, ry)` are fully replicated in 3D: keys are placed inside a `<group>` at the pivot position, then the group is rotated, so angled thumb clusters land in their correct world positions without clipping.
 
 ### Connection-driven visibility
 
@@ -684,3 +865,15 @@ To prevent conflicts between the 2D layout editor (dragging to select keys) and 
    - To prevent conflict with 2D dashboard interactivity, the handler utilizes a highly comprehensive `.closest()` selector filter. If a click starts on any interactive panel, column, modal, dropdown, header, button, input, or keyboard grid, the handler immediately aborts.
    - Any drag starting on the empty background space or around the 3D keyboard model initiates the rotation seamlessly, providing a robust, responsive, and cross-browser customizer experience without any dependency on standard DOM hit-testing constraints.
 
+---
+
+## 18. Global UI & Keyboard Shortcuts
+
+The application leverages extensive glassmorphism, separating visual logic from structural CSS modules (`sidebar.css`, `timeline.css`, `macros-dashboard.css`) to seamlessly composite translucent panels over the 3D rendering canvas.
+
+### Global Shortcuts
+- **`Escape`**: Closes active sidebars, modal dialogs, contextual popovers, and clears any active key selections on the grid.
+- **`Ctrl+1`**: Opens the Macros Dashboard sidebar.
+- **`Ctrl+2`**: Opens the Custom Keys Dashboard sidebar.
+- **`Ctrl+3`**: Opens the Combos Dashboard sidebar.
+- **`Ctrl+F`**: Rapidly focuses the global search bar located within the currently active dashboard for fast filtering.
