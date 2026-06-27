@@ -14,6 +14,7 @@ import {
 } from './types/protocol';
 import type { DeviceStatus } from './types/device';
 import { useNotificationStore } from './stores/notificationStore';
+import { useOnboardingStore } from './stores/onboardingStore';
 import { withTimeout, TimeoutError } from './utils/withTimeout';
 import './assets/css/device-dashboard.css';
 import './assets/css/split-dashboard.css';
@@ -388,6 +389,23 @@ const DeviceDashboard: React.FC<DeviceDashboardProps> = ({
                                 <span className="dd-char-count">{draft.device_name.length}/31</span>
                             </div>
                         </FieldGroup>
+
+                        <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                            <button
+                                className="btn btn-secondary btn-sm"
+                                style={{ fontSize: '0.75rem', opacity: 0.7 }}
+                                onClick={() => {
+                                    useOnboardingStore.getState().reset();
+                                }}
+                                title="Restart the onboarding tutorial from the beginning"
+                            >
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '0.4rem', verticalAlign: 'middle' }}>
+                                    <polyline points="1 4 1 10 7 10" />
+                                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+                                </svg>
+                                Replay Onboarding Tour
+                            </button>
+                        </div>
                     </DdSection>
 
                     {/* ── SPLIT LINK STATUS ───────────────────────────── */}

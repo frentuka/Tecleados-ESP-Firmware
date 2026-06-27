@@ -9,6 +9,8 @@ import ExportModal from './components/ExportModal';
 import ImportModal from './components/ImportModal';
 import { saveJsonFile } from './utils/fileUtils';
 import { useNotificationStore } from './stores/notificationStore';
+import EmptyState from './components/EmptyState';
+import macroEmptyAnim from './assets/lottie/macro-empty.json';
 import './assets/css/macros-dashboard.css';
 
 interface MacrosDashboardProps {
@@ -282,7 +284,14 @@ export default function MacrosDashboard({
 
             <div className="ckey-list-full list-scroll-area">
                 {macros.length === 0 && !isCreating ? (
-                    <div className="empty-state">No macros defined yet.</div>
+                    <EmptyState
+                        animation={macroEmptyAnim}
+                        title="No Macros Yet"
+                        description="Automate repetitive tasks with powerful macro sequences. Record keystrokes or build them visually."
+                        actionLabel="Create your first Macro"
+                        onAction={handleCreate}
+                        disabled={isAtMacroLimit}
+                    />
                 ) : (
                     <div className="macro-cards-list">
                         {sortedMacros.map((m, index) => (

@@ -9,6 +9,8 @@ import { getKeyName } from './KeyDefinitions';
 import { InfoIcon, AlertTriangleIcon } from './components/Icons';
 import { saveJsonFile } from './utils/fileUtils';
 import { useNotificationStore } from './stores/notificationStore';
+import EmptyState from './components/EmptyState';
+import comboEmptyAnim from './assets/lottie/combo-empty.json';
 import './assets/css/custom-keys-dashboard.css'; // Reusing CSS from custom keys for general layout
 
 interface CombosDashboardProps {
@@ -535,7 +537,14 @@ export default function CombosDashboard({ combos, comboLimits, macros, isDevelop
             <div className="ckey-list-full list-scroll-area">
                 <div className="macro-cards-list">
                     {sortedCombos.length === 0 ? (
-                        <div className="empty-state">No combos defined yet.</div>
+                        <EmptyState
+                            animation={comboEmptyAnim}
+                            title="No Combos Yet"
+                            description="Trigger actions by pressing multiple keys simultaneously. Perfect for quick shortcuts without switching layers."
+                            actionLabel="Create your first Combo"
+                            onAction={handleNew}
+                            disabled={combos.length >= maxCombos}
+                        />
                     ) : (
                         sortedCombos.map((c, index) => (
                             <div key={c.id} style={{ '--stagger-idx': index } as React.CSSProperties}>

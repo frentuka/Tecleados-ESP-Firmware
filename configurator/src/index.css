@@ -1034,6 +1034,9 @@ a,
 .settings-modal-overlay,
 .settings-modal-content,
 .devconsole-modal-overlay,
-.devconsole-modal-content {
+.devconsole-modal-content,
+.onboarding-overlay,
+.onboarding-tooltip,
+.onboarding-welcome-card {
   pointer-events: auto;
 }

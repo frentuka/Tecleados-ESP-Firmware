@@ -7,6 +7,8 @@ import { getKeyName, CKEY_BASE } from './KeyDefinitions';
 import { getCustomKeyBadge } from './components/MacroIcons';
 import { saveJsonFile } from './utils/fileUtils';
 import { useNotificationStore } from './stores/notificationStore';
+import EmptyState from './components/EmptyState';
+import ckeyEmptyAnim from './assets/lottie/ckey-empty.json';
 import './assets/css/custom-keys-dashboard.css';
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -666,7 +668,14 @@ export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMod
             <div className="ckey-list-full list-scroll-area">
                 <div className="macro-cards-list">
                     {sortedKeys.length === 0 ? (
-                        <div className="empty-state">No custom keys defined yet.</div>
+                        <EmptyState
+                            animation={ckeyEmptyAnim}
+                            title="No Custom Keys Yet"
+                            description="Transform any key into a multi-function powerhouse. Assign different actions for tapping, holding, or double-tapping."
+                            actionLabel="Create your first Custom Key"
+                            onAction={handleNew}
+                            disabled={customKeys.length >= CKEY_MAX}
+                        />
                     ) : (
                         sortedKeys.map((ck, index) => (
                             <div

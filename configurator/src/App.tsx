@@ -37,6 +37,8 @@ import './assets/css/sidebar.css';
 
 import Background3D from './components/Background3D';
 import { useLayoutStore } from './stores/layoutStore';
+import { useOnboardingStore } from './stores/onboardingStore';
+import OnboardingWizard from './components/onboarding/OnboardingWizard';
 import { MACRO_BASE, CKEY_BASE } from './KeyDefinitions';
 
 // Re-export types for backward compatibility — consumers can import from './App'
@@ -57,6 +59,7 @@ function App() {
 
   const [isConnected, setIsConnected] = useState(false);
   const setLayoutIsConnected = useLayoutStore(state => state.setIsConnected);
+  const hasCompletedOnboarding = useOnboardingStore(state => state.hasCompleted);
   const { notification, setNotification, showNotification } = useNotificationStore();
   const [displayedNotification, setDisplayedNotification] = useState<ConnectionNotification | null>(null);
   const [isNotificationHovered, setIsNotificationHovered] = useState(false);
@@ -212,6 +215,14 @@ function App() {
       setIsConnected(connected);
       setLayoutIsConnected(connected);
       if (!connected) setDeviceStatus(null);
+
+      // Auto-advance onboarding wizard from Step 0 → Step 1 on connect
+      if (connected && !useOnboardingStore.getState().hasCompleted) {
+        const { step, nextStep } = useOnboardingStore.getState();
+        if (step === 0) {
+          setTimeout(nextStep, 600);
+        }
+      }
 
       // Clear logs and add connection status as the first entry
       setLogs([{
@@ -621,7 +632,7 @@ function App() {
             onClearLog={() => setLogs([])}
           />
         </div>
-      ) : (
+      ) : hasCompletedOnboarding ? (
         <div className="disconnected-overlay">
           <div className="disconnected-content">
             <div className="disconnected-icon-wrapper">
@@ -644,7 +655,7 @@ function App() {
 
           </div>
         </div>
-      )}
+      ) : null}
 
       {/* Global Floating Notifications */}
       {((typeof displayedNotification?.message === 'string' && displayedNotification.message === 'PERMISSION_DENIED') || (typeof displayedNotification?.message === 'string' && displayedNotification.message.includes('System lock'))) && HIDTransport.isLinux() && (
@@ -769,6 +780,14 @@ function App() {
             </button>
           </div>
         )}
+
+      {/* Onboarding Wizard (renders above everything via portal) */}
+      {!hasCompletedOnboarding && (
+        <OnboardingWizard
+          isConnected={isConnected}
+          onConnect={handleConnect}
+        />
+      )}
     </div>
   );
 }
