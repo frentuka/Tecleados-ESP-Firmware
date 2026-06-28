@@ -103,6 +103,7 @@ interface DeviceDashboardProps {
     isDeveloperMode: boolean;
     deviceStatus: DeviceStatus | null;
     onLog: (text: string) => void;
+    onClose?: () => void;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -112,6 +113,7 @@ const DeviceDashboard: React.FC<DeviceDashboardProps> = ({
     isDeveloperMode,
     deviceStatus,
     onLog,
+    onClose,
 }) => {
     const { showNotification } = useNotificationStore();
 
@@ -396,6 +398,7 @@ const DeviceDashboard: React.FC<DeviceDashboardProps> = ({
                                 style={{ fontSize: '0.75rem', opacity: 0.7 }}
                                 onClick={() => {
                                     useOnboardingStore.getState().reset();
+                                    if (onClose) onClose();
                                 }}
                                 title="Restart the onboarding tutorial from the beginning"
                             >

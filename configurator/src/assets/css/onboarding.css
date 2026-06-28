@@ -239,6 +239,17 @@
     justify-content: center;
     align-items: center;
     z-index: 9002;
+    transition: opacity 0.35s ease, transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.onboarding-welcome-wrapper.entering {
+    opacity: 0;
+    transform: translateY(12px);
+}
+
+.onboarding-welcome-wrapper.visible {
+    opacity: 1;
+    transform: translateY(0);
 }
 
 .onboarding-welcome-card {

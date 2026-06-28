@@ -118,6 +118,8 @@ const STEPS = [
 
 export default function OnboardingWizard({ isConnected, onConnect }: OnboardingWizardProps) {
     const { step, nextStep, complete } = useOnboardingStore();
+    const [displayStep, setDisplayStep] = useState(step);
+    const [isTransitioning, setIsTransitioning] = useState(false);
     const [connectSuccess, setConnectSuccess] = useState(false);
     const [overlayState, setOverlayState] = useState<'entering' | 'visible' | 'exiting'>('entering');
 
@@ -127,9 +129,24 @@ export default function OnboardingWizard({ isConnected, onConnect }: OnboardingW
         return () => clearTimeout(timer);
     }, []);
 
+    // Handle step transitions smoothly
+    useEffect(() => {
+        if (step !== displayStep) {
+            setIsTransitioning(true);
+            const t1 = setTimeout(() => {
+                setDisplayStep(step);
+                const t2 = setTimeout(() => {
+                    setIsTransitioning(false);
+                }, 50);
+                return () => clearTimeout(t2);
+            }, 300); // Wait for tooltip to fade out
+            return () => clearTimeout(t1);
+        }
+    }, [step, displayStep]);
+
     // When connected during step 0, show success then advance
     useEffect(() => {
-        if (isConnected && step === 0 && !connectSuccess) {
+        if (isConnected && step === 0) {
             setConnectSuccess(true);
             const timer = setTimeout(() => {
                 nextStep();
@@ -137,7 +154,7 @@ export default function OnboardingWizard({ isConnected, onConnect }: OnboardingW
             }, 800);
             return () => clearTimeout(timer);
         }
-    }, [isConnected, step, connectSuccess, nextStep]);
+    }, [isConnected, step, nextStep]);
 
     const handleSkip = () => {
         setOverlayState('exiting');
@@ -157,7 +174,7 @@ export default function OnboardingWizard({ isConnected, onConnect }: OnboardingW
         }
     };
 
-    const currentStep = STEPS[step];
+    const currentStep = STEPS[displayStep];
 
     const content = createPortal(
         <div className={`onboarding-overlay ${overlayState}`}>
@@ -165,8 +182,9 @@ export default function OnboardingWizard({ isConnected, onConnect }: OnboardingW
                 target={currentStep.target}
                 tooltipPosition={currentStep.tooltipPosition}
                 visible={overlayState !== 'exiting'}
+                isTransitioning={isTransitioning}
             >
-                {step === 0 && (
+                {displayStep === 0 && (
                     <div className="onboarding-welcome-card">
                         <div className="onboarding-welcome-icon">
                             <KeyboardIcon />
@@ -194,7 +212,7 @@ export default function OnboardingWizard({ isConnected, onConnect }: OnboardingW
                     </div>
                 )}
 
-                {step === 1 && (
+                {displayStep === 1 && (
                     <>
                         <div className="onboarding-tooltip-title">
                             <LayersIcon />
@@ -223,7 +241,7 @@ export default function OnboardingWizard({ isConnected, onConnect }: OnboardingW
                     </>
                 )}
 
-                {step === 2 && (
+                {displayStep === 2 && (
                     <>
                         <div className="onboarding-tooltip-title">
                             <ZapIcon />

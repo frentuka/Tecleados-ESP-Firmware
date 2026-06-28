@@ -11,6 +11,8 @@ interface SpotlightOverlayProps {
     tooltipPosition?: 'top' | 'bottom' | 'left' | 'right';
     /** Whether the overlay is visible */
     visible?: boolean;
+    /** Whether the tooltip content is currently transitioning (fading out) */
+    isTransitioning?: boolean;
 }
 
 interface Rect {
@@ -26,6 +28,7 @@ export default function SpotlightOverlay({
     children,
     tooltipPosition = 'bottom',
     visible = true,
+    isTransitioning = false,
 }: SpotlightOverlayProps) {
     const [targetRect, setTargetRect] = useState<Rect | null>(null);
     const [tooltipStyle, setTooltipStyle] = useState<React.CSSProperties>({});
@@ -133,12 +136,14 @@ export default function SpotlightOverlay({
         void finalPosition; // used for future directional arrow
     }, [targetRect, tooltipPosition]);
 
-    // Animate tooltip in
+    // Animate tooltip in/out
     useEffect(() => {
-        setTooltipClass('entering');
-        const timer = setTimeout(() => setTooltipClass('visible'), 80);
-        return () => clearTimeout(timer);
-    }, [target]);
+        if (isTransitioning) {
+            setTooltipClass('entering');
+        } else {
+            setTooltipClass('visible');
+        }
+    }, [isTransitioning, target]);
 
     if (!visible) return null;
 
@@ -160,6 +165,7 @@ export default function SpotlightOverlay({
                         rx="16"
                         ry="16"
                         fill="black"
+                        style={{ transition: 'all 0.5s cubic-bezier(0.16, 1, 0.3, 1)' }}
                     />
                 </mask>
             </defs>
@@ -205,7 +211,7 @@ export default function SpotlightOverlay({
                 </div>
             ) : (
                 // No target = full-screen content (welcome card)
-                <div className="onboarding-welcome-wrapper">
+                <div className={`onboarding-welcome-wrapper ${tooltipClass}`}>
                     {children}
                 </div>
             )}

@@ -40,6 +40,7 @@ export default function SettingsModal({
                         isDeveloperMode={isDeveloperMode}
                         deviceStatus={deviceStatus}
                         onLog={onLog}
+                        onClose={onClose}
                     />
                 </div>
             </div>
