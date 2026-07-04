@@ -251,8 +251,10 @@ function ComboEditorModal({ combo, index, maxCombos, macros, isSaving, error, on
                                     When the combo fires, retroactively release the individual key actions that were already pressed.
                                 </div>
                             </div>
+                        </div>
 
-                            <label className="ckey-field-label" style={{ marginTop: '1rem' }}>Release Behavior</label>
+                        <div className="ckey-field" style={{ margin: 0 }}>
+                            <label className="ckey-field-label">Release Behavior</label>
                             <label className="ckey-field-label" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', margin: '0.5rem 0', fontWeight: 'normal', color: 'var(--text-color)' }}>
                                 <input
                                     type="checkbox"
