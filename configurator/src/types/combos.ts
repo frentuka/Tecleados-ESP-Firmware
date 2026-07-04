@@ -8,6 +8,7 @@ export interface Combo {
     cancelKeys: boolean;    // Default true: release individual keys when combo fires
     delayedPress: boolean;  // Default false: suppress keys during timeout window
     delayMs: number;        // Default 50: suppression window in ms (only when delayedPress=true)
+    releaseOnFirstKey: boolean; // Default true: release combo action when first key is released
 }
 
 export interface ComboLimits {

@@ -24,6 +24,7 @@ void combos_default(void *out_struct) {
     out->cancel_keys = true;
     out->delayed_press = false;
     out->delay_ms = 50;
+    out->release_on_first_key = true;
 }
 
 bool combos_deserialize(cJSON *root, void *out_struct) {
@@ -56,6 +57,9 @@ bool combos_deserialize(cJSON *root, void *out_struct) {
 
     item = cJSON_GetObjectItem(root, "delayMs");
     if (cJSON_IsNumber(item)) out->delay_ms = item->valueint;
+
+    item = cJSON_GetObjectItem(root, "releaseOnFirstKey");
+    if (cJSON_IsBool(item)) out->release_on_first_key = cJSON_IsTrue(item);
 
     item = cJSON_GetObjectItem(root, "activeLayers");
     if (cJSON_IsArray(item)) {
@@ -106,6 +110,7 @@ cJSON *combos_serialize(const void *in_struct) {
     cJSON_AddBoolToObject(root, "cancelKeys", in->cancel_keys);
     cJSON_AddBoolToObject(root, "delayedPress", in->delayed_press);
     cJSON_AddNumberToObject(root, "delayMs", in->delay_ms);
+    cJSON_AddBoolToObject(root, "releaseOnFirstKey", in->release_on_first_key);
 
     cJSON *layers = cJSON_AddArrayToObject(root, "activeLayers");
     if (layers) {
@@ -178,6 +183,7 @@ cJSON *combos_serialize_outline(const cfg_combo_index_t *idx) {
                 cJSON_AddBoolToObject(item, "strictOrder", cmb->strict_order);
                 cJSON_AddBoolToObject(item, "cancelKeys", cmb->cancel_keys);
                 cJSON_AddBoolToObject(item, "delayedPress", cmb->delayed_press);
+                cJSON_AddBoolToObject(item, "releaseOnFirstKey", cmb->release_on_first_key);
                 
                 cJSON *keys_arr = cJSON_AddArrayToObject(item, "keys");
                 if (keys_arr) {

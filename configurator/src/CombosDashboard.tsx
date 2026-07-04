@@ -69,6 +69,7 @@ function ComboCard({ combo, index, isSelected, onClick, onDelete, macros, isDeve
                     {combo.strictOrder && <span className="ckey-badge" style={{ padding: '0.1rem 0.35rem', borderRadius: '4px', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}>Ordered</span>}
                     {combo.delayedPress && <span className="ckey-badge" style={{ padding: '0.1rem 0.35rem', borderRadius: '4px', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}>Delayed</span>}
                     {combo.cancelKeys && <span className="ckey-badge" style={{ padding: '0.1rem 0.35rem', borderRadius: '4px', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}>Cancel</span>}
+                    {!combo.releaseOnFirstKey && <span className="ckey-badge" style={{ padding: '0.1rem 0.35rem', borderRadius: '4px', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}>Release All</span>}
                 </div>
             </div>
 
@@ -248,6 +249,33 @@ function ComboEditorModal({ combo, index, maxCombos, macros, isSaving, error, on
                                 </div>
                                 <div style={{ fontStyle: 'italic' }}>
                                     When the combo fires, retroactively release the individual key actions that were already pressed.
+                                </div>
+                            </div>
+
+                            <label className="ckey-field-label" style={{ marginTop: '1rem' }}>Release Behavior</label>
+                            <label className="ckey-field-label" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', margin: '0.5rem 0', fontWeight: 'normal', color: 'var(--text-color)' }}>
+                                <input
+                                    type="checkbox"
+                                    checked={local.releaseOnFirstKey}
+                                    onChange={e => setLocal({ ...local, releaseOnFirstKey: e.target.checked })}
+                                />
+                                Fast Release (on first key release)
+                            </label>
+                            <div style={{
+                                marginTop: '0.25rem',
+                                padding: '0.5rem 0.75rem',
+                                background: 'rgba(0, 122, 255, 0.05)',
+                                borderRadius: '4px',
+                                fontSize: '0.75rem',
+                                color: 'var(--text-secondary)',
+                                lineHeight: '1.4',
+                                display: 'flex', gap: '0.5rem', alignItems: 'flex-start'
+                            }}>
+                                <div style={{ flexShrink: 0, marginTop: '1px', color: '#007aff' }}>
+                                    <InfoIcon size={14} />
+                                </div>
+                                <div style={{ fontStyle: 'italic' }}>
+                                    If enabled, the action is released as soon as any combo key is released. Otherwise, it waits for all keys to be released.
                                 </div>
                             </div>
                         </div>
@@ -442,7 +470,8 @@ export default function CombosDashboard({ combos, comboLimits, macros, isDevelop
             strictOrder: false,
             cancelKeys: true,
             delayedPress: false,
-            delayMs: 50
+            delayMs: 50,
+            releaseOnFirstKey: true
         });
         setError(null);
     };
