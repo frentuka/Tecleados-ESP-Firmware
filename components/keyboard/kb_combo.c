@@ -253,10 +253,12 @@ bool kb_combo_process_key(uint8_t row, uint8_t col, bool is_pressed, uint8_t lay
                 rt->keys_pressed[trigger_idx] = false;
                 if (rt->matched_count > 0) rt->matched_count--;
 
-                if (rt->is_active && rt->matched_count == 0) {
-                    // All combo keys released, release combo action
-                    kb_macro_process_action(cmb->action, false);
-                    rt->is_active = false;
+                if (rt->is_active) {
+                    if (cmb->release_on_first_key || rt->matched_count == 0) {
+                        // All combo keys released, or release on first key, release combo action
+                        kb_macro_process_action(cmb->action, false);
+                        rt->is_active = false;
+                    }
                 }
             }
         }

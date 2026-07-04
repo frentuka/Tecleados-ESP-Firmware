@@ -23,6 +23,7 @@ typedef struct {
     bool             cancel_keys;      // Default true: release individual keys when combo fires
     bool             delayed_press;    // Default false: suppress keys during timeout window
     uint16_t         delay_ms;         // Default 50: suppression window in ms (only when delayed_press=true)
+    bool             release_on_first_key; // Default true: release combo action when first key is released
 } cfg_combo_t;
 
 typedef struct {
