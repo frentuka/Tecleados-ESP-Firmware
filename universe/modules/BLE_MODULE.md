@@ -30,13 +30,13 @@ Under the hood, `blemod` uses the **NimBLE** host, which is Espressif's open-sou
 
 **Security** — "Just Works" pairing (no PIN, no passkey), with `sm_sc = 1` (Secure Connections / ECDH). Enough for a keyboard. Bond keys are stored in NVS by NimBLE automatically via `ble_store_config`.
 
-**Pairing credential ownership** — `blemod` does NOT write credentials to app-level NVS directly. It fires `BLE_EVENT_PAIRING_COMPLETE` (with the peer MAC address as payload) and lets [[CONFIG_MODULE]] (`cfg_ble`) handle the save. This keeps persistence concerns out of the BLE stack.
+**Pairing credential ownership** — `blemod` does NOT write credentials to app-level NVS directly. It fires `BLE_EVENT_PAIRING_COMPLETE` (with the peer MAC address as payload) and lets [CONFIG_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/CONFIG_MODULE.md) (`cfg_ble`) handle the save. This keeps persistence concerns out of the BLE stack.
 
 ---
 
 ## Connections to Other Modules
 
-### 1. [[KEYBOARD_MODULE]] — HID Report Delivery
+### 1. [KEYBOARD_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/KEYBOARD_MODULE.md) — HID Report Delivery
 
 **File:** `components/keyboard/kb_report.c`
 
@@ -64,7 +64,7 @@ esp_err_t kb_send_report(const uint8_t *v_nkro) {
 
 ---
 
-### 2. [[KEYBOARD_MODULE]] — BLE System Actions (via `ble_controller`)
+### 2. [KEYBOARD_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/KEYBOARD_MODULE.md) — BLE System Actions (via `ble_controller`)
 
 **File:** `main/ble_controller.c`
 
@@ -91,7 +91,7 @@ This is critical — the slave's tap/hold engine would otherwise fire with diffe
 
 ---
 
-### 3. [[SPLIT_MODULE]] — Radio Suspend and BLE State Proxying
+### 3. [SPLIT_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/SPLIT_MODULE.md) — Radio Suspend and BLE State Proxying
 
 **Files:** `components/split/splitmod.c`
 
@@ -118,7 +118,7 @@ static void apply_ble_routing_for_role(split_role_t role) {
 
 #### 3b. Bond Sync After Role Swap
 
-When a role swap happens, the new master needs the BLE bond keys (LTKs) that the old master had negotiated with the host. This is handled entirely by [[CONFIG_MODULE]] in `cfg_ble.c`:
+When a role swap happens, the new master needs the BLE bond keys (LTKs) that the old master had negotiated with the host. This is handled entirely by [CONFIG_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/CONFIG_MODULE.md) in `cfg_ble.c`:
 
 - On successful pairing, `cfg_ble` fires `CONFIG_EVENT_KIND_UPDATED` with kind `CFGMOD_KIND_BLE_BOND`.
 - `splitmod` listens to config updates and pushes the bond blob to the slave via `SPLIT_MSG_CONFIG_SYNC`.
@@ -130,7 +130,7 @@ When a role swap happens, the new master needs the BLE bond keys (LTKs) that the
 
 The slave's screen, LEDs, and configurator display need to show the correct BLE connection state — which profile is active, how many are connected, whether pairing is in progress — even though its own BLE radio is off.
 
-**How:** Every time a BLE event fires on the master (`BLE_EVENT_PROFILE_CONNECTED`, `BLE_EVENT_ROUTING_CHANGED`, etc.), `splitmod` listens via `on_ble_event_for_slave()` and calls `send_ble_status_to_slave()`. This function packages the current BLE state into a `SPLIT_MSG_BLE_STATUS` packet and sends it to the slave over ESP-NOW. On the slave side, this triggers `SPLIT_EVENT_BLE_STATUS_UPDATED`, which [[STATUS_MODULE]] consumes to update whatever display element is showing connection state.
+**How:** Every time a BLE event fires on the master (`BLE_EVENT_PROFILE_CONNECTED`, `BLE_EVENT_ROUTING_CHANGED`, etc.), `splitmod` listens via `on_ble_event_for_slave()` and calls `send_ble_status_to_slave()`. This function packages the current BLE state into a `SPLIT_MSG_BLE_STATUS` packet and sends it to the slave over ESP-NOW. On the slave side, this triggers `SPLIT_EVENT_BLE_STATUS_UPDATED`, which [STATUS_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/STATUS_MODULE.md) consumes to update whatever display element is showing connection state.
 
 #### 3d. BLE Command Proxy ← SLAVE Configurator
 
@@ -153,7 +153,7 @@ The slave's `ble_usb_callback()` checks `splitmod_get_role()`. If SLAVE and conn
 
 ---
 
-### 4. [[CONFIG_MODULE]] — Profile Persistence and Bond Management
+### 4. [CONFIG_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/CONFIG_MODULE.md) — Profile Persistence and Bond Management
 
 **Files:** `components/config_module/cfg_ble.c`, `cfg_ble.h`
 
@@ -177,7 +177,7 @@ esp_event_post(BLE_EVENTS, BLE_EVENT_PAIRING_COMPLETE, &result, sizeof(result), 
 
 ---
 
-### 5. [[USB_MODULE]] — Mutual Exclusivity
+### 5. [USB_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/USB_MODULE.md) — Mutual Exclusivity
 
 **File:** `components/keyboard/kb_report.c`
 
@@ -195,7 +195,7 @@ When BLE routing is disabled:
 
 ---
 
-### 6. [[STATUS_MODULE]] — Event Consumer
+### 6. [STATUS_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/STATUS_MODULE.md) — Event Consumer
 
 **File:** `components/status_module/statusmod.c`
 

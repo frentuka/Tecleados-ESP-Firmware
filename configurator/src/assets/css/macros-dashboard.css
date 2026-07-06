@@ -25,11 +25,41 @@
   padding: 1.5rem;
 }
 
+/* Sidebar Search Bar */
+.sidebar-search-container {
+  padding: 0 1.25rem;
+  margin-bottom: 0.75rem;
+  flex-shrink: 0;
+}
+
+.sidebar-search-input {
+  width: 100%;
+  padding: 0.5rem 0.85rem 0.5rem 2rem;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  transition: all 0.2s;
+  background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.4)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>');
+  background-repeat: no-repeat;
+  background-position: 0.6rem center;
+}
+
+.sidebar-search-input:focus {
+  outline: none;
+  border-color: rgba(88, 166, 255, 0.5);
+  background-color: rgba(13, 17, 23, 0.8);
+  box-shadow: 0 0 12px rgba(88, 166, 255, 0.12);
+}
+
 .list-scroll-area {
   flex: 1;
   overflow-y: auto;
-  padding-right: 0.5rem;
-  margin-top: 0;
+  overflow-x: hidden;
+  padding: 0 1.25rem 1rem 1.25rem;
+  margin-top: 1.25rem;
+  min-height: 0;
 }
 
 .macro-cards-list {
@@ -42,23 +72,81 @@
   display: flex;
   flex-direction: row;
   align-items: center;
-  background: rgba(30, 39, 50, 0.95);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 10px;
+  background: linear-gradient(
+    165deg,
+    rgba(25, 33, 46, 0.5) 0%,
+    rgba(18, 24, 34, 0.38) 100%
+  );
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-top-color: rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
   padding: 1rem 1.15rem !important;
   min-height: 80px;
   cursor: pointer;
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: all 0.28s cubic-bezier(0.16, 1, 0.3, 1);
   position: relative;
   overflow: hidden;
   gap: 1rem;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.25),
+    0 8px 24px rgba(0, 0, 0, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  opacity: 1;
+  transform: none;
+}
+
+.macro-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.1) 20%,
+    rgba(255, 255, 255, 0.06) 50%,
+    rgba(255, 255, 255, 0.1) 80%,
+    transparent 100%
+  );
+  pointer-events: none;
+}
+
+.sidebar-tab-content.active .macro-card {
+  animation: staggerSlideIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  animation-delay: calc(0.15s + var(--stagger-idx, 0) * 0.04s);
+}
+
+@keyframes staggerSlideIn {
+  0% {
+    opacity: 0;
+    transform: translateX(20px) scale(0.96);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
 }
 
 .macro-card:hover {
-  background: rgba(22, 27, 34, 0.9);
-  border-color: rgba(255, 255, 255, 0.2);
-  transform: translateX(4px);
+  background: linear-gradient(
+    165deg,
+    rgba(32, 42, 60, 0.55) 0%,
+    rgba(22, 30, 44, 0.45) 100%
+  );
+  border-color: rgba(88, 166, 255, 0.35);
+  border-top-color: rgba(88, 166, 255, 0.4);
+  transform: translateX(5px) scale(1.012);
+  box-shadow:
+    0 4px 12px rgba(0, 0, 0, 0.3),
+    0 12px 32px rgba(0, 0, 0, 0.18),
+    0 0 20px rgba(88, 166, 255, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 0 24px rgba(88, 166, 255, 0.03);
+  z-index: 2;
 }
 
 .macro-card-content-wrapper {

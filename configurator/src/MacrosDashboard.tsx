@@ -9,6 +9,8 @@ import ExportModal from './components/ExportModal';
 import ImportModal from './components/ImportModal';
 import { saveJsonFile } from './utils/fileUtils';
 import { useNotificationStore } from './stores/notificationStore';
+import EmptyState from './components/EmptyState';
+import macroEmptyAnim from './assets/lottie/macro-empty.json';
 import './assets/css/macros-dashboard.css';
 
 interface MacrosDashboardProps {
@@ -19,6 +21,10 @@ interface MacrosDashboardProps {
     onDeleteMacro: (id: number) => Promise<void>;
     onReload: () => void;
     onFetchSingleMacro: (id: number) => Promise<Macro | null>;
+    highlightId?: number | null;
+    editId?: number | null;
+    onClearEditId?: () => void;
+    isActive?: boolean;
 }
 
 export default function MacrosDashboard({ 
@@ -28,7 +34,11 @@ export default function MacrosDashboard({
     onSaveMacro, 
     onDeleteMacro, 
     onReload, 
-    onFetchSingleMacro 
+    onFetchSingleMacro,
+    highlightId,
+    editId,
+    onClearEditId,
+    isActive = true,
 }: MacrosDashboardProps) {
     const { showNotification } = useNotificationStore();
     const [editingMacro, setEditingMacro] = useState<Macro | null>(null);
@@ -46,12 +56,55 @@ export default function MacrosDashboard({
     const fileInputRef = useRef<HTMLInputElement>(null);
     const menuRef = useRef<HTMLDivElement>(null);
     const importGuardRef = useRef(false);
+    const cardRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+    const [activeHighlight, setActiveHighlight] = useState<number | null>(null);
+    const [searchTerm, setSearchTerm] = useState('');
+
+    useEffect(() => {
+        if (!isActive) {
+            setSearchTerm('');
+        }
+    }, [isActive]);
+
+    // Auto-scroll and highlight when highlightId changes
+    useEffect(() => {
+        if (highlightId == null) return;
+        setActiveHighlight(highlightId);
+        const el = cardRefs.current.get(highlightId);
+        if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+        const timer = setTimeout(() => setActiveHighlight(null), 2500);
+        return () => clearTimeout(timer);
+    }, [highlightId]);
+
+    // Handle direct edit triggers from parent
+    useEffect(() => {
+        if (editId != null) {
+            const m = macros.find(macro => macro.id === editId);
+            if (m) {
+                // If it's empty we need to fetch it first, same as clicking
+                if (!m.elements || m.elements.length === 0) {
+                    onFetchSingleMacro(m.id).then(fullMacro => {
+                        if (fullMacro) setEditingMacro(fullMacro);
+                    });
+                } else {
+                    setEditingMacro(m);
+                }
+            }
+        }
+    }, [editId, macros, onFetchSingleMacro]);
 
     const isAtMacroLimit = macroLimits != null && macros.length >= macroLimits.maxMacros;
 
     const sortedMacros = useMemo(() => {
-        return [...macros].sort((a, b) => a.name.localeCompare(b.name));
-    }, [macros]);
+        let result = [...macros];
+        if (searchTerm.trim()) {
+            const lower = searchTerm.toLowerCase();
+            result = result.filter(m => m.name.toLowerCase().includes(lower));
+        }
+        return result.sort((a, b) => a.name.localeCompare(b.name));
+    }, [macros, searchTerm]);
 
     const markBusy = (id: number, label: string) => {
         setBusyMacroIds(prev => new Map(prev).set(id, label));
@@ -185,11 +238,23 @@ export default function MacrosDashboard({
     return (
         <div className="macros-dashboard" style={{ height: '100%' }}>
 
-            <div className="ckey-dashboard-header" style={{ position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center', marginBottom: '0', flexShrink: 0, minHeight: '42px' }}>
-                {/* Title — pinned left */}
-                <span className="board-title">Macros</span>
+            <div className="ckey-dashboard-header">
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start' }}>
+                    <span className="sidebar-panel-title">MACROS</span>
+                </div>
+                
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', justifyContent: 'center' }}>
+                    <span className="ckey-count-badge">{macros.length} / {macroLimits?.maxMacros || '?'}</span>
+                    <button className="btn-new-action btn-new-success" onClick={handleCreate} disabled={isAtMacroLimit} title={isAtMacroLimit ? `Maximum macros reached (${macroLimits!.maxMacros})` : undefined}>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                        New
+                    </button>
+                </div>
 
-                <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, display: 'flex', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
                     <div className="menu-container" ref={menuRef}>
                         <button className="btn-icon" onClick={() => setIsMenuOpen(!isMenuOpen)} title="Options">
                             <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
@@ -205,26 +270,38 @@ export default function MacrosDashboard({
                         )}
                     </div>
                 </div>
+            </div>
 
-                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                    <span className="ckey-count-badge">{macros.length} / {macroLimits?.maxMacros || '?'}</span>
-                    <button className="btn-new-action btn-new-success" onClick={handleCreate} disabled={isAtMacroLimit} title={isAtMacroLimit ? `Maximum macros reached (${macroLimits!.maxMacros})` : undefined}>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                            <line x1="12" y1="5" x2="12" y2="19"></line>
-                            <line x1="5" y1="12" x2="19" y2="12"></line>
-                        </svg>
-                        New
-                    </button>
-                </div>
+            <div className="sidebar-search-container">
+                <input 
+                    type="text" 
+                    className="sidebar-search-input" 
+                    placeholder="Search macros..." 
+                    value={searchTerm} 
+                    onChange={e => setSearchTerm(e.target.value)} 
+                />
             </div>
 
             <div className="ckey-list-full list-scroll-area">
                 {macros.length === 0 && !isCreating ? (
-                    <div className="empty-state">No macros defined yet.</div>
+                    <EmptyState
+                        animation={macroEmptyAnim}
+                        title="No Macros Yet"
+                        description="Automate repetitive tasks with powerful macro sequences. Record keystrokes or build them visually."
+                        actionLabel="Create your first Macro"
+                        onAction={handleCreate}
+                        disabled={isAtMacroLimit}
+                    />
                 ) : (
                     <div className="macro-cards-list">
-                        {sortedMacros.map(m => (
-                            <div key={m.id} className={`macro-card ${busyMacroIds.has(m.id) ? 'macro-card-busy' : ''}`} onClick={() => !busyMacroIds.has(m.id) && handleEdit(m)}>
+                        {sortedMacros.map((m, index) => (
+                            <div
+                                key={m.id}
+                                ref={el => { if (el) cardRefs.current.set(m.id, el); else cardRefs.current.delete(m.id); }}
+                                className={`macro-card ${busyMacroIds.has(m.id) ? 'macro-card-busy' : ''} ${activeHighlight === m.id ? 'macro-card-highlighted' : ''}`}
+                                style={{ '--stagger-idx': index } as React.CSSProperties}
+                                onClick={() => !busyMacroIds.has(m.id) && handleEdit(m)}
+                            >
                                 {busyMacroIds.has(m.id) && (
                                     <div className="macro-card-loading-overlay">
                                         <div className="macro-card-spinner" />
@@ -307,6 +384,7 @@ export default function MacrosDashboard({
                     maxEvents={macroLimits?.maxEvents}
                     onSave={async (m) => {
                         setEditingMacro(null);
+                        if (onClearEditId) onClearEditId();
                         const isNew = m.id === -1;
                         if (isNew) setIsCreating(true);
                         else markBusy(m.id, 'Saving...');
@@ -320,7 +398,10 @@ export default function MacrosDashboard({
                             else clearBusy(m.id);
                         }
                     }}
-                    onClose={() => setEditingMacro(null)}
+                    onClose={() => {
+                        setEditingMacro(null);
+                        if (onClearEditId) onClearEditId();
+                    }}
                 />
             )}
 

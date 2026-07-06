@@ -4,9 +4,11 @@ import KeyboardLayoutEditor from './KeyboardLayoutEditor';
 import MacrosDashboard from './MacrosDashboard';
 import CustomKeysDashboard from './CustomKeysDashboard';
 import CombosDashboard from './CombosDashboard';
-import DeviceDashboard from './DeviceDashboard';
 import StatusWidget from './StatusWidget';
-import DevControlsPanel from './components/DevControlsPanel';
+import Sidebar from './Sidebar';
+import type { SidebarTab } from './Sidebar';
+import SettingsModal from './SettingsModal';
+import DevConsoleModal from './DevConsoleModal';
 import { useConfirm } from './hooks/useConfirm';
 import { useMacros } from './hooks/useMacros';
 import { useCustomKeys } from './hooks/useCustomKeys';
@@ -31,23 +33,33 @@ import {
   CFG_KEY_PHYSICAL_LAYOUT
 } from './types/protocol';
 import './index.css';
+import './assets/css/sidebar.css';
 
-import { LayoutIcon, MacrosIcon, DeviceIcon } from './components/SidebarIcons';
 import Background3D from './components/Background3D';
 import { useLayoutStore } from './stores/layoutStore';
+import { useOnboardingStore } from './stores/onboardingStore';
+import OnboardingWizard from './components/onboarding/OnboardingWizard';
+import { MACRO_BASE, CKEY_BASE } from './KeyDefinitions';
 
 // Re-export types for backward compatibility — consumers can import from './App'
 export type { Macro, MacroElement, MacroAction } from './types/macros';
 export type { CustomKey } from './types/customKeys';
 
-type ActiveSection = 'layout' | 'macrosCkeys' | 'device';
-
 
 function App() {
-  const [activeSection, setActiveSection] = useState<ActiveSection>('layout');
-  const [activeMacrosTab, setActiveMacrosTab] = useState<'macros' | 'ckeys' | 'combos'>('macros');
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>(null);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isConsoleOpen, setIsConsoleOpen] = useState(false);
+  const [highlightMacroId] = useState<number | null>(null);
+  const [highlightCkeyId] = useState<number | null>(null);
+  
+  // State for directly opening the editor modal without changing sidebar tab
+  const [editMacroId, setEditMacroId] = useState<number | null>(null);
+  const [editCkeyId, setEditCkeyId] = useState<number | null>(null);
+
   const [isConnected, setIsConnected] = useState(false);
   const setLayoutIsConnected = useLayoutStore(state => state.setIsConnected);
+  const hasCompletedOnboarding = useOnboardingStore(state => state.hasCompleted);
   const { notification, setNotification, showNotification } = useNotificationStore();
   const [displayedNotification, setDisplayedNotification] = useState<ConnectionNotification | null>(null);
   const [isNotificationHovered, setIsNotificationHovered] = useState(false);
@@ -137,12 +149,80 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  // Sidebar Keyboard Shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (e.defaultPrevented) return;
+
+        // Close modals managed by App.tsx first
+        let handled = false;
+        if (isConsoleOpen) {
+          setIsConsoleOpen(false);
+          handled = true;
+        }
+        if (isSettingsOpen) {
+          setIsSettingsOpen(false);
+          handled = true;
+        }
+        if (handled) return;
+
+        // Don't close sidebar if a child modal or popover is open
+        if (document.querySelector('.modal-overlay') || document.querySelector('.key-action-popover')) {
+          return;
+        }
+
+        // Close sidebar
+        if (sidebarTab !== null) {
+          e.preventDefault();
+          setSidebarTab(null);
+        }
+        return;
+      }
+
+      const isModifier = e.ctrlKey || e.metaKey;
+      if (!isModifier) return;
+
+      if (e.key === '1') {
+        e.preventDefault();
+        setSidebarTab('macros');
+      } else if (e.key === '2') {
+        e.preventDefault();
+        setSidebarTab('ckeys');
+      } else if (e.key === '3') {
+        e.preventDefault();
+        setSidebarTab('combos');
+      } else if (e.key.toLowerCase() === 'f') {
+        // Only trigger if sidebar is already open
+        if (sidebarTab !== null) {
+          e.preventDefault();
+          const searchInput = document.querySelector('.sidebar-tab-content.active .sidebar-search-input') as HTMLInputElement | null;
+          if (searchInput) {
+            searchInput.focus();
+            searchInput.select();
+          }
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [sidebarTab, isConsoleOpen, isSettingsOpen]);
+
   // Subscribe to HIDService connection state (auto-reconnect, disconnect detection)
   useEffect(() => {
     const handler = (connected: boolean) => {
       setIsConnected(connected);
       setLayoutIsConnected(connected);
       if (!connected) setDeviceStatus(null);
+
+      // Auto-advance onboarding wizard from Step 0 → Step 1 on connect
+      if (connected && !useOnboardingStore.getState().hasCompleted) {
+        const { step, nextStep } = useOnboardingStore.getState();
+        if (step === 0) {
+          setTimeout(nextStep, 600);
+        }
+      }
 
       // Clear logs and add connection status as the first entry
       setLogs([{
@@ -362,6 +442,21 @@ function App() {
     await hidService.disconnect();
   };
 
+  // ── Contextual Key Selection: auto-open sidebar to the relevant item ──
+  const handleKeySelected = useCallback((code: number) => {
+    if (code >= MACRO_BASE && code <= 0x40FF) {
+      const macroId = code - MACRO_BASE;
+      setEditMacroId(null);
+      requestAnimationFrame(() => setEditMacroId(macroId));
+    } else if (code >= CKEY_BASE && code <= 0x3FFF) {
+      const ckeyId = code - CKEY_BASE;
+      setEditCkeyId(null);
+      requestAnimationFrame(() => setEditCkeyId(ckeyId));
+    }
+    // For normal HID codes (not macros/ckeys) do nothing — just let the modal open normally
+  }, []);
+
+
   const DISCONNECTED_MESSAGES = [
     "Disconnected... for now.",
     "Waiting for the spark.",
@@ -400,7 +495,7 @@ function App() {
   return (
     <div className="app-container">
       <Background3D />
-      
+
 
 
       <header className="main-header">
@@ -432,26 +527,6 @@ function App() {
                 </svg>
               )}
             </button>
-            <nav className={`header-nav ${isConnected ? 'visible' : 'hidden'}`}>
-              <button
-                className={`header-nav-item ${activeSection === 'layout' ? 'active' : ''}`}
-                onClick={() => setActiveSection('layout')}
-              >
-                <LayoutIcon /> <span className="nav-label">Layout</span>
-              </button>
-              <button
-                className={`header-nav-item ${activeSection === 'macrosCkeys' ? 'active' : ''}`}
-                onClick={() => setActiveSection('macrosCkeys')}
-              >
-                <MacrosIcon /> <span className="nav-label">Custom Actions</span>
-              </button>
-              <button
-                className={`header-nav-item ${activeSection === 'device' ? 'active' : ''}`}
-                onClick={() => setActiveSection('device')}
-              >
-                <DeviceIcon /> <span className="nav-label">Device</span>
-              </button>
-            </nav>
           </div>
         </div>
 
@@ -479,103 +554,85 @@ function App() {
       {isConnected ? (
         <div className="app-layout">
           <div className="app-main-content">
-            <div className="app-sections-area">
-              <div className={`section-container ${activeSection === 'layout' ? 'active' : ''}`}>
-                {activeSection === 'layout' && (
-                  <KeyboardLayoutEditor
-                    isConnected={isConnected}
-                    isDeveloperMode={isDeveloperMode}
-                    macros={macros}
-                    customKeys={customKeys}
-                    onLog={addLog}
-                  />
-                )}
-              </div>
+            <KeyboardLayoutEditor
+              isConnected={isConnected}
+              isDeveloperMode={isDeveloperMode}
+              macros={macros}
+              customKeys={customKeys}
+              onLog={addLog}
+              onEditEntity={handleKeySelected}
+            />
+          </div>
 
-              <div className={`section-container ${activeSection === 'macrosCkeys' ? 'active' : ''}`}>
-                {activeSection === 'macrosCkeys' && (
-                  <div className="macros-ckeys-tabbed-view" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                    <div className="macros-tabs-header" style={{ display: 'flex', gap: '0.5rem', padding: '0.5rem 1rem', background: 'var(--header-bg)' }}>
-                      <button 
-                        className={`header-nav-item ${activeMacrosTab === 'macros' ? 'active' : ''}`}
-                        onClick={() => setActiveMacrosTab('macros')}
-                      >
-                        <span className="nav-label">Macros</span>
-                      </button>
-                      <button 
-                        className={`header-nav-item ${activeMacrosTab === 'ckeys' ? 'active' : ''}`}
-                        onClick={() => setActiveMacrosTab('ckeys')}
-                      >
-                        <span className="nav-label">Custom Keys</span>
-                      </button>
-                      <button 
-                        className={`header-nav-item ${activeMacrosTab === 'combos' ? 'active' : ''}`}
-                        onClick={() => setActiveMacrosTab('combos')}
-                      >
-                        <span className="nav-label">Combos</span>
-                      </button>
-                    </div>
-                    
-                    <div className="macros-tab-content" style={{ flex: 1, minHeight: 0, padding: '1rem', overflow: 'hidden' }}>
-                      {activeMacrosTab === 'macros' && (
-                        <MacrosDashboard
-                          macros={macros}
-                          macroLimits={macroLimits}
-                          isDeveloperMode={isDeveloperMode}
-                          onSaveMacro={handleSaveMacro}
-                          onDeleteMacro={handleDeleteMacro}
-                          onReload={fetchMacros}
-                          onFetchSingleMacro={fetchSingleMacro}
-                        />
-                      )}
-                      {activeMacrosTab === 'ckeys' && (
-                        <CustomKeysDashboard
-                          customKeys={customKeys}
-                          macros={macros}
-                          isDeveloperMode={isDeveloperMode}
-                          onSave={handleSaveCustomKey}
-                          onDelete={handleDeleteCustomKey}
-                          onReload={fetchCustomKeys}
-                        />
-                      )}
-                      {activeMacrosTab === 'combos' && (
-                        <CombosDashboard
-                          combos={combos}
-                          comboLimits={comboLimits}
-                          macros={macros}
-                          isDeveloperMode={isDeveloperMode}
-                          onSave={handleSaveCombo}
-                          onDelete={handleDeleteCombo}
-                          onReload={fetchCombos}
-                        />
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className={`section-container ${activeSection === 'device' ? 'active' : ''}`}>
-                {activeSection === 'device' && (
-                  <DeviceDashboard
-                    isConnected={isConnected}
-                    isDeveloperMode={isDeveloperMode}
-                    deviceStatus={deviceStatus}
-                    onLog={addLog}
-                  />
-                )}
-              </div>
+          <Sidebar
+            activeTab={sidebarTab}
+            onTabChange={setSidebarTab}
+            onSettingsClick={() => setIsSettingsOpen(true)}
+            onConsoleClick={() => setIsConsoleOpen(true)}
+            isDeveloperMode={isDeveloperMode}
+          >
+            <div className={`sidebar-tab-content ${sidebarTab === 'macros' ? 'active' : ''}`}>
+              <MacrosDashboard
+                macros={macros}
+                macroLimits={macroLimits}
+                isDeveloperMode={isDeveloperMode}
+                onSaveMacro={handleSaveMacro}
+                onDeleteMacro={handleDeleteMacro}
+                onReload={fetchMacros}
+                onFetchSingleMacro={fetchSingleMacro}
+                highlightId={highlightMacroId}
+                editId={editMacroId}
+                onClearEditId={() => setEditMacroId(null)}
+                isActive={sidebarTab === 'macros'}
+              />
             </div>
 
-            {isDeveloperMode && (
-              <DevControlsPanel
-                logs={logs}
-                onClearLogs={() => setLogs([])}
-                isConnected={isConnected}
+            <div className={`sidebar-tab-content ${sidebarTab === 'ckeys' ? 'active' : ''}`}>
+              <CustomKeysDashboard
+                customKeys={customKeys}
+                macros={macros}
+                isDeveloperMode={isDeveloperMode}
+                onSave={handleSaveCustomKey}
+                onDelete={handleDeleteCustomKey}
+                onReload={fetchCustomKeys}
+                highlightId={highlightCkeyId}
+                editId={editCkeyId}
+                onClearEditId={() => setEditCkeyId(null)}
+                isActive={sidebarTab === 'ckeys'}
               />
-            )}
-          </div>
+            </div>
+
+            <div className={`sidebar-tab-content ${sidebarTab === 'combos' ? 'active' : ''}`}>
+              <CombosDashboard
+                combos={combos}
+                comboLimits={comboLimits}
+                macros={macros}
+                isDeveloperMode={isDeveloperMode}
+                onSave={handleSaveCombo}
+                onDelete={handleDeleteCombo}
+                onReload={fetchCombos}
+                isActive={sidebarTab === 'combos'}
+              />
+            </div>
+          </Sidebar>
+
+          <SettingsModal
+            isOpen={isSettingsOpen}
+            onClose={() => setIsSettingsOpen(false)}
+            isConnected={isConnected}
+            isDeveloperMode={isDeveloperMode}
+            deviceStatus={deviceStatus}
+            onLog={addLog}
+          />
+
+          <DevConsoleModal
+            isOpen={isConsoleOpen}
+            onClose={() => setIsConsoleOpen(false)}
+            logEntries={logs.map(l => l.text)}
+            onClearLog={() => setLogs([])}
+          />
         </div>
-      ) : (
+      ) : hasCompletedOnboarding ? (
         <div className="disconnected-overlay">
           <div className="disconnected-content">
             <div className="disconnected-icon-wrapper">
@@ -598,7 +655,7 @@ function App() {
 
           </div>
         </div>
-      )}
+      ) : null}
 
       {/* Global Floating Notifications */}
       {((typeof displayedNotification?.message === 'string' && displayedNotification.message === 'PERMISSION_DENIED') || (typeof displayedNotification?.message === 'string' && displayedNotification.message.includes('System lock'))) && HIDTransport.isLinux() && (
@@ -723,6 +780,14 @@ function App() {
             </button>
           </div>
         )}
+
+      {/* Onboarding Wizard (renders above everything via portal) */}
+      {!hasCompletedOnboarding && (
+        <OnboardingWizard
+          isConnected={isConnected}
+          onConnect={handleConnect}
+        />
+      )}
     </div>
   );
 }

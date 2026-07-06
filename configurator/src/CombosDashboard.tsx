@@ -9,6 +9,8 @@ import { getKeyName } from './KeyDefinitions';
 import { InfoIcon, AlertTriangleIcon } from './components/Icons';
 import { saveJsonFile } from './utils/fileUtils';
 import { useNotificationStore } from './stores/notificationStore';
+import EmptyState from './components/EmptyState';
+import comboEmptyAnim from './assets/lottie/combo-empty.json';
 import './assets/css/custom-keys-dashboard.css'; // Reusing CSS from custom keys for general layout
 
 interface CombosDashboardProps {
@@ -19,6 +21,7 @@ interface CombosDashboardProps {
     onSave: (combo: Combo) => Promise<void>;
     onDelete: (id: number) => Promise<void>;
     onReload?: () => void;
+    isActive?: boolean;
 }
 
 const LAYER_NAMES = ['Base', 'FN1', 'FN2', 'FN3'];
@@ -278,6 +281,35 @@ function ComboEditorModal({ combo, index, maxCombos, macros, isSaving, error, on
                         </div>
 
                         <div className="ckey-field" style={{ margin: 0 }}>
+                            <label className="ckey-field-label">Release Behavior</label>
+                            <label className="ckey-field-label" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', margin: '0.5rem 0', fontWeight: 'normal', color: 'var(--text-color)' }}>
+                                <input
+                                    type="checkbox"
+                                    checked={local.releaseOnFirstKey}
+                                    onChange={e => setLocal({ ...local, releaseOnFirstKey: e.target.checked })}
+                                />
+                                Fast Release (on first key release)
+                            </label>
+                            <div style={{
+                                marginTop: '0.25rem',
+                                padding: '0.5rem 0.75rem',
+                                background: 'rgba(0, 122, 255, 0.05)',
+                                borderRadius: '4px',
+                                fontSize: '0.75rem',
+                                color: 'var(--text-secondary)',
+                                lineHeight: '1.4',
+                                display: 'flex', gap: '0.5rem', alignItems: 'flex-start'
+                            }}>
+                                <div style={{ flexShrink: 0, marginTop: '1px', color: '#007aff' }}>
+                                    <InfoIcon size={14} />
+                                </div>
+                                <div style={{ fontStyle: 'italic' }}>
+                                    If enabled, the action is released as soon as any combo key is released. Otherwise, it waits for all keys to be released.
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="ckey-field" style={{ margin: 0 }}>
                             <label className="ckey-field-label">Delayed Press Behavior</label>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: '0.5rem 0' }}>
                                 <label className="ckey-field-label" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', margin: 0, fontWeight: 'normal', color: 'var(--text-color)' }}>
@@ -366,7 +398,7 @@ function ComboEditorModal({ combo, index, maxCombos, macros, isSaving, error, on
     );
 }
 
-export default function CombosDashboard({ combos, comboLimits, macros, isDeveloperMode, onSave, onDelete, onReload }: CombosDashboardProps) {
+export default function CombosDashboard({ combos, comboLimits, macros, isDeveloperMode, onSave, onDelete, onReload, isActive = true }: CombosDashboardProps) {
     const { showNotification } = useNotificationStore();
     const [selected, setSelected] = useState<Combo | null>(null);
     const [isSaving, setIsSaving] = useState(false);
@@ -376,6 +408,13 @@ export default function CombosDashboard({ combos, comboLimits, macros, isDevelop
 
     const menuRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const [searchTerm, setSearchTerm] = useState('');
+
+    useEffect(() => {
+        if (!isActive) {
+            setSearchTerm('');
+        }
+    }, [isActive]);
 
     useEffect(() => {
         function handleClickOutside(event: MouseEvent) {
@@ -501,14 +540,31 @@ export default function CombosDashboard({ combos, comboLimits, macros, isDevelop
         }
     };
 
-    const sortedCombos = [...combos].sort((a, b) => a.id - b.id);
+    const sortedCombos = [...combos].filter(c => {
+        if (!searchTerm.trim()) return true;
+        const lower = searchTerm.toLowerCase();
+        return c.name.toLowerCase().includes(lower) || `combo[${c.id}]`.includes(lower);
+    }).sort((a, b) => a.id - b.id);
 
     return (
         <div className="ckey-dashboard" style={{ height: '100%' }}>
-            <div className="ckey-dashboard-header" style={{ position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center', marginBottom: '0', flexShrink: 0, minHeight: '42px' }}>
-                <span className="board-title">Combos</span>
+            <div className="ckey-dashboard-header">
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start' }}>
+                    <span className="sidebar-panel-title">COMBOS</span>
+                </div>
 
-                <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, display: 'flex', alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', justifyContent: 'center' }}>
+                    <span className="ckey-count-badge">{combos.length} / {maxCombos}</span>
+                    <button className="btn-new-action btn-new-success" onClick={handleNew} disabled={combos.length >= maxCombos}>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                        New
+                    </button>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
                     <div className="menu-container" ref={menuRef}>
                         <button className="btn-icon" onClick={() => setIsMenuOpen(!isMenuOpen)} title="Options">
                             <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
@@ -524,35 +580,42 @@ export default function CombosDashboard({ combos, comboLimits, macros, isDevelop
                         )}
                     </div>
                 </div>
+            </div>
 
-                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                    <span className="ckey-count-badge">{combos.length} / {maxCombos}</span>
-                    <button className="btn-new-action btn-new-success" onClick={handleNew} disabled={combos.length >= maxCombos}>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                            <line x1="12" y1="5" x2="12" y2="19"></line>
-                            <line x1="5" y1="12" x2="19" y2="12"></line>
-                        </svg>
-                        New
-                    </button>
-                </div>
+            <div className="sidebar-search-container">
+                <input 
+                    type="text" 
+                    className="sidebar-search-input" 
+                    placeholder="Search combos..." 
+                    value={searchTerm} 
+                    onChange={e => setSearchTerm(e.target.value)} 
+                />
             </div>
 
             <div className="ckey-list-full list-scroll-area">
                 <div className="macro-cards-list">
                     {sortedCombos.length === 0 ? (
-                        <div className="empty-state">No combos defined yet.</div>
+                        <EmptyState
+                            animation={comboEmptyAnim}
+                            title="No Combos Yet"
+                            description="Trigger actions by pressing multiple keys simultaneously. Perfect for quick shortcuts without switching layers."
+                            actionLabel="Create your first Combo"
+                            onAction={handleNew}
+                            disabled={combos.length >= maxCombos}
+                        />
                     ) : (
                         sortedCombos.map((c, index) => (
-                            <ComboCard
-                                key={c.id}
-                                combo={c}
-                                index={index}
-                                isSelected={selected?.id === c.id}
-                                onClick={() => setSelected(c)}
-                                onDelete={handleDelete}
-                                macros={macros}
-                                isDeveloperMode={isDeveloperMode}
-                            />
+                            <div key={c.id} style={{ '--stagger-idx': index } as React.CSSProperties}>
+                                <ComboCard
+                                    combo={c}
+                                    index={index}
+                                    isSelected={selected?.id === c.id}
+                                    onClick={() => setSelected(c)}
+                                    onDelete={handleDelete}
+                                    macros={macros}
+                                    isDeveloperMode={isDeveloperMode}
+                                />
+                            </div>
                         ))
                     )}
                 </div>

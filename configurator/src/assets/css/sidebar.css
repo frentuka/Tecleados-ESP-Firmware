@@ -1,0 +1,535 @@
+/* ── Sidebar Layout ─────────────────────────────────────────────────────────── */
+
+.sidebar-container {
+    position: fixed;
+    right: 0;
+    top: 70px; /* Below the header */
+    bottom: 0;
+    display: flex;
+    flex-direction: row;
+    z-index: 500;
+    pointer-events: none;
+}
+
+/* ── Icon Rail ── */
+.sidebar-rail {
+    width: 76px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 0.5rem;
+    background: rgba(13, 17, 23, 0.6);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-left: 1px solid rgba(255, 255, 255, 0.06);
+    pointer-events: auto;
+    flex-shrink: 0;
+}
+
+.sidebar-rail-top,
+.sidebar-rail-bottom {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.sidebar-rail-bottom {
+    gap: 0.25rem;
+}
+
+.sidebar-rail-bottom::before {
+    content: '';
+    display: block;
+    width: 24px;
+    height: 1px;
+    background: rgba(255, 255, 255, 0.08);
+    margin-bottom: 0.25rem;
+}
+
+/* ── Icon Buttons ── */
+.sidebar-icon-btn {
+    width: 60px;
+    height: 44px;
+    border-radius: 12px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    position: relative;
+}
+
+.sidebar-icon-svg {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.2s ease;
+}
+
+.sidebar-icon-label {
+    font-size: 0.55rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    opacity: 0.6;
+    transition: opacity 0.2s ease;
+    white-space: nowrap;
+}
+
+.sidebar-icon-btn:hover {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.08);
+    color: var(--text-primary);
+}
+
+.sidebar-icon-btn:hover .sidebar-icon-label {
+    opacity: 1;
+}
+
+.sidebar-icon-btn:hover .sidebar-icon-svg {
+    transform: scale(1.1);
+}
+
+.sidebar-icon-btn.active {
+    background: rgba(88, 166, 255, 0.12);
+    border-color: rgba(88, 166, 255, 0.25);
+    color: var(--accent-color);
+}
+
+.sidebar-icon-btn.active .sidebar-icon-label {
+    opacity: 1;
+    color: var(--accent-color);
+}
+
+.sidebar-icon-btn.active::before {
+    content: '';
+    position: absolute;
+    left: -1px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 3px;
+    height: 20px;
+    background: var(--accent-color);
+    border-radius: 0 3px 3px 0;
+    box-shadow: 0 0 8px rgba(88, 166, 255, 0.4);
+}
+
+.sidebar-icon-settings:hover {
+    color: #d29922;
+}
+
+.sidebar-icon-dev {
+    opacity: 0.6;
+}
+
+.sidebar-icon-dev:hover {
+    opacity: 1;
+    color: #a371f7;
+}
+
+/* ── Expandable Panel ── */
+.sidebar-panel {
+    width: 0;
+    overflow: hidden;
+    transition: width 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    background: rgba(13, 17, 23, 0.55);
+    backdrop-filter: blur(28px) saturate(1.3);
+    -webkit-backdrop-filter: blur(28px) saturate(1.3);
+    border-left: 1px solid transparent;
+    pointer-events: none;
+    position: relative;
+}
+
+.sidebar-panel::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+        180deg,
+        rgba(255, 255, 255, 0.03) 0%,
+        transparent 15%,
+        transparent 85%,
+        rgba(0, 0, 0, 0.08) 100%
+    );
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.4s ease 0.15s;
+}
+
+.sidebar-container.open .sidebar-panel {
+    width: 420px;
+    max-width: calc(100vw - 68px - 2rem);
+    border-left-color: rgba(255, 255, 255, 0.08);
+    pointer-events: auto;
+    box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.04),
+               -8px 0 40px rgba(0, 0, 0, 0.2);
+}
+
+.sidebar-container.open .sidebar-panel::after {
+    opacity: 1;
+}
+
+.sidebar-panel-content {
+    width: 420px;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    opacity: 0;
+    transform: translateX(20px);
+    transition: opacity 0.3s ease 0.1s, transform 0.3s cubic-bezier(0.16, 1, 0.3, 1) 0.1s;
+    position: relative;
+}
+
+.sidebar-container.open .sidebar-panel-content {
+    opacity: 1;
+    transform: translateX(0);
+}
+
+.sidebar-tab-content {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    transform: translateX(10px);
+    pointer-events: none;
+    visibility: hidden;
+    transition: opacity 0.2s ease, transform 0.2s ease, visibility 0s 0.2s;
+    z-index: 1;
+}
+
+.sidebar-tab-content.active {
+    opacity: 1;
+    transform: translateX(0);
+    pointer-events: auto;
+    visibility: visible;
+    z-index: 2;
+    transition: opacity 0.3s ease 0.15s, transform 0.3s cubic-bezier(0.16, 1, 0.3, 1) 0.15s, visibility 0s 0s;
+}
+
+/* ── Settings Modal ── */
+.settings-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    z-index: 10001;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: modalFadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.settings-modal-content {
+    background: rgba(22, 27, 34, 0.95);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 16px;
+    width: 90%;
+    max-width: 600px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.05);
+    animation: modalSlideIn 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.settings-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1.25rem 1.5rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.settings-modal-title {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.settings-modal-body {
+    flex: 1;
+    overflow: hidden;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Override dd-page styles inside settings modal */
+.settings-modal-body .dd-layout {
+    pointer-events: auto;
+}
+
+/* ── Dev Console Modal ── */
+.devconsole-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    z-index: 10001;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: modalFadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.devconsole-modal-content {
+    background: rgba(13, 17, 23, 0.98);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(163, 113, 247, 0.2);
+    border-radius: 16px;
+    width: 90%;
+    max-width: 800px;
+    max-height: 70vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6), 0 0 30px rgba(163, 113, 247, 0.05);
+    animation: modalSlideIn 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.devconsole-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.devconsole-modal-title {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.devconsole-entry-count {
+    font-size: 0.7rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    background: rgba(255, 255, 255, 0.06);
+    padding: 0.15rem 0.5rem;
+    border-radius: 10px;
+    margin-left: 0.25rem;
+}
+
+.devconsole-modal-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.devconsole-modal-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0;
+    min-height: 200px;
+}
+
+.devconsole-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 200px;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    opacity: 0.6;
+}
+
+.devconsole-log-list {
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    font-size: 0.75rem;
+}
+
+.devconsole-log-entry {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.35rem 1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+    transition: background 0.15s ease;
+}
+
+.devconsole-log-entry:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.devconsole-log-index {
+    color: var(--text-secondary);
+    opacity: 0.35;
+    font-size: 0.65rem;
+    min-width: 24px;
+    text-align: right;
+    padding-top: 2px;
+    user-select: none;
+}
+
+.devconsole-log-text {
+    color: var(--text-primary);
+    opacity: 0.85;
+    line-height: 1.5;
+    word-break: break-all;
+}
+
+/* ── Modal Animations ── */
+@keyframes modalFadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes modalSlideIn {
+    from {
+        opacity: 0;
+        transform: scale(0.96) translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+/* ── Highlight Ring Animation ── */
+@keyframes highlightPulse {
+    0% {
+        box-shadow: 0 0 0 0 rgba(88, 166, 255, 0.5),
+                    0 0 0 0 rgba(88, 166, 255, 0.2);
+    }
+    40% {
+        box-shadow: 0 0 0 4px rgba(88, 166, 255, 0.25),
+                    0 0 20px 0 rgba(88, 166, 255, 0.1);
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(88, 166, 255, 0),
+                    0 0 0 0 rgba(88, 166, 255, 0);
+    }
+}
+
+/* Applied to the macro-card div when a key is clicked that triggers contextual nav */
+.macro-card-highlighted {
+    border-color: rgba(88, 166, 255, 0.5) !important;
+    animation: highlightPulse 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards,
+               highlightPulse 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.9s forwards,
+               highlightPulse 0.8s cubic-bezier(0.16, 1, 0.3, 1) 1.8s forwards;
+}
+
+/* Wrapper version for CKeyCards (doesn't break existing card styling) */
+.macro-card-highlighted-wrapper .macro-card {
+    border-color: rgba(88, 166, 255, 0.5) !important;
+    animation: highlightPulse 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards,
+               highlightPulse 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.9s forwards,
+               highlightPulse 0.8s cubic-bezier(0.16, 1, 0.3, 1) 1.8s forwards;
+}
+
+/* ── Sidebar Panel Header (Title + Collapse) ── */
+.sidebar-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1.25rem 1.25rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    flex-shrink: 0;
+}
+
+.sidebar-panel-title {
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-secondary);
+}
+
+/* ── Close Button (shared by modals and panel header) ── */
+.btn-close {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 1.1rem;
+    line-height: 1;
+    transition: all 0.2s ease;
+    padding: 0;
+    flex-shrink: 0;
+}
+
+.btn-close:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.18);
+    color: var(--text-primary);
+}
+
+/* ── Responsive: Slide-over on small screens ── */
+@media (max-width: 1100px) {
+    /* On small screens, the sidebar overlays the keyboard instead of pushing it */
+    .sidebar-container {
+        z-index: 600;
+    }
+
+    .sidebar-panel {
+        position: absolute;
+        right: 76px; /* Attached to left of icon rail */
+        top: 0;
+        bottom: 0;
+    }
+
+    .sidebar-panel-content {
+        width: min(90vw, 400px);
+    }
+
+    .sidebar-container.open .sidebar-panel {
+        /* Full panel slides over the content */
+        width: min(90vw, 400px);
+        max-width: none;
+        box-shadow: -20px 0 60px rgba(0, 0, 0, 0.5);
+    }
+
+    /* Dim overlay behind the panel on small screens */
+    .sidebar-container::before {
+        content: '';
+        position: fixed;
+        inset: 0;
+        right: 76px;
+        background: rgba(0, 0, 0, 0.4);
+        backdrop-filter: blur(2px);
+        -webkit-backdrop-filter: blur(2px);
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+        transition: opacity 0.3s ease, visibility 0s 0.3s;
+        z-index: -1;
+    }
+
+    .sidebar-container.open::before {
+        opacity: 1;
+        visibility: visible;
+        pointer-events: auto;
+        transition: opacity 0.3s ease, visibility 0s 0s;
+    }
+}
+
+/* ── Right padding for sidebar on root — shrink on small screens ── */
+@media (max-width: 1100px) {
+    #root {
+        padding-right: 2rem; /* Overlay mode: no need to push content */
+    }
+}

@@ -47,18 +47,18 @@ The module partitions data into dedicated NVS namespaces to prevent key collisio
 
 The Config Module acts as the central state provider for every functional subsystem.
 
-### [[USB_MODULE]] — Configuration Transport
+### [USB_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/USB_MODULE.md) — Configuration Transport
 - **Command Routing**: Registers a callback for `MODULE_CONFIG`. It handles the vendor-specific HID channel for the web configurator.
 - **Payload Management**: Manages a 32KB PSRAM buffer for framing JSON responses.
 
-### [[STATUS_MODULE]] — Reactive Notifications
+### [STATUS_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/STATUS_MODULE.md) — Reactive Notifications
 - **Event Bus**: Posts `CONFIG_EVENT_KIND_UPDATED` whenever a setting is saved. This triggers the Status Module to push a fresh system snapshot to the UI.
 
-### [[KEYBOARD_MODULE]] — High-Speed Logic
+### [KEYBOARD_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/KEYBOARD_MODULE.md) — High-Speed Logic
 - **Direct Reads**: The keyboard engine bypasses JSON entirely, reading binary structs directly from NVS for sub-millisecond layer switches.
 - **Refresh Callbacks**: Registers `on_update` callbacks that cause the keyboard matrix to reload its action-code cache immediately after a USB write.
 
-### [[SPLIT_MODULE]] — Distributed Synchronization
+### [SPLIT_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/SPLIT_MODULE.md) — Distributed Synchronization
 - **Master-to-Slave Sync**: Whenever the Master half receives a `CFG_CMD_SET`, it fragments the binary delta and pushes it to the Slave to ensure both halves have synchronized layout registers.
 
 ---

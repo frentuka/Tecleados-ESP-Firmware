@@ -7,6 +7,8 @@ import { getKeyName, CKEY_BASE } from './KeyDefinitions';
 import { getCustomKeyBadge } from './components/MacroIcons';
 import { saveJsonFile } from './utils/fileUtils';
 import { useNotificationStore } from './stores/notificationStore';
+import EmptyState from './components/EmptyState';
+import ckeyEmptyAnim from './assets/lottie/ckey-empty.json';
 import './assets/css/custom-keys-dashboard.css';
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -18,6 +20,10 @@ interface CustomKeysDashboardProps {
     onSave:   (ckey: CustomKey) => Promise<void>;
     onDelete: (id: number) => Promise<void>;
     onReload?: () => void;
+    highlightId?: number | null;
+    editId?: number | null;
+    onClearEditId?: () => void;
+    isActive: boolean;
 }
 
 // ── Default values ─────────────────────────────────────────────────────────────
@@ -470,7 +476,7 @@ function CKeyEditorModal({ ckey, macros, isSaving, error, onSave, onDelete, onCl
 
 const CKEY_MAX = 120;
 
-export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMode, onSave, onDelete, onReload }: CustomKeysDashboardProps) {
+export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMode, onSave, onDelete, onReload, highlightId, editId, onClearEditId, isActive }: CustomKeysDashboardProps) {
     const { showNotification } = useNotificationStore();
     const [selected, setSelected] = useState<CustomKey | null>(null);
     const [isSaving, setIsSaving] = useState(false);
@@ -479,6 +485,37 @@ export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMod
     
     const menuRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const cardRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+    const [activeHighlight, setActiveHighlight] = useState<number | null>(null);
+    const [searchTerm, setSearchTerm] = useState('');
+
+    useEffect(() => {
+        if (!isActive) {
+            setSearchTerm('');
+        }
+    }, [isActive]);
+
+    // Auto-scroll and highlight when highlightId changes
+    useEffect(() => {
+        if (highlightId == null) return;
+        setActiveHighlight(highlightId);
+        const el = cardRefs.current.get(highlightId);
+        if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+        const timer = setTimeout(() => setActiveHighlight(null), 2500);
+        return () => clearTimeout(timer);
+    }, [highlightId]);
+
+    // Handle direct edit triggers from parent
+    useEffect(() => {
+        if (editId != null) {
+            const ck = customKeys.find(c => c.id === editId);
+            if (ck) {
+                setSelected(ck);
+            }
+        }
+    }, [editId, customKeys]);
 
     useEffect(() => {
         function handleClickOutside(event: MouseEvent) {
@@ -549,6 +586,7 @@ export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMod
         try {
             await onSave(ckey);
             setSelected(null);
+            if (onClearEditId) onClearEditId();
             showNotification(`Custom key "${ckey.name}" saved`, "success");
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : 'Save failed';
@@ -564,6 +602,7 @@ export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMod
         try {
             await onDelete(id);
             setSelected(null);
+            if (onClearEditId) onClearEditId();
             showNotification("Custom key deleted", "success");
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : 'Delete failed';
@@ -574,15 +613,31 @@ export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMod
         }
     };
 
-    const sortedKeys = [...customKeys].sort((a, b) => a.id - b.id);
+    const sortedKeys = [...customKeys].filter(ck => {
+        if (!searchTerm.trim()) return true;
+        const lower = searchTerm.toLowerCase();
+        return ck.name.toLowerCase().includes(lower) || `ck[${ck.id}]`.includes(lower);
+    }).sort((a, b) => a.id - b.id);
 
     return (
         <div className="ckey-dashboard" style={{ height: '100%' }}>
-            <div className="ckey-dashboard-header" style={{ position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center', marginBottom: '0', flexShrink: 0, minHeight: '42px' }}>
-                {/* Title — pinned left */}
-                <span className="board-title">Custom Keys</span>
+            <div className="ckey-dashboard-header">
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start' }}>
+                    <span className="sidebar-panel-title">CUSTOM KEYS</span>
+                </div>
 
-                <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, display: 'flex', alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', justifyContent: 'center' }}>
+                    <span className="ckey-count-badge">{customKeys.length} / {CKEY_MAX}</span>
+                    <button className="btn-new-action btn-new-success" onClick={handleNew} disabled={customKeys.length >= CKEY_MAX}>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                        New
+                    </button>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
                     <div className="menu-container" ref={menuRef}>
                         <button className="btn-icon" onClick={() => setIsMenuOpen(!isMenuOpen)} title="Options">
                             <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
@@ -598,34 +653,46 @@ export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMod
                         )}
                     </div>
                 </div>
+            </div>
 
-                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                    <span className="ckey-count-badge">{customKeys.length} / {CKEY_MAX}</span>
-                    <button className="btn-new-action btn-new-success" onClick={handleNew} disabled={customKeys.length >= CKEY_MAX}>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                            <line x1="12" y1="5" x2="12" y2="19"></line>
-                            <line x1="5" y1="12" x2="19" y2="12"></line>
-                        </svg>
-                        New
-                    </button>
-                </div>
+            <div className="sidebar-search-container">
+                <input 
+                    type="text" 
+                    className="sidebar-search-input" 
+                    placeholder="Search custom keys..." 
+                    value={searchTerm} 
+                    onChange={e => setSearchTerm(e.target.value)} 
+                />
             </div>
 
             <div className="ckey-list-full list-scroll-area">
                 <div className="macro-cards-list">
                     {sortedKeys.length === 0 ? (
-                        <div className="empty-state">No custom keys defined yet.</div>
+                        <EmptyState
+                            animation={ckeyEmptyAnim}
+                            title="No Custom Keys Yet"
+                            description="Transform any key into a multi-function powerhouse. Assign different actions for tapping, holding, or double-tapping."
+                            actionLabel="Create your first Custom Key"
+                            onAction={handleNew}
+                            disabled={customKeys.length >= CKEY_MAX}
+                        />
                     ) : (
-                        sortedKeys.map(ck => (
-                            <CKeyCard
+                        sortedKeys.map((ck, index) => (
+                            <div
                                 key={ck.id}
-                                ck={ck}
-                                isSelected={selected?.id === ck.id}
-                                onClick={() => setSelected(ck)}
-                                onDelete={handleDeleteKey}
-                                macros={macros}
-                                isDeveloperMode={isDeveloperMode}
-                            />
+                                ref={el => { if (el) cardRefs.current.set(ck.id, el); else cardRefs.current.delete(ck.id); }}
+                                className={activeHighlight === ck.id ? 'macro-card-highlighted-wrapper' : ''}
+                                style={{ '--stagger-idx': index } as React.CSSProperties}
+                            >
+                                <CKeyCard
+                                    ck={ck}
+                                    isSelected={selected?.id === ck.id}
+                                    onClick={() => setSelected(ck)}
+                                    onDelete={handleDeleteKey}
+                                    macros={macros}
+                                    isDeveloperMode={isDeveloperMode}
+                                />
+                            </div>
                         ))
                     )}
                 </div>
@@ -639,7 +706,10 @@ export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMod
                     error={error}
                     onSave={handleSave}
                     onDelete={handleDeleteKey}
-                    onClose={() => setSelected(null)}
+                    onClose={() => {
+                        setSelected(null);
+                        if (onClearEditId) onClearEditId();
+                    }}
                 />
             )}
             <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept=".json" onChange={handleImport} />

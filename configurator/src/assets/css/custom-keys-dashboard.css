@@ -6,32 +6,19 @@
 .ckey-dashboard {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
   height: 100%;
   min-height: 0;
+  padding: 1rem 0 0 0;
 }
 
 .ckey-dashboard-header {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-}
-
-/* Board title — pinned to the left of the header, sits under the column padding */
-.board-title {
-  position: absolute;
-  left: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  font-size: 1.25rem;
-  font-weight: 800;
-  letter-spacing: -0.02em;
-  background: linear-gradient(90deg, var(--text-primary) 0%, var(--text-secondary) 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  pointer-events: none;
-  user-select: none;
+  padding: 0 1.25rem;
+  margin-bottom: 1rem;
+  flex-shrink: 0;
+  min-height: 42px;
 }
 
 .ckey-count-badge {
@@ -72,9 +59,19 @@
 }
 
 .ckey-card-selected {
-  border-color: var(--accent-color);
-  background: rgba(88, 166, 255, 0.08) !important;
-  box-shadow: 0 0 15px rgba(88, 166, 255, 0.1), inset 0 0 10px rgba(88, 166, 255, 0.05);
+  border-color: rgba(88, 166, 255, 0.45) !important;
+  border-top-color: rgba(88, 166, 255, 0.5) !important;
+  background: linear-gradient(
+    165deg,
+    rgba(30, 42, 60, 0.55) 0%,
+    rgba(20, 30, 48, 0.45) 100%
+  ) !important;
+  box-shadow:
+    0 4px 12px rgba(0, 0, 0, 0.3),
+    0 12px 32px rgba(0, 0, 0, 0.15),
+    0 0 24px rgba(88, 166, 255, 0.08),
+    inset 0 1px 0 rgba(88, 166, 255, 0.12),
+    inset 0 0 30px rgba(88, 166, 255, 0.04);
 }
 
 .ckey-card-title-row {

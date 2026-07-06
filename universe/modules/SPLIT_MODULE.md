@@ -127,22 +127,22 @@ Every file has a single responsibility. No source owns shared mutable state — 
 
 ## Cross-Module Connections
 
-### [[KEYBOARD_MODULE]] — Matrix Merging
+### [KEYBOARD_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/KEYBOARD_MODULE.md) — Matrix Merging
 - **Slave**: [split_bridge.c] registers `on_matrix_change` as the `kb_manager` callback; every change is serialised into `SPLIT_MSG_KEY_STATE_FULL` (always full, never delta — ESP-NOW is fire-and-forget, a dropped delta would corrupt the peer's view forever). While connected as slave, `kb_manager_set_paused(true)` suppresses local HID output.
 - **Master**: [split_dispatch.c] feeds received bitmaps into `kb_manager_set_remote_matrix()`. The local scanner XOR-merges them with its own matrix.
 - **Battery-adaptive scan rate**: the slave's heartbeat tick also reads the battery level and calls `kb_manager_set_scan_divisor()` (÷1 / ÷2 / ÷4 at >30 % / 10-30 % / <10 % charge) to reduce scan load at low battery.
 
-### [[BLE_MODULE]] — Radio Management & Proxy
+### [BLE_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/BLE_MODULE.md) — Radio Management & Proxy
 - **Role-based suspend**: [split_bridge.c] suspends the slave's BLE radio (`ble_hid_set_suspended(true)`) to avoid 2.4 GHz contention and host-side confusion.
 - **MAC sharing**: on first master promotion `split_bridge` auto-populates `cfg_system.ble_shared_addr` from its own BT MAC. After a role swap, the new master advertises with the same address → seamless reconnect on the host.
 - **BLE state handover**: when a half becomes Master (via negotiation or role swap), it calls `ble_hid_seed_handover_state(ble_connected_bitmap, selected_profile)` with the values the outgoing Master reported — so BLE connection context is transferred without dropping the host.
 - **Configurator proxy**: BLE commands arriving on the slave's `MODULE_BLE` USB channel are tunneled over `SPLIT_MSG_BLE_CMD` and executed on the master (source of truth). Master pushes `SPLIT_MSG_BLE_STATUS` back to the slave for widget sync. This callback (`split_bridge_ble_usb_callback`) is registered for `MODULE_BLE` in `splitmod_init`.
 
-### [[USB_MODULE]] — Host Interface
+### [USB_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/USB_MODULE.md) — Host Interface
 - `tud_mounted()` is sampled and sent in `ROLE_NEGOTIATE`; a half with an active USB-host connection wins Priority 3 of role negotiation.
 - [split_usb.c] handles configurator traffic on `MODULE_SPLIT`: START_PAIRING, CANCEL_PAIRING, UNPAIR, GET_STATUS, GET_REMOTE_MATRIX, ROLE_SWAP, RUN_BENCH, GET_BENCH.
 
-### [[CONFIG_MODULE]] — Persistent Sync
+### [CONFIG_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/CONFIG_MODULE.md) — Persistent Sync
 - [splitmod.c] listens for `CONFIG_EVENT_KIND_UPDATED`. Whenever a syncable key is updated, it **sets the bit** for that `cfgmod_kind_t` in `s_config_sync_kind_mask` — the event-bus task never blocks on NVS.
 - [split_config_sync.c] owns fragmentation, reassembly, and ACK/retry.
 - **BLE config sync direction** is role-based:
