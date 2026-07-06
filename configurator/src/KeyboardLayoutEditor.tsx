@@ -110,7 +110,7 @@ const DEFAULT_PHYSICAL_LAYOUT: PhysKey[][] = [
 ];
 
 
-export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, macros, customKeys = [], onLog, onKeySelected, onEditEntity }: KeyboardLayoutEditorProps) {
+export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, macros, customKeys = [], onLog, onEditEntity }: KeyboardLayoutEditorProps) {
     const { showNotification } = useNotificationStore();
     const { physicalLayout, setPhysicalLayout, layers, setLayers, activeLayer, setActiveLayer, pressedCodes, setPressedCodes, heldTestKeys, setHeldTestKeys } = useLayoutStore();
     const [layerStatus, setLayerStatus] = useState<('idle' | 'loading' | 'loaded' | 'error')[]>(['idle', 'idle', 'idle', 'idle']);

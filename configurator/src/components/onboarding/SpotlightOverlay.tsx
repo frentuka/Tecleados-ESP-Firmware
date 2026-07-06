@@ -34,6 +34,7 @@ export default function SpotlightOverlay({
     const [tooltipStyle, setTooltipStyle] = useState<React.CSSProperties>({});
     const [tooltipClass, setTooltipClass] = useState('entering');
     const tooltipRef = useRef<HTMLDivElement>(null);
+    const tickingRef = useRef(false);
 
     // Measure target element
     const measureTarget = useCallback(() => {
@@ -41,18 +42,25 @@ export default function SpotlightOverlay({
             setTargetRect(null);
             return;
         }
-        const el = document.querySelector(target);
-        if (!el) {
-            setTargetRect(null);
-            return;
+
+        if (!tickingRef.current) {
+            tickingRef.current = true;
+            requestAnimationFrame(() => {
+                const el = document.querySelector(target);
+                if (!el) {
+                    setTargetRect(null);
+                } else {
+                    const r = el.getBoundingClientRect();
+                    setTargetRect({
+                        top: r.top - padding,
+                        left: r.left - padding,
+                        width: r.width + padding * 2,
+                        height: r.height + padding * 2,
+                    });
+                }
+                tickingRef.current = false;
+            });
         }
-        const r = el.getBoundingClientRect();
-        setTargetRect({
-            top: r.top - padding,
-            left: r.left - padding,
-            width: r.width + padding * 2,
-            height: r.height + padding * 2,
-        });
     }, [target, padding]);
 
     useEffect(() => {
@@ -204,7 +212,7 @@ export default function SpotlightOverlay({
             {target ? (
                 <div
                     ref={tooltipRef}
-                    className={`onboarding-tooltip ${tooltipClass}`}
+                    className={`onboarding-tooltip ${tooltipClass} ${!targetRect ? 'fallback-center' : ''}`}
                     style={tooltipStyle}
                 >
                     {children}

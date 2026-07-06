@@ -50,8 +50,8 @@ function App() {
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
-  const [highlightMacroId, setHighlightMacroId] = useState<number | null>(null);
-  const [highlightCkeyId, setHighlightCkeyId] = useState<number | null>(null);
+  const [highlightMacroId] = useState<number | null>(null);
+  const [highlightCkeyId] = useState<number | null>(null);
   
   // State for directly opening the editor modal without changing sidebar tab
   const [editMacroId, setEditMacroId] = useState<number | null>(null);

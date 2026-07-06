@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { MACRO_BASE, CKEY_BASE, getKeyName, getSecondaryKeyName } from '../KeyDefinitions';
 import type { Macro } from '../types/macros';

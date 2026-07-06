@@ -78,6 +78,21 @@
     transform: translateY(0);
 }
 
+/* Fallback when target element is missing */
+.onboarding-tooltip.fallback-center {
+    top: 50% !important;
+    left: 50% !important;
+    transform: translate(-50%, -50%);
+}
+
+.onboarding-tooltip.fallback-center.entering {
+    transform: translate(-50%, calc(-50% + 12px));
+}
+
+.onboarding-tooltip.fallback-center.visible {
+    transform: translate(-50%, -50%);
+}
+
 .onboarding-tooltip-title {
     display: flex;
     align-items: center;
@@ -350,7 +365,6 @@
 
 .onboarding-btn-connect.success {
     background: var(--success-color);
-    pointer-events: none;
 }
 
 .onboarding-btn-connect.success svg {

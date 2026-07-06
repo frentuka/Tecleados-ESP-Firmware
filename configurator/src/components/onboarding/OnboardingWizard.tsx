@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useOnboardingStore } from '../../stores/onboardingStore';
 import SpotlightOverlay from './SpotlightOverlay';
@@ -86,11 +86,7 @@ const PlugIcon = () => (
     </svg>
 );
 
-const CheckIcon = () => (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-        <polyline points="20 6 9 17 4 12" />
-    </svg>
-);
+
 
 const ArrowRightIcon = () => (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -120,8 +116,9 @@ export default function OnboardingWizard({ isConnected, onConnect }: OnboardingW
     const { step, nextStep, complete } = useOnboardingStore();
     const [displayStep, setDisplayStep] = useState(step);
     const [isTransitioning, setIsTransitioning] = useState(false);
-    const [connectSuccess, setConnectSuccess] = useState(false);
+    const [isConnecting, setIsConnecting] = useState(false);
     const [overlayState, setOverlayState] = useState<'entering' | 'visible' | 'exiting'>('entering');
+    const overlayRef = useRef<HTMLDivElement>(null);
 
     // Fade in on mount
     useEffect(() => {
@@ -144,44 +141,92 @@ export default function OnboardingWizard({ isConnected, onConnect }: OnboardingW
         }
     }, [step, displayStep]);
 
-    // When connected during step 0, show success then advance
-    useEffect(() => {
-        if (isConnected && step === 0) {
-            setConnectSuccess(true);
-            const timer = setTimeout(() => {
-                nextStep();
-                setConnectSuccess(false);
-            }, 800);
-            return () => clearTimeout(timer);
+    const handleConnectClick = useCallback(async () => {
+        setIsConnecting(true);
+        try {
+            await onConnect();
+        } finally {
+            setIsConnecting(false);
         }
-    }, [isConnected, step, nextStep]);
+    }, [onConnect]);
 
-    const handleSkip = () => {
+    const handleSkip = useCallback(() => {
         setOverlayState('exiting');
         setTimeout(complete, 500);
-    };
+    }, [complete]);
 
-    const handleFinish = () => {
+    const handleFinish = useCallback(() => {
         setOverlayState('exiting');
         setTimeout(complete, 500);
-    };
+    }, [complete]);
 
-    const handleNext = () => {
+    const handleNext = useCallback(() => {
         if (step < 2) {
             nextStep();
         } else {
             handleFinish();
         }
-    };
+    }, [step, nextStep, handleFinish]);
+
+    // Initial focus when visible
+    useEffect(() => {
+        if (overlayState === 'visible') {
+            overlayRef.current?.focus();
+        }
+    }, [overlayState]);
+
+    // Keyboard navigation and focus trap
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') {
+                handleSkip();
+            } else if (e.key === 'Enter') {
+                if (displayStep === 0) {
+                    if (isConnected) nextStep();
+                    else handleConnectClick();
+                } else if (displayStep === 1) {
+                    nextStep();
+                } else if (displayStep === 2) {
+                    handleFinish();
+                }
+            } else if (e.key === 'Tab') {
+                if (!overlayRef.current) return;
+                const focusable = overlayRef.current.querySelectorAll<HTMLElement>(
+                    'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+                );
+                if (focusable.length === 0) return;
+
+                const firstElement = focusable[0];
+                const lastElement = focusable[focusable.length - 1];
+
+                if (e.shiftKey && document.activeElement === firstElement) {
+                    lastElement.focus();
+                    e.preventDefault();
+                } else if (!e.shiftKey && document.activeElement === lastElement) {
+                    firstElement.focus();
+                    e.preventDefault();
+                }
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [displayStep, isConnected, isConnecting, handleSkip, handleConnectClick, nextStep, handleFinish]);
 
     const currentStep = STEPS[displayStep];
 
     const content = createPortal(
-        <div className={`onboarding-overlay ${overlayState}`}>
+        <div
+            ref={overlayRef}
+            className={`onboarding-overlay ${overlayState}`}
+            role="dialog"
+            aria-modal="true"
+            tabIndex={-1}
+        >
             <SpotlightOverlay
                 target={currentStep.target}
                 tooltipPosition={currentStep.tooltipPosition}
-                visible={overlayState !== 'exiting'}
+                visible={true}
                 isTransitioning={isTransitioning}
             >
                 {displayStep === 0 && (
@@ -197,12 +242,12 @@ export default function OnboardingWizard({ isConnected, onConnect }: OnboardingW
                         </div>
                         <div className="onboarding-welcome-footer">
                             <button
-                                className={`onboarding-btn-connect ${connectSuccess ? 'success' : ''}`}
-                                onClick={onConnect}
-                                disabled={connectSuccess}
+                                className={`onboarding-btn-connect ${isConnected ? 'success' : ''} ${isConnecting ? 'connecting' : ''}`}
+                                onClick={isConnected ? nextStep : handleConnectClick}
+                                disabled={isConnecting}
                             >
-                                {connectSuccess ? <CheckIcon /> : <PlugIcon />}
-                                {connectSuccess ? 'Connected!' : 'Connect Keyboard'}
+                                {isConnected ? <ArrowRightIcon /> : <PlugIcon />}
+                                {isConnecting ? 'Connecting...' : isConnected ? 'Start Tutorial' : 'Connect Keyboard'}
                             </button>
                             <button className="onboarding-skip" onClick={handleSkip}>
                                 Skip Tutorial →
@@ -219,12 +264,19 @@ export default function OnboardingWizard({ isConnected, onConnect }: OnboardingW
                             The Layer System
                         </div>
                         <div className="onboarding-tooltip-body">
-                            Your keyboard has <strong>4 independent layers</strong>.
-                            The <strong>Base</strong> layer handles normal typing.
-                            Hold <strong>FN1</strong> or <strong>FN2</strong> to access secondary functions.
-                            <strong> FN3</strong> activates when both FN keys are held at once.
+                            Your keyboard's primary layout is the <strong>Base</strong> layer, which handles standard typing.
+                            <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic', fontSize: '0.85em', marginTop: '4px' }}>
+                                Note that this layer can't be removed nor renamed
+                            </div>
+                            <br />
+                            By holding a function key like <strong>FN1</strong> or <strong>FN2</strong>, you temporarily activate a different layer, giving your keys entirely new functions.
                             <br /><br />
-                            Keys left <strong>"Transparent"</strong> will fall through to the Base layer below.
+                            The <strong>FN3</strong> layer, by default, activates when pressing both <strong>FN1</strong> and <strong>FN2</strong> keys simultaneously.
+                            <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic', fontSize: '0.85em', marginTop: '4px' }}>
+                                This behaviour has been achieved using a <strong>Combo</strong>
+                            </div>
+                            <br />
+                            If a key on an active layer is set to <strong>"Transparent"</strong>, it simply uses the function from the <strong>Base</strong> layer.
                         </div>
                         <div className="onboarding-tooltip-footer">
                             <div className="onboarding-tooltip-actions">
