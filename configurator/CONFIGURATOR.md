@@ -94,7 +94,8 @@ configurator/
 │   │   ├── Icons.tsx                   — Reusable SVG icon components (ActionTapIcon, etc.)
 │   │   ├── ExportModal.tsx             — Modal for exporting configurations
 │   │   ├── ImportModal.tsx             — Modal for importing configurations
-│   │   └── KeyActionPopover.tsx        — Contextual popover for key assignments
+│   │   ├── KeyActionPopover.tsx        — Contextual popover for key assignments
+│   │   └── onboarding/                 — First-time user setup wizard and spotlight overlay components
 │   │
 │   ├── hooks/
 │   │   ├── useMacros.ts                — Macro state + all device operations (fetch, save, delete)
@@ -112,6 +113,7 @@ configurator/
 │   │   ├── customKeyStore.ts           — Zustand: customKeys[], async fetch/save/delete
 │   │   ├── logStore.ts                 — Zustand: logs[] (max 200 entries), addLog, clearLogs
 │   │   ├── notificationStore.ts        — Zustand: global notification state; showNotification(message, type)
+│   │   ├── onboardingStore.ts          — Zustand: wizard progress, completion state, localStorage persistence
 │   │   └── layoutStore.ts              — Zustand: physicalLayout, layers, activeLayer, isConnected (shared between editor and 3D background)
 │   │
 │   ├── types/
@@ -248,6 +250,7 @@ If the device disconnects unexpectedly while `wantConnection` is true, `HIDTrans
 | `customKeyStore`      | `customKeys[]`                                                 | Custom key list                           |
 | `logStore`            | `logs[]` (max 200)                                             | Communication log ring buffer             |
 | `notificationStore`   | `notification`, `showNotification`, `clearNotification`        | Global user-feedback notification system  |
+| `onboardingStore`     | `step`, `hasCompleted`, `nextStep`, `complete`, `reset`        | First-time wizard progress and visibility |
 | `layoutStore`         | `physicalLayout`, `layers`, `activeLayer`, `isConnected`       | Bridge between `KeyboardLayoutEditor` and `Background3D` |
 
 The stores hold **typed actions** that accept a `DeviceController` argument, keeping the async device logic inside the store rather than leaking into components.
@@ -877,3 +880,25 @@ The application leverages extensive glassmorphism, separating visual logic from 
 - **`Ctrl+2`**: Opens the Custom Keys Dashboard sidebar.
 - **`Ctrl+3`**: Opens the Combos Dashboard sidebar.
 - **`Ctrl+F`**: Rapidly focuses the global search bar located within the currently active dashboard for fast filtering.
+
+---
+
+## 19. Onboarding Wizard
+
+The Onboarding Wizard (`components/onboarding/OnboardingWizard.tsx`) provides a guided, connection-aware, first-time user experience that overlays the main application.
+
+### State Management (`onboardingStore.ts`)
+Wizard progress and completion state are managed by the `useOnboardingStore` Zustand store. When the user finishes or skips the tutorial, the `hasCompleted` flag is saved to `localStorage`, ensuring the wizard is bypassed on subsequent visits. The tutorial can be manually replayed via the Settings menu, which calls `reset()` to clear the local storage key.
+
+### Masking System (`SpotlightOverlay.tsx`)
+The wizard directs user focus using `SpotlightOverlay.tsx`, which implements a dynamic SVG `<mask>` to dim the entire viewport except for a specific target element.
+- The `measureTarget` function queries the DOM for the target element's bounding rect and updates the spotlight cutout position.
+- To maintain 60 FPS and prevent layout thrashing on `scroll` or `resize` events, `measureTarget` is debounced using `requestAnimationFrame`.
+- If the target element is unmounted (e.g. before connection), the component smoothly falls back to a centralized layout.
+
+### Accessibility and Flow
+The wizard is fully keyboard accessible:
+- It acts as a focus trap, hijacking `Tab` events to cycle focus only between interactive elements within the overlay.
+- `role="dialog"` and `aria-modal="true"` are applied to the root container.
+- Global `keydown` listeners enable users to advance steps using `Enter` or skip the tutorial entirely using `Escape`.
+- The connection logic handles existing connections seamlessly: if the device is already connected on page load, the button updates to "Start Tutorial" instead of forcing a reconnect, letting the user proceed at their own pace.
