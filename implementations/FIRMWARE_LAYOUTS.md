@@ -66,8 +66,6 @@ typedef struct __attribute__((packed)) {
 
 Individual layer blobs use the key pattern `ly_<N>` (e.g. `ly_0`, `ly_1`, ... `ly_15`) in namespace `cfg_lay`.
 
-> **Migration note:** The old keys `ly0`–`ly3` must be migrated on first boot. Phase 1 handles this.
-
 ### 0.3 — Memory Budget
 
 | Item | Size | Location |
@@ -150,11 +148,9 @@ const cfg_layout_index_t *cfg_layout_get_index(void);    // Read-only pointer to
 2. **`cfg_layout_load_all()`:**
    - Allocate PSRAM cache for 16 slots (zero-initialized).
    - Try to load `lay_idx` from NVS.
-   - **If `lay_idx` not found** → run migration:
-     - Read old keys `ly0`–`ly3` if they exist.
-     - Build an initial index: `active_mask = 0x000F`, `names = {"Base", "FN1", "FN2", "FN3"}`.
-     - Write each layer under new keys `ly_0`–`ly_3`.
-     - Persist the new `lay_idx`.
+   - **If `lay_idx` not found** → First boot initialization:
+     - Build an initial index: `active_mask = 0x0001`, `names = {"Base"}`.
+     - Save the `lay_idx` to NVS.
    - **If `lay_idx` found** → iterate `active_mask` bits, load each `ly_<N>` into `s_psram_cache[N]`.
    - Always: copy slot 0 → `s_dram_base`.
 
@@ -184,17 +180,6 @@ const cfg_layout_index_t *cfg_layout_get_index(void);    // Read-only pointer to
    - Post config update event.
 
 7. **`layout_update_cb()`** — adapt to handle `ly_<N>` key pattern (parse the numeric ID from the key string) instead of matching against a fixed array.
-
-### 1.3 — Migration Strategy
-
-On first boot after this update, `cfg_layout_load_all()` detects the absence of `lay_idx` and migrates:
-
-```
-Old NVS:  ly0, ly1, ly2, ly3  (namespace cfg_lay)
-New NVS:  ly_0, ly_1, ly_2, ly_3, lay_idx  (namespace cfg_lay)
-```
-
-The old keys are **not** deleted (NVS erase is slow and risky); they become orphans and are eventually overwritten or reclaimed on NVS erase/reinit.
 
 ---
 
@@ -236,41 +221,57 @@ The compile-time `keymaps[4][6][18]` array is replaced with a single `keymaps_ba
 
 **New model:**
 
-The layer switching system is expanded to support the concept of **momentary layer keys** (hold to activate, release to deactivate). The system action codes define a range:
+To avoid colliding with existing BLE and System actions (which occupy `ACTION_CODE_SYSTEM_MIN + 3` through `+32`), all new layer actions will be placed in a dedicated block starting at offset `0x40`. There is no backward compatibility with old code layouts.
+
+The system will support four distinct types of layer actions for each of the 16 layers:
 
 ```c
 // In kb_layout.h (or kb_system_action.h):
-#define SYS_ACTION_LAYER_0    (ACTION_CODE_SYSTEM_MIN + 0)   // Base
-#define SYS_ACTION_LAYER_1    (ACTION_CODE_SYSTEM_MIN + 1)   // Was FN1
-#define SYS_ACTION_LAYER_2    (ACTION_CODE_SYSTEM_MIN + 2)   // Was FN2
-// ...
-#define SYS_ACTION_LAYER_15   (ACTION_CODE_SYSTEM_MIN + 15)
+#define SYS_ACTION_LAYER_MOMENTARY_MIN (ACTION_CODE_SYSTEM_MIN + 0x40) // 0x2040 - 0x204F
+#define SYS_ACTION_LAYER_TOGGLE_MIN    (ACTION_CODE_SYSTEM_MIN + 0x50) // 0x2050 - 0x205F
+#define SYS_ACTION_LAYER_ON_MIN        (ACTION_CODE_SYSTEM_MIN + 0x60) // 0x2060 - 0x206F
+#define SYS_ACTION_LAYER_OFF_MIN       (ACTION_CODE_SYSTEM_MIN + 0x70) // 0x2070 - 0x207F
 
-// Utility check:
-#define IS_LAYER_ACTION(a) ((a) >= SYS_ACTION_LAYER_0 && (a) <= SYS_ACTION_LAYER_15)
-#define LAYER_FROM_ACTION(a) ((uint8_t)((a) - SYS_ACTION_LAYER_0))
+// Utility checks:
+#define IS_LAYER_MOMENTARY(a) ((a) >= SYS_ACTION_LAYER_MOMENTARY_MIN && (a) <= SYS_ACTION_LAYER_MOMENTARY_MIN + 15)
+#define IS_LAYER_TOGGLE(a)    ((a) >= SYS_ACTION_LAYER_TOGGLE_MIN && (a) <= SYS_ACTION_LAYER_TOGGLE_MIN + 15)
+#define IS_LAYER_ON(a)        ((a) >= SYS_ACTION_LAYER_ON_MIN && (a) <= SYS_ACTION_LAYER_ON_MIN + 15)
+#define IS_LAYER_OFF(a)       ((a) >= SYS_ACTION_LAYER_OFF_MIN && (a) <= SYS_ACTION_LAYER_OFF_MIN + 15)
+#define LAYER_ID_FROM_ACTION(a) ((uint8_t)((a) & 0x0F))
 ```
+
+> **Configurator Note:** These actions should **never be visible** in the configuration UI's key picker *unless* the target layer actually exists in the current layout outline.
+
+#### Layer Action Behaviors
+1. **Momentary (Hold):** The default action. Activates the layer when the key is pressed and deactivates it upon release. 
+2. **Toggle:** Sets the layer active on press and keeps it active on release. Pressing the toggle key again while the layer is active will deactivate it, falling back to the highest remaining active layer (or base).
+3. **Set Active (On):** Sets the layer active on press and does nothing on release.
+4. **Set Inactive (Off):** Sets the layer inactive on press and does nothing on release. Often used as a "Set Base Layer" action to clear a specific toggled layer.
 
 **Priority-based layer stack:**
 
-Replace `s_is_fn1_held` / `s_is_fn2_held` with a **held-layer bitmask** `s_held_layers` (`uint16_t`):
+Replace `s_is_fn1_held` / `s_is_fn2_held` with two bitmasks `s_momentary_layers` and `s_toggled_layers` (`uint16_t`):
 
 ```c
-static uint16_t s_held_layers = 0;  // bit N set = layer N is being held
+static uint16_t s_momentary_layers = 0; // bit N set = layer N is being held
+static uint16_t s_toggled_layers   = 0; // bit N set = layer N was toggled on
 
 static void update_layer_state(void) {
-    // Highest active held layer wins. If no layers held → base.
-    if (s_held_layers == 0) {
+    uint16_t active = s_momentary_layers | s_toggled_layers;
+    // Highest active layer wins. If no layers active → base.
+    if (active == 0) {
         s_active_layer = KB_LAYER_BASE;
     } else {
-        // __builtin_clz on 16-bit: find highest set bit
-        s_active_layer = 15 - __builtin_clz((unsigned)s_held_layers);
+        // Find highest set bit. __builtin_clz is safe because active != 0.
+        // NOTE: ESP32-S3 unsigned is 32-bit, so subtract from 31.
+        s_active_layer = 31 - __builtin_clz((unsigned)active);
+        
         // Validate that the layer actually exists
         if (!cfg_layout_exists(s_active_layer)) {
             // Fallback: find next highest that exists
-            uint16_t valid = s_held_layers;
+            uint16_t valid = active;
             while (valid) {
-                uint8_t top = 15 - __builtin_clz((unsigned)valid);
+                uint8_t top = 31 - __builtin_clz((unsigned)valid);
                 if (cfg_layout_exists(top)) { s_active_layer = top; return; }
                 valid &= ~(1u << top);
             }
@@ -283,19 +284,41 @@ static void update_layer_state(void) {
 **In `process_system_action()`**, replace the two `SYS_ACTION_LAYER_FN1` / `SYS_ACTION_LAYER_FN2` checks with:
 
 ```c
-if (IS_LAYER_ACTION(action)) {
-    uint8_t layer_id = LAYER_FROM_ACTION(action);
-    if (is_pressed) {
-        s_held_layers |= (1u << layer_id);
-    } else {
-        s_held_layers &= ~(1u << layer_id);
+    if (IS_LAYER_MOMENTARY(action)) {
+        uint8_t layer_id = LAYER_ID_FROM_ACTION(action);
+        if (is_pressed) s_momentary_layers |= (1u << layer_id);
+        else            s_momentary_layers &= ~(1u << layer_id);
+        update_layer_state();
+        return;
     }
-    update_layer_state();
-    return;
-}
-```
 
-> **Backward compatibility:** `SYS_ACTION_LAYER_BASE`, `SYS_ACTION_LAYER_FN1`, `SYS_ACTION_LAYER_FN2` remain the same values (0x2000, 0x2001, 0x2002). The old FN3 = FN1+FN2 behavior is a **user-configured combo** in the new model, not a firmware special case — but for backward compat, the migration in Phase 1 ensures layer 3 exists as "FN3" and existing keymaps are preserved.
+    if (IS_LAYER_TOGGLE(action)) {
+        if (is_pressed) {
+            uint8_t layer_id = LAYER_ID_FROM_ACTION(action);
+            s_toggled_layers ^= (1u << layer_id); // Toggle the bit
+            update_layer_state();
+        }
+        return;
+    }
+
+    if (IS_LAYER_ON(action)) {
+        if (is_pressed) {
+            uint8_t layer_id = LAYER_ID_FROM_ACTION(action);
+            s_toggled_layers |= (1u << layer_id);
+            update_layer_state();
+        }
+        return;
+    }
+
+    if (IS_LAYER_OFF(action)) {
+        if (is_pressed) {
+            uint8_t layer_id = LAYER_ID_FROM_ACTION(action);
+            s_toggled_layers &= ~(1u << layer_id);
+            update_layer_state();
+        }
+        return;
+    }
+```
 
 ### 2.4 — Deleted-layer Safety
 
@@ -323,8 +346,6 @@ CFG_KEY_LAYOUTS       = 0x10,  // GET: layout outline (all IDs + names)
 CFG_KEY_LAYOUT_SINGLE = 0x11,  // GET: full layer by {id}  |  SET: upsert/rename/delete
 CFG_KEY_LAYOUT_LIMITS = 0x12,  // GET: {maxLayouts: 16}
 ```
-
-> **Note:** The old `CFG_KEY_LAYER_0..3` (0x03–0x06) are **kept for backward compatibility** during a transition period. A GET on `CFG_KEY_LAYER_0` still works (returns layer 0 data). SET on the old keys maps internally to `cfg_layout_set_layer(N, ...)`. Eventually, the configurator migrates to the new endpoints and the old ones can be deprecated.
 
 ### 3.2 — Wire Protocol Endpoints
 
@@ -534,7 +555,7 @@ The split module already fragments NVS blobs for sync. The change here is minima
 | Document | Changes |
 |----------|---------|
 | [README.md](file:///home/srleg/Projects/Tecleados-ESP-Firmware/README.md) | Update layer count from 4→16, add create/rename/delete to features, update Config Key ID table, update Layer System section |
-| [CONFIG_MODULE.md (local)](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/config_module/CONFIG_MODULE.md) | Update NVS layout, add `lay_idx` documentation, update API table, document migration |
+| [CONFIG_MODULE.md (local)](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/config_module/CONFIG_MODULE.md) | Update NVS layout, add `lay_idx` documentation, update API table |
 | [KEYBOARD_MODULE.md (local)](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/KEYBOARD_MODULE.md) | Update layer switching documentation, new action code range |
 | [CONFIG_MODULE (universe)](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/CONFIG_MODULE.md) | Sync with local doc changes |
 | [KEYBOARD_MODULE (universe)](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/KEYBOARD_MODULE.md) | Sync with local doc changes |
@@ -555,7 +576,6 @@ idf.py build    # Must compile with zero warnings
 | Test | Expected Result |
 |------|----------------|
 | Fresh flash (no NVS) | Base layer loaded from `keymaps_base[]`. Only "Base" in outline. `lay_idx` created with `active_mask=0x0001`. |
-| Migration (existing NVS with `ly0`–`ly3`) | All 4 layers preserved. `lay_idx` created with `active_mask=0x000F`, names `Base/FN1/FN2/FN3`. |
 | Create layout via configurator | New layout appears. PSRAM cache updated. NVS blob persisted. |
 | Delete layout via configurator | Layout removed from outline. Cache invalidated. If active → falls back to base. |
 | Rename layout via configurator | Name updated in index. No keymap data change. |
@@ -580,14 +600,11 @@ idf.py -p PORT monitor
 
 ## Risk Assessment
 
-| Risk | Mitigation |
-|------|-----------|
-| NVS key length overflow (`ly_15` = 5 chars, limit 15) | Well within limits |
-| Old configurator ↔ new firmware | Old `CFG_KEY_LAYER_0..3` endpoints still work; graceful degradation |
-| New configurator ↔ old firmware | Configurator should check `CFG_KEY_LAYOUT_LIMITS` on connect; if it fails (old firmware), fall back to 4-layer hardcoded mode |
-| Held-layer deleted mid-press | `update_layer_state()` validates against `cfg_layout_exists()` |
-| FN3 = FN1+FN2 backward compat | Migration creates FN3 as a real layer. Users who rely on the automatic combo behavior must assign a layer key to FN3 — but existing keymaps that had FN1+FN2 → FN3 were already using `SYS_ACTION_LAYER_FN1` + `SYS_ACTION_LAYER_FN2` held simultaneously, which the new priority stack handles correctly (highest held layer wins, FN3=layer3 is higher than FN2=layer2 and FN1=layer1). |
-| PSRAM allocation failure | `cfg_layout_load_all()` already handles this with `ESP_ERR_NO_MEM` return |
+| Risk                                                  | Mitigation                                                                |
+| -------------------------------------------------------| ---------------------------------------------------------------------------|
+| NVS key length overflow (`ly_15` = 5 chars, limit 15) | Well within limits                                                        |
+| Held-layer deleted mid-press                          | `update_layer_state()` validates against `cfg_layout_exists()`            |
+| PSRAM allocation failure                              | `cfg_layout_load_all()` already handles this with `ESP_ERR_NO_MEM` return |
 
 ---
 
