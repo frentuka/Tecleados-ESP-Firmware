@@ -168,7 +168,8 @@ const cfg_layout_index_t *cfg_layout_get_index(void);    // Read-only pointer to
    - Reject `id == 0` (Base layer protection). Return `ESP_ERR_NOT_ALLOWED`.
    - Clear bit in `active_mask`.
    - Zero `s_psram_cache[id]` and `s_idx.names[id]`.
-   - Persist updated index to NVS (the orphaned NVS blob is left for overwrite — matches the macro pattern).
+   - Persist updated index to NVS.
+   - **Explicitly erase the layer blob** (`nvs_erase_key` for `ly_<id>`) so ghost data does not reappear if the ID is reused later.
    - If `id == s_swap_layer_idx`, reset `s_swap_layer_idx = 0xFF` and zero `s_dram_swap`.
    - Post `CONFIG_EVENT_KIND_UPDATED` so keyboard module can react (e.g., if deleted layer was active).
 
@@ -192,7 +193,7 @@ const cfg_layout_index_t *cfg_layout_get_index(void);    // Read-only pointer to
 | [kb_layout.h](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/include/kb_layout.h) | Replace `KB_LAYER_COUNT 4` with `CFG_LAYOUT_MAX_COUNT`, remove fixed enum |
 | [kb_layout.c](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/kb_layout.c) | Shrink compile-time `keymaps[]` to **layer 0 only** (Base default) |
 | [kb_macro.c](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/kb_macro.c) | Generalize layer switching beyond FN1/FN2 booleans |
-| [kb_system_action.h](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/include/kb_system_action.h) | Add `SYS_ACTION_LAYER_N` range for layers 0–15 |
+| [kb_layout.h](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/include/kb_layout.h) | Add `ACTION_CODE_LAYER_MIN` block (`0x5000`) for isolated layer actions |
 
 ### 2.1 — `kb_layout.h` Changes
 
@@ -221,32 +222,36 @@ The compile-time `keymaps[4][6][18]` array is replaced with a single `keymaps_ba
 
 **New model:**
 
-To avoid colliding with existing BLE and System actions (which occupy `ACTION_CODE_SYSTEM_MIN + 3` through `+32`), all new layer actions will be placed in a dedicated block starting at offset `0x40`. There is no backward compatibility with old code layouts.
+To cleanly separate layer management from general System Actions (media, BLE, etc.), layer actions will be given their own dedicated top-level action code block (`0x5000` range). This ensures they are categorized logically in the firmware and presented in a dedicated "Layer Actions" category in the Configurator UI. There is no backward compatibility with old code layouts.
 
 The system will support four distinct types of layer actions for each of the 16 layers:
 
 ```c
-// In kb_layout.h (or kb_system_action.h):
-#define SYS_ACTION_LAYER_MOMENTARY_MIN (ACTION_CODE_SYSTEM_MIN + 0x40) // 0x2040 - 0x204F
-#define SYS_ACTION_LAYER_TOGGLE_MIN    (ACTION_CODE_SYSTEM_MIN + 0x50) // 0x2050 - 0x205F
-#define SYS_ACTION_LAYER_ON_MIN        (ACTION_CODE_SYSTEM_MIN + 0x60) // 0x2060 - 0x206F
-#define SYS_ACTION_LAYER_OFF_MIN       (ACTION_CODE_SYSTEM_MIN + 0x70) // 0x2070 - 0x207F
+// In kb_layout.h:
+#define ACTION_CODE_LAYER_MIN          0x5000
+#define ACTION_CODE_LAYER_MOMENTARY    (ACTION_CODE_LAYER_MIN + 0x00) // 0x5000 - 0x500F
+#define ACTION_CODE_LAYER_TOGGLE       (ACTION_CODE_LAYER_MIN + 0x10) // 0x5010 - 0x501F
+#define ACTION_CODE_LAYER_ON           (ACTION_CODE_LAYER_MIN + 0x20) // 0x5020 - 0x502F
+#define ACTION_CODE_LAYER_OFF          (ACTION_CODE_LAYER_MIN + 0x30) // 0x5030 - 0x503F
+#define ACTION_CODE_LAYER_CLEAR_ALL    (ACTION_CODE_LAYER_MIN + 0x40) // 0x5040 - Return to Base (Panic)
 
 // Utility checks:
-#define IS_LAYER_MOMENTARY(a) ((a) >= SYS_ACTION_LAYER_MOMENTARY_MIN && (a) <= SYS_ACTION_LAYER_MOMENTARY_MIN + 15)
-#define IS_LAYER_TOGGLE(a)    ((a) >= SYS_ACTION_LAYER_TOGGLE_MIN && (a) <= SYS_ACTION_LAYER_TOGGLE_MIN + 15)
-#define IS_LAYER_ON(a)        ((a) >= SYS_ACTION_LAYER_ON_MIN && (a) <= SYS_ACTION_LAYER_ON_MIN + 15)
-#define IS_LAYER_OFF(a)       ((a) >= SYS_ACTION_LAYER_OFF_MIN && (a) <= SYS_ACTION_LAYER_OFF_MIN + 15)
+#define IS_LAYER_ACTION(a)    ((a) >= ACTION_CODE_LAYER_MIN && (a) <= ACTION_CODE_LAYER_CLEAR_ALL)
+#define IS_LAYER_MOMENTARY(a) ((a) >= ACTION_CODE_LAYER_MOMENTARY && (a) <= ACTION_CODE_LAYER_MOMENTARY + 15)
+#define IS_LAYER_TOGGLE(a)    ((a) >= ACTION_CODE_LAYER_TOGGLE && (a) <= ACTION_CODE_LAYER_TOGGLE + 15)
+#define IS_LAYER_ON(a)        ((a) >= ACTION_CODE_LAYER_ON && (a) <= ACTION_CODE_LAYER_ON + 15)
+#define IS_LAYER_OFF(a)       ((a) >= ACTION_CODE_LAYER_OFF && (a) <= ACTION_CODE_LAYER_OFF + 15)
 #define LAYER_ID_FROM_ACTION(a) ((uint8_t)((a) & 0x0F))
 ```
 
-> **Configurator Note:** These actions should **never be visible** in the configuration UI's key picker *unless* the target layer actually exists in the current layout outline.
+> **Configurator Note:** These actions should be separated into their own "Layers" category in the key picker UI, distinct from System actions. Additionally, specific layer actions (like Momentary Layer 5) should **never be visible** unless that target layer actually exists in the current layout outline.
 
 #### Layer Action Behaviors
 1. **Momentary (Hold):** The default action. Activates the layer when the key is pressed and deactivates it upon release. 
 2. **Toggle:** Sets the layer active on press and keeps it active on release. Pressing the toggle key again while the layer is active will deactivate it, falling back to the highest remaining active layer (or base).
 3. **Set Active (On):** Sets the layer active on press and does nothing on release.
 4. **Set Inactive (Off):** Sets the layer inactive on press and does nothing on release. Often used as a "Set Base Layer" action to clear a specific toggled layer.
+5. **Clear All Toggles (Panic Button):** Sets all toggled layers inactive (`s_toggled_layers = 0`), acting as a "Return to Base" panic button.
 
 **Priority-based layer stack:**
 
@@ -281,9 +286,10 @@ static void update_layer_state(void) {
 }
 ```
 
-**In `process_system_action()`**, replace the two `SYS_ACTION_LAYER_FN1` / `SYS_ACTION_LAYER_FN2` checks with:
+**In `kb_macro_process_action()`**, add a new top-level branch for layer actions (removed from `process_system_action()`):
 
 ```c
+if (IS_LAYER_ACTION(action)) {
     if (IS_LAYER_MOMENTARY(action)) {
         uint8_t layer_id = LAYER_ID_FROM_ACTION(action);
         if (is_pressed) s_momentary_layers |= (1u << layer_id);
@@ -318,9 +324,27 @@ static void update_layer_state(void) {
         }
         return;
     }
+
+    if (action == ACTION_CODE_LAYER_CLEAR_ALL) {
+        if (is_pressed) {
+            s_toggled_layers = 0;
+            update_layer_state();
+        }
+        return;
+    }
+}
 ```
 
-### 2.4 — Deleted-layer Safety
+### 2.4 — Transparent Fall-Through Policy
+
+The behavior of transparent keys (`0xFFFF`) when multiple layers are active will be configurable via a new system setting (`cfg_system_t.transparent_stack_fallback`). 
+
+1. **Direct-to-Base (Default):** If the highest active layer has a transparent key, the firmware immediately falls back to Layer 0 (Base). This is faster and predictable for simpler layouts.
+2. **Stack Fall-Through:** If enabled, a transparent key causes the firmware to evaluate the next highest *active* layer in the stack. It walks down the active bitmask until a non-transparent key is found, finally hitting Base.
+
+> **Configurator Note:** A toggle switch labeled "Transparent Key Fall-Through" with an explanatory tooltip will be added to the global Settings modal.
+
+### 2.5 — Deleted-layer Safety
 
 If the currently active layer is deleted via the configurator while the user is typing:
 - The `CONFIG_EVENT_KIND_UPDATED` handler in `cfg_layouts.c` invalidates the cache.
@@ -531,6 +555,7 @@ interface LayoutState {
 5. **Rename** shows an inline input field on the tab.
 6. Layer fetch changes from `CFG_KEY_LAYER_0 + layerIdx` to `CFG_KEY_LAYOUT_SINGLE` with `{id: layoutId}`.
 7. Layer save changes similarly.
+8. **Strict ID Lookup:** Ensure all frontend logic (store state, rendering, and API calls) strictly references the layout `id` (0–15) and never relies on array index positions, as layouts may be non-contiguous.
 
 ---
 
@@ -540,13 +565,14 @@ interface LayoutState {
 
 | File | Change |
 |------|--------|
-| Split config sync | Must handle variable-count layouts during master→slave NVS mirroring |
+| [split_config_sync.c](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/split/split_config_sync.c) | Update sync table and push logic for dynamic layout indexing |
 
-The split module already fragments NVS blobs for sync. The change here is minimal:
-- When syncing `CFGMOD_KIND_LAYOUT`, sync the `lay_idx` blob first, then sync each individual `ly_<N>` blob for active layouts.
-- The slave's `layout_update_cb()` handles reloading after each blob arrives.
+The split module already fragments NVS blobs for sync and dynamically parses index blobs for macros and custom keys. The change here perfectly mimics that existing architecture:
+- **Sync Table Update:** Replace the hardcoded `CFG_ST_LAYER_0..3` entries in `SPLIT_SYNC_ENTRIES` with a single entry: `{ CFGMOD_KIND_LAYOUT, "lay_idx" }`.
+- **Dynamic Push Logic:** In `split_config_sync_push_kind()`, add a handler for `CFGMOD_KIND_LAYOUT`. It will use `cfgmod_read_storage()` to fetch the `lay_idx` blob, cast it to `cfg_layout_index_t`, and iterate over the `active_mask` to push the individual `ly_<N>` blobs.
+- **Header Inclusion:** Add `#include "cfg_layouts.h"` to resolve the struct definition.
 
-> **Note:** The existing split sync mechanism already operates on arbitrary NVS key/blob pairs. No structural changes are needed — only the set of keys to sync is now dynamic (driven by `active_mask`).
+> **Note:** The existing split sync mechanism already operates on arbitrary NVS key/blob pairs. By following the `_idx` bitmask pattern already established by other modules, no cross-module API additions are required.
 
 ---
 
