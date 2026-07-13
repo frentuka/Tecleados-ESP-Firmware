@@ -609,6 +609,30 @@ esp_err_t cfgmod_read_storage(cfgmod_kind_t kind, const char *key,
   return err;
 }
 
+esp_err_t cfgmod_delete_storage(cfgmod_kind_t kind, const char *key) {
+  const char *ns, *nvs_key;
+  char nvs_key_buf[16] = {0};
+  esp_err_t err = resolve_ns_and_key(kind, key, &ns, &nvs_key, nvs_key_buf, sizeof(nvs_key_buf));
+  if (err != ESP_OK) return err;
+
+  nvs_handle_t handle;
+  err = nvs_open(ns, NVS_READWRITE, &handle);
+  if (err != ESP_OK) return err;
+
+  err = nvs_erase_key(handle, nvs_key);
+  if (err == ESP_OK) {
+    err = nvs_commit(handle);
+    ESP_LOGI(TAG, "NVS erase_key %s/%s success", ns, nvs_key);
+  } else if (err == ESP_ERR_NVS_NOT_FOUND) {
+    err = ESP_OK; // Ignore if already doesn't exist
+  } else {
+    ESP_LOGW(TAG, "NVS erase_key %s/%s failed (err 0x%x)", ns, nvs_key, err);
+  }
+  
+  nvs_close(handle);
+  return err;
+}
+
 // Write a blob to NVS for the given kind/key.
 esp_err_t cfgmod_write_storage(cfgmod_kind_t kind, const char *key,
                                const void *data, size_t len) {

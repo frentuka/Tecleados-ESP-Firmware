@@ -2,10 +2,12 @@
 
 #include <stdbool.h>
 #include <string.h>
+#include <stdlib.h>
 
 #include "cfg_storage_keys.h"
 #include "cfgmod.h"
 #include "kb_layout.h"
+#include "event_bus.h"
 
 #include "cJSON.h"
 #include "esp_log.h"
@@ -13,29 +15,16 @@
 
 #define TAG "cfg_layouts"
 
-// Memory Strategy:
-// 1. All layers are cached in PSRAM (s_psram_cache).
-// 2. Layer 0 (Base) is always in DRAM (s_dram_base) for hot-path speed.
-// 3. One additional layer (s_swap_layer_idx) is cached in DRAM (s_dram_swap).
 static cfg_layer_t  s_dram_base;
 static cfg_layer_t  s_dram_swap;
 static uint8_t      s_swap_layer_idx = 0xFF; // Currently swapped layer
 static cfg_layer_t *s_psram_cache = NULL;
-
-// NVS key names for each layer
-static const char *s_layer_keys[KB_LAYER_COUNT] = {
-    CFG_ST_LAYER_0,
-    CFG_ST_LAYER_1,
-    CFG_ST_LAYER_2,
-    CFG_ST_LAYER_3,
-};
+static cfg_layout_index_t s_idx = {0};
 
 /*
     Defaults: copy from compile-time keymaps[] in kb_layout.h
 */
 static void layout_default(void *out_struct) {
-  // This fills a cfg_layer_t with zeros as a safe fallback.
-  // The real per-layer defaults are applied in cfg_layout_load_all().
   cfg_layer_t *l = (cfg_layer_t *)out_struct;
   memset(l, 0, sizeof(cfg_layer_t));
 }
@@ -107,17 +96,20 @@ static bool layout_deserialize(cJSON *root, void *out_struct) {
     reload the affected layer into cache.
 */
 static void layout_update_cb(const char *key) {
-  for (int i = 0; i < KB_LAYER_COUNT; i++) {
-    if (strcmp(key, s_layer_keys[i]) == 0) {
-      ESP_LOGI(TAG, "Reloading layer %d from NVS", i);
+  if (strncmp(key, "ly_", 3) == 0) {
+    uint8_t layer_id = (uint8_t)atoi(key + 3);
+    if (layer_id < CFG_LAYOUT_MAX_COUNT) {
+      ESP_LOGI(TAG, "Reloading layer %d from NVS", layer_id);
       cfg_layer_t tmp;
-      if (cfgmod_get_config(CFGMOD_KIND_LAYOUT, s_layer_keys[i], &tmp) == ESP_OK) {
-        if (s_psram_cache) s_psram_cache[i] = tmp;
-        if (i == 0) s_dram_base = tmp;
-        if (i == s_swap_layer_idx) s_dram_swap = tmp;
+      if (cfgmod_get_config(CFGMOD_KIND_LAYOUT, key, &tmp) == ESP_OK) {
+        if (s_psram_cache) s_psram_cache[layer_id] = tmp;
+        if (layer_id == 0) s_dram_base = tmp;
+        if (layer_id == s_swap_layer_idx) s_dram_swap = tmp;
       }
-      return;
     }
+  } else if (strcmp(key, CFG_ST_LAYER_IDX) == 0) {
+      size_t len = sizeof(s_idx);
+      cfgmod_read_storage(CFGMOD_KIND_LAYOUT, CFG_ST_LAYER_IDX, &s_idx, &len);
   }
 }
 
@@ -136,35 +128,58 @@ void cfg_layouts_register(void) {
 */
 esp_err_t cfg_layout_load_all(void) {
   if (!s_psram_cache) {
-    s_psram_cache = heap_caps_malloc(sizeof(cfg_layer_t) * KB_LAYER_COUNT, MALLOC_CAP_SPIRAM);
+    s_psram_cache = heap_caps_malloc(sizeof(cfg_layer_t) * CFG_LAYOUT_MAX_COUNT, MALLOC_CAP_SPIRAM);
     if (!s_psram_cache) {
       ESP_LOGE(TAG, "Failed to allocate layer cache in PSRAM!");
       return ESP_ERR_NO_MEM;
     }
+    memset(s_psram_cache, 0, sizeof(cfg_layer_t) * CFG_LAYOUT_MAX_COUNT);
   }
 
-  for (int i = 0; i < KB_LAYER_COUNT; i++) {
-    // Start with the compile-time default for this layer.
-    cfg_layer_t layer_data;
-    memcpy(&layer_data, &keymaps[i], sizeof(cfg_layer_t));
+  size_t idx_len = sizeof(s_idx);
+  if (cfgmod_read_storage(CFGMOD_KIND_LAYOUT, CFG_ST_LAYER_IDX, &s_idx, &idx_len) != ESP_OK || idx_len != sizeof(cfg_layout_index_t)) {
+      // First boot initialization
+      memset(&s_idx, 0, sizeof(s_idx));
+      s_idx.active_mask = 0x0001;
+      strncpy(s_idx.names[0], "Base", CFG_LAYOUT_NAME_LEN);
+      cfgmod_write_storage(CFGMOD_KIND_LAYOUT, CFG_ST_LAYER_IDX, &s_idx, sizeof(s_idx));
+      ESP_LOGI(TAG, "Initialized default layout index");
+  }
 
-    // Attempt a direct binary read from NVS.  cfgmod_get_config() is not used
-    // here because it always returns ESP_OK (calling layout_default() which
-    // memsets to zero), making it impossible to distinguish "NVS had data" from
-    // "NVS was empty". cfgmod_read_storage() returns an error when the key does
-    // not exist, so we can safely fall back to the compile-time default.
-    cfg_layer_t tmp;
-    size_t len = sizeof(tmp);
-    if (cfgmod_read_storage(CFGMOD_KIND_LAYOUT, s_layer_keys[i], &tmp, &len) == ESP_OK
-        && len == sizeof(cfg_layer_t)) {
-      layer_data = tmp;
-      ESP_LOGI(TAG, "Layer %d loaded from NVS", i);
-    } else {
-      ESP_LOGW(TAG, "Layer %d using compile-time defaults", i);
+  // Enforce Base layer protection
+  s_idx.active_mask |= 0x0001;
+  strncpy(s_idx.names[0], "Base", CFG_LAYOUT_NAME_LEN);
+
+  for (uint8_t i = 0; i < CFG_LAYOUT_MAX_COUNT; i++) {
+    if (s_idx.active_mask & (1 << i)) {
+        cfg_layer_t layer_data;
+        if (i == 0) {
+            // Note: Temporary use of keymaps[0] until Phase 2 is implemented.
+            memcpy(&layer_data, &keymaps[0], sizeof(cfg_layer_t));
+        } else {
+            for (int r = 0; r < KB_MATRIX_ROW_COUNT; r++) {
+                for (int c = 0; c < KB_MATRIX_COL_COUNT; c++) {
+                    layer_data.keys[r][c] = KB_KEY_TRANSPARENT;
+                }
+            }
+        }
+
+        char key[16];
+        snprintf(key, sizeof(key), CFG_ST_LAYER_FMT, i);
+        
+        cfg_layer_t tmp;
+        size_t len = sizeof(tmp);
+        if (cfgmod_read_storage(CFGMOD_KIND_LAYOUT, key, &tmp, &len) == ESP_OK
+            && len == sizeof(cfg_layer_t)) {
+          layer_data = tmp;
+          ESP_LOGI(TAG, "Layer %d loaded from NVS", i);
+        } else {
+          ESP_LOGW(TAG, "Layer %d using defaults", i);
+        }
+
+        s_psram_cache[i] = layer_data;
+        if (i == 0) s_dram_base = layer_data;
     }
-
-    s_psram_cache[i] = layer_data;
-    if (i == 0) s_dram_base = layer_data;
   }
   return ESP_OK;
 }
@@ -177,28 +192,25 @@ uint16_t cfg_layout_get_action_code(uint8_t row, uint8_t col, uint8_t layer) {
     return ACTION_CODE_NONE;
   }
 
-  if (layer >= KB_LAYER_COUNT) {
-    layer = KB_LAYER_BASE;
+  if (layer >= CFG_LAYOUT_MAX_COUNT || !cfg_layout_exists(layer)) {
+    layer = 0;
   }
 
   uint16_t kc;
   
-  // Fast Path: Layer 0
   if (layer == 0) {
     kc = s_dram_base.keys[row][col];
   } 
-  // Fast Path: Current Swap
   else if (layer == s_swap_layer_idx) {
     kc = s_dram_swap.keys[row][col];
   }
-  // Slow Path: Swap from PSRAM
   else {
     if (s_psram_cache) {
       s_dram_swap = s_psram_cache[layer];
       s_swap_layer_idx = layer;
       kc = s_dram_swap.keys[row][col];
     } else {
-      kc = KB_KEY_TRANSPARENT; // Should not happen
+      kc = KB_KEY_TRANSPARENT; 
     }
   }
 
@@ -212,13 +224,12 @@ uint16_t cfg_layout_get_action_code(uint8_t row, uint8_t col, uint8_t layer) {
     Per-layer get (from cache, no NVS read)
 */
 esp_err_t cfg_layout_get_layer(uint8_t layer, cfg_layer_t *out) {
-  if (!out || layer >= KB_LAYER_COUNT)
+  if (!out || layer >= CFG_LAYOUT_MAX_COUNT || !cfg_layout_exists(layer))
     return ESP_ERR_INVALID_ARG;
   
   if (s_psram_cache) {
     *out = s_psram_cache[layer];
   } else {
-    // Fallback for safety if PSRAM failed
     if (layer == 0) *out = s_dram_base;
     else if (layer == s_swap_layer_idx) *out = s_dram_swap;
     else memset(out, 0, sizeof(cfg_layer_t));
@@ -230,10 +241,13 @@ esp_err_t cfg_layout_get_layer(uint8_t layer, cfg_layer_t *out) {
     Per-layer set (updates cache + persists to NVS)
 */
 esp_err_t cfg_layout_set_layer(uint8_t layer, const cfg_layer_t *in) {
-  if (!in || layer >= KB_LAYER_COUNT)
+  if (!in || layer >= CFG_LAYOUT_MAX_COUNT || !cfg_layout_exists(layer))
     return ESP_ERR_INVALID_ARG;
 
-  esp_err_t err = cfgmod_set_config(CFGMOD_KIND_LAYOUT, s_layer_keys[layer], in);
+  char key[16];
+  snprintf(key, sizeof(key), CFG_ST_LAYER_FMT, layer);
+
+  esp_err_t err = cfgmod_set_config(CFGMOD_KIND_LAYOUT, key, in);
   if (err == ESP_OK) {
     if (s_psram_cache) s_psram_cache[layer] = *in;
     if (layer == 0) s_dram_base = *in;
@@ -241,4 +255,107 @@ esp_err_t cfg_layout_set_layer(uint8_t layer, const cfg_layer_t *in) {
     ESP_LOGI(TAG, "Layer %d saved and cached", layer);
   }
   return err;
+}
+
+// ── Dynamic management ──
+
+esp_err_t cfg_layout_create(const char *name, uint8_t *out_id) {
+    if (!name || !out_id) return ESP_ERR_INVALID_ARG;
+    
+    int id = -1;
+    for (int i = 1; i < CFG_LAYOUT_MAX_COUNT; i++) {
+        if (!(s_idx.active_mask & (1 << i))) {
+            id = i;
+            break;
+        }
+    }
+    if (id == -1) return ESP_ERR_NO_MEM;
+
+    s_idx.active_mask |= (1 << id);
+    strncpy(s_idx.names[id], name, CFG_LAYOUT_NAME_LEN);
+    s_idx.names[id][CFG_LAYOUT_NAME_LEN - 1] = '\0';
+
+    if (s_psram_cache) {
+        for (int r = 0; r < KB_MATRIX_ROW_COUNT; r++) {
+            for (int c = 0; c < KB_MATRIX_COL_COUNT; c++) {
+                s_psram_cache[id].keys[r][c] = KB_KEY_TRANSPARENT;
+            }
+        }
+    }
+
+    char key[16];
+    snprintf(key, sizeof(key), CFG_ST_LAYER_FMT, id);
+    
+    cfgmod_write_storage(CFGMOD_KIND_LAYOUT, key, &s_psram_cache[id], sizeof(cfg_layer_t));
+    cfgmod_write_storage(CFGMOD_KIND_LAYOUT, CFG_ST_LAYER_IDX, &s_idx, sizeof(s_idx));
+
+    config_update_event_t ev = { .kind = (uint8_t)CFGMOD_KIND_LAYOUT };
+    strlcpy(ev.key, CFG_ST_LAYER_IDX, sizeof(ev.key));
+    esp_event_post(CONFIG_EVENTS, CONFIG_EVENT_KIND_UPDATED, &ev, sizeof(ev), 0);
+
+    *out_id = (uint8_t)id;
+    return ESP_OK;
+}
+
+esp_err_t cfg_layout_delete(uint8_t id) {
+    if (id == 0 || id >= CFG_LAYOUT_MAX_COUNT) return ESP_ERR_NOT_ALLOWED;
+    if (!cfg_layout_exists(id)) return ESP_ERR_NOT_FOUND;
+
+    s_idx.active_mask &= ~(1 << id);
+    memset(s_idx.names[id], 0, CFG_LAYOUT_NAME_LEN);
+
+    if (s_psram_cache) {
+        memset(&s_psram_cache[id], 0, sizeof(cfg_layer_t));
+    }
+
+    char key[16];
+    snprintf(key, sizeof(key), CFG_ST_LAYER_FMT, id);
+    cfgmod_delete_storage(CFGMOD_KIND_LAYOUT, key);
+    cfgmod_write_storage(CFGMOD_KIND_LAYOUT, CFG_ST_LAYER_IDX, &s_idx, sizeof(s_idx));
+
+    if (id == s_swap_layer_idx) {
+        s_swap_layer_idx = 0xFF;
+        memset(&s_dram_swap, 0, sizeof(cfg_layer_t));
+    }
+
+    config_update_event_t ev = { .kind = (uint8_t)CFGMOD_KIND_LAYOUT };
+    strlcpy(ev.key, CFG_ST_LAYER_IDX, sizeof(ev.key));
+    esp_event_post(CONFIG_EVENTS, CONFIG_EVENT_KIND_UPDATED, &ev, sizeof(ev), 0);
+
+    return ESP_OK;
+}
+
+esp_err_t cfg_layout_rename(uint8_t id, const char *new_name) {
+    if (id == 0 || id >= CFG_LAYOUT_MAX_COUNT || !new_name) return ESP_ERR_NOT_ALLOWED;
+    if (!cfg_layout_exists(id)) return ESP_ERR_NOT_FOUND;
+
+    strncpy(s_idx.names[id], new_name, CFG_LAYOUT_NAME_LEN);
+    s_idx.names[id][CFG_LAYOUT_NAME_LEN - 1] = '\0';
+    
+    cfgmod_write_storage(CFGMOD_KIND_LAYOUT, CFG_ST_LAYER_IDX, &s_idx, sizeof(s_idx));
+
+    config_update_event_t ev = { .kind = (uint8_t)CFGMOD_KIND_LAYOUT };
+    strlcpy(ev.key, CFG_ST_LAYER_IDX, sizeof(ev.key));
+    esp_event_post(CONFIG_EVENTS, CONFIG_EVENT_KIND_UPDATED, &ev, sizeof(ev), 0);
+
+    return ESP_OK;
+}
+
+// ── Index accessors ──
+
+uint8_t cfg_layout_get_count(void) {
+    uint8_t count = 0;
+    for (int i = 0; i < CFG_LAYOUT_MAX_COUNT; i++) {
+        if (s_idx.active_mask & (1 << i)) count++;
+    }
+    return count;
+}
+
+bool cfg_layout_exists(uint8_t id) {
+    if (id >= CFG_LAYOUT_MAX_COUNT) return false;
+    return (s_idx.active_mask & (1 << id)) != 0;
+}
+
+const cfg_layout_index_t *cfg_layout_get_index(void) {
+    return &s_idx;
 }

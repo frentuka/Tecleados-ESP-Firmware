@@ -103,3 +103,6 @@ esp_err_t cfgmod_read_storage(cfgmod_kind_t kind, const char *key,
 // Write a blob to NVS for a kind/key pair.
 esp_err_t cfgmod_write_storage(cfgmod_kind_t kind, const char *key,
                                const void *data, size_t len);
+
+// Delete a blob from NVS for a kind/key pair.
+esp_err_t cfgmod_delete_storage(cfgmod_kind_t kind, const char *key);
