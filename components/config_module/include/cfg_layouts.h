@@ -11,6 +11,15 @@ typedef struct cfg_layer {
   uint16_t keys[KB_MATRIX_ROW_COUNT][KB_MATRIX_COL_COUNT];
 } cfg_layer_t;
 
+#define CFG_LAYOUT_MAX_COUNT    16
+#define CFG_LAYOUT_NAME_LEN     24
+
+// Persistent index: tracks which layout slots are populated + their names
+typedef struct __attribute__((packed)) {
+    uint16_t active_mask;
+    char     names[CFG_LAYOUT_MAX_COUNT][CFG_LAYOUT_NAME_LEN];
+} cfg_layout_index_t;
+
 // Register layout serializer and default
 void cfg_layouts_register(void);
 

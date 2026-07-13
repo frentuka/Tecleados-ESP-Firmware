@@ -6,7 +6,7 @@
 
 ## Phase Checklist
 
-- [ ] **Phase 0 — Metadata Data Model** — Design the `cfg_layout_index_t` metadata struct and NVS schema
+- [x] **Phase 0 — Metadata Data Model** — Design the `cfg_layout_index_t` metadata struct and NVS schema
 - [ ] **Phase 1 — Config Module (`cfg_layouts`)** — Rewrite storage, caching, and CRUD API
 - [ ] **Phase 2 — Keyboard Module (`kb_layout`, `kb_macro`)** — Dynamic layer count, adaptive layer switching
 - [ ] **Phase 3 — Wire Protocol** — New `CFG_KEY_*` endpoints for layout CRUD and limits
