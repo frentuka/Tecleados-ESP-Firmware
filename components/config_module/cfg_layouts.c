@@ -356,3 +356,58 @@ bool cfg_layout_exists(uint8_t id) {
 const cfg_layout_index_t *cfg_layout_get_index(void) {
     return &s_idx;
 }
+
+// ── Serialization ──
+
+cJSON *layouts_serialize_outline(void) {
+    cJSON *root = cJSON_CreateObject();
+    if (!root) return NULL;
+    
+    cJSON *layouts = cJSON_CreateArray();
+    cJSON_AddItemToObject(root, "layouts", layouts);
+    
+    for (uint8_t i = 0; i < CFG_LAYOUT_MAX_COUNT; i++) {
+        if (cfg_layout_exists(i)) {
+            cJSON *item = cJSON_CreateObject();
+            cJSON_AddNumberToObject(item, "id", i);
+            cJSON_AddStringToObject(item, "name", s_idx.names[i]);
+            cJSON_AddItemToArray(layouts, item);
+        }
+    }
+    return root;
+}
+
+cJSON *layouts_serialize_single(uint8_t id) {
+    if (!cfg_layout_exists(id)) return NULL;
+    
+    cJSON *root = cJSON_CreateObject();
+    if (!root) return NULL;
+    
+    cJSON_AddNumberToObject(root, "id", id);
+    cJSON_AddStringToObject(root, "name", s_idx.names[id]);
+    
+    cfg_layer_t layer;
+    if (cfg_layout_get_layer(id, &layer) != ESP_OK) {
+        cJSON_Delete(root);
+        return NULL;
+    }
+    
+    cJSON *keys = cJSON_CreateArray();
+    for (int r = 0; r < KB_MATRIX_ROW_COUNT; r++) {
+        cJSON *row_arr = cJSON_CreateArray();
+        for (int c = 0; c < KB_MATRIX_COL_COUNT; c++) {
+            cJSON_AddItemToArray(row_arr, cJSON_CreateNumber(layer.keys[r][c]));
+        }
+        cJSON_AddItemToArray(keys, row_arr);
+    }
+    cJSON_AddItemToObject(root, "keys", keys);
+    
+    return root;
+}
+
+cJSON *layouts_serialize_limits(void) {
+    cJSON *root = cJSON_CreateObject();
+    if (!root) return NULL;
+    cJSON_AddNumberToObject(root, "maxLayouts", CFG_LAYOUT_MAX_COUNT);
+    return root;
+}

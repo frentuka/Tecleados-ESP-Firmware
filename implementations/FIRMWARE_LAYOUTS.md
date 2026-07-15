@@ -9,7 +9,7 @@
 - [x] **Phase 0 — Metadata Data Model** — Design the `cfg_layout_index_t` metadata struct and NVS schema
 - [x] **Phase 1 — Config Module (`cfg_layouts`)** — Rewrite storage, caching, and CRUD API
 - [x] **Phase 2 — Keyboard Module (`kb_layout`, `kb_macro`)** — Dynamic layer count, adaptive layer switching
-- [ ] **Phase 3 — Wire Protocol** — New `CFG_KEY_*` endpoints for layout CRUD and limits
+- [x] **Phase 3 — Wire Protocol** — New `CFG_KEY_*` endpoints for layout CRUD and limits
 - [ ] **Phase 4 — Configurator Sync** — Protocol types, DeviceController, layout store, and UI
 - [ ] **Phase 5 — Split Module** — Config-sync fragmentation for variable-count layers
 - [ ] **Phase 6 — Documentation** — Update all affected `.md` files

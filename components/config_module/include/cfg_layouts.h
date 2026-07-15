@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "cJSON.h"
 #include "esp_err.h"
 #include "kb_matrix.h"
 
@@ -40,3 +41,8 @@ esp_err_t   cfg_layout_rename(uint8_t id, const char *new_name);
 uint8_t     cfg_layout_get_count(void);                  // Number of active layouts
 bool        cfg_layout_exists(uint8_t id);               // Check if slot is populated
 const cfg_layout_index_t *cfg_layout_get_index(void);    // Read-only pointer to in-memory index
+
+// ── Serialization ──
+cJSON *layouts_serialize_outline(void);
+cJSON *layouts_serialize_single(uint8_t id);
+cJSON *layouts_serialize_limits(void);
