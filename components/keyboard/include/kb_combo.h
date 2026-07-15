@@ -16,7 +16,7 @@ void kb_combo_init(void);
  * @return true if the key event was consumed (caller should skip normal dispatch).
  *         Only returns true when delayedPress mode is active for a matching combo.
  */
-bool kb_combo_process_key(uint8_t row, uint8_t col, bool is_pressed, uint8_t layer);
+bool kb_combo_process_key(uint8_t row, uint8_t col, bool is_pressed, uint16_t layer_mask);
 
 /**
  * Tick the combo timeout engine. Called once per scan cycle.

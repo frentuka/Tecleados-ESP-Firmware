@@ -47,7 +47,7 @@ static void pm_apply_active(void)
 static inline void pm_apply_active(void) {}
 #endif
 
-static void on_matrix_change(const uint8_t *matrix, size_t len, uint8_t layer)
+static void on_matrix_change(const uint8_t *matrix, size_t len, uint16_t layer_mask)
 {
     if (split_session_get_state() != SPLIT_STATE_CONNECTED ||
         split_session_get_role()  != SPLIT_ROLE_SLAVE) {
@@ -64,7 +64,7 @@ static void on_matrix_change(const uint8_t *matrix, size_t len, uint8_t layer)
     (void)len;
 #endif
 
-    split_sync_send_full_state(split_session_peer_mac(), matrix, layer,
+    split_sync_send_full_state(split_session_peer_mac(), matrix, 0,
                                split_session_next_seq());
 }
 

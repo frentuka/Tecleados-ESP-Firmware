@@ -25,9 +25,8 @@ static uint8_t            s_v_nkro[32];
 static SemaphoreHandle_t  s_v_nkro_mutex = NULL;
 
 /* ---- Active layer state ---- */
-static uint8_t s_active_layer  = KB_LAYER_BASE;
-static bool    s_is_fn1_held   = false;
-static bool    s_is_fn2_held   = false;
+static uint16_t s_momentary_layers = 0;
+static uint16_t s_toggled_layers   = 0;
 
 /* ---- Macro task queues ---- */
 static QueueHandle_t s_macro_queue = NULL;
@@ -108,22 +107,17 @@ static void kb_macro_force_clear(void) {
     }
 }
 
-uint8_t kb_macro_get_active_layer(void) { return s_active_layer; }
-
-/* ============================================================
-   Layer state
-   ============================================================ */
-
-static void update_layer_state(void) {
-    if (s_is_fn1_held && s_is_fn2_held) {
-        s_active_layer = KB_LAYER_FN3;
-    } else if (s_is_fn2_held) {
-        s_active_layer = KB_LAYER_FN2;
-    } else if (s_is_fn1_held) {
-        s_active_layer = KB_LAYER_FN1;
-    } else {
-        s_active_layer = KB_LAYER_BASE;
+uint16_t kb_macro_get_layer_mask(void) {
+    uint16_t mask = s_momentary_layers | s_toggled_layers | (1 << KB_LAYER_BASE);
+    // Prevent routing to deleted layers
+    for (uint8_t i = 1; i < KB_LAYER_MAX; i++) {
+        if ((mask & (1 << i)) && !cfg_layout_exists(i)) {
+            s_momentary_layers &= ~(1 << i);
+            s_toggled_layers   &= ~(1 << i);
+            mask &= ~(1 << i);
+        }
     }
+    return mask;
 }
 
 /* ============================================================
@@ -365,17 +359,8 @@ static void process_media_action(uint16_t action, bool is_pressed) {
 }
 
 static void process_system_action(uint16_t action, bool is_pressed) {
-    /* Layer keys — stateful, handled immediately */
-    if (action == SYS_ACTION_LAYER_FN1) {
-        s_is_fn1_held = is_pressed;
-        update_layer_state();
-        return;
-    }
-    if (action == SYS_ACTION_LAYER_FN2) {
-        s_is_fn2_held = is_pressed;
-        update_layer_state();
-        return;
-    }
+    // Layer keys are handled in kb_macro_process_action via ACTION_CODE_LAYER_*
+    // SYS_ACTION_LAYER_FN1 / FN2 have been removed
 
     /* Media / volume — forward to HID consumer endpoint */
     if (action >= SYS_ACTION_VOLUME_UP && action <= MEDIA_ACTION_TOGGLE) {
@@ -423,6 +408,30 @@ void kb_macro_process_action(uint16_t action_code, bool is_pressed) {
             kb_macro_virtual_press((uint8_t)action_code);
         } else {
             kb_macro_virtual_release((uint8_t)action_code);
+        }
+        return;
+    }
+
+    /* Dynamic Layers */
+    if (IS_LAYER_ACTION(action_code)) {
+        if (action_code == ACTION_CODE_LAYER_CLEAR_ALL) {
+            if (is_pressed) {
+                s_momentary_layers = 0;
+                s_toggled_layers = 0;
+            }
+            return;
+        }
+        
+        uint8_t layer_id = LAYER_ID_FROM_ACTION(action_code);
+        if (IS_LAYER_MOMENTARY(action_code)) {
+            if (is_pressed) s_momentary_layers |= (1 << layer_id);
+            else            s_momentary_layers &= ~(1 << layer_id);
+        } else if (IS_LAYER_TOGGLE(action_code)) {
+            if (is_pressed) s_toggled_layers ^= (1 << layer_id);
+        } else if (IS_LAYER_ON(action_code)) {
+            if (is_pressed) s_toggled_layers |= (1 << layer_id);
+        } else if (IS_LAYER_OFF(action_code)) {
+            if (is_pressed) s_toggled_layers &= ~(1 << layer_id);
         }
         return;
     }
@@ -570,7 +579,8 @@ static void on_macros_updated(const char *key) {
 void kb_macro_init(void) {
     memset(s_v_nkro, 0, sizeof(s_v_nkro));
     memset(s_rt_state, 0, sizeof(s_rt_state));
-    s_active_layer = KB_LAYER_BASE;
+    s_momentary_layers = 0;
+    s_toggled_layers = 0;
 
     s_v_nkro_mutex = xSemaphoreCreateMutex();
     s_macro_queue  = xQueueCreate(32, sizeof(macro_queue_item_t));

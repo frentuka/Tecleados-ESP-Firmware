@@ -154,8 +154,7 @@ esp_err_t cfg_layout_load_all(void) {
     if (s_idx.active_mask & (1 << i)) {
         cfg_layer_t layer_data;
         if (i == 0) {
-            // Note: Temporary use of keymaps[0] until Phase 2 is implemented.
-            memcpy(&layer_data, &keymaps[0], sizeof(cfg_layer_t));
+            memcpy(&layer_data, &keymaps_base, sizeof(cfg_layer_t));
         } else {
             for (int r = 0; r < KB_MATRIX_ROW_COUNT; r++) {
                 for (int c = 0; c < KB_MATRIX_COL_COUNT; c++) {
@@ -214,9 +213,7 @@ uint16_t cfg_layout_get_action_code(uint8_t row, uint8_t col, uint8_t layer) {
     }
   }
 
-  if (kc == KB_KEY_TRANSPARENT && layer != 0) {
-    kc = s_dram_base.keys[row][col];
-  }
+  // No fallback here. kb_layout_get_action_code orchestrates layer fallback.
   return kc;
 }
 

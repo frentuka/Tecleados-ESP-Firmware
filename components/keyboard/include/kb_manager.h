@@ -21,7 +21,7 @@ void kb_manager_test_nkro_keypress(uint8_t row, uint8_t col);
  * @param cb  Callback(matrix, KB_MATRIX_BITMAP_BYTES, active_layer), or NULL.
  */
 void kb_manager_set_matrix_cb(void (*cb)(const uint8_t *matrix, size_t len,
-                                          uint8_t layer));
+                                         uint16_t layer_mask));
 
 /**
  * @brief Set scan-rate divisor for battery-aware power saving.
