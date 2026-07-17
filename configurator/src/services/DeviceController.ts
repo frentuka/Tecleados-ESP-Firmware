@@ -17,6 +17,9 @@ import {
     MODULE_SPLIT,
     CFG_CMD_GET,
     CFG_CMD_SET,
+    CFG_KEY_LAYOUTS,
+    CFG_KEY_LAYOUT_LIMITS,
+    CFG_KEY_LAYOUT_SINGLE,
     CFG_KEY_MACROS,
     CFG_KEY_MACRO_LIMITS,
     CFG_KEY_MACRO_SINGLE,
@@ -114,6 +117,93 @@ export class DeviceController {
         buf[2] = keyId;
         if (data) buf.set(data, 3);
         return buf;
+    }
+
+    // ── Layouts ──────────────────────────────────────────────────────────
+
+    public async fetchLayoutLimits(): Promise<{ maxLayouts: number } | null> {
+        if (!this.isConnected()) return null;
+        const buf = this.buildConfigPayload(CFG_CMD_GET, CFG_KEY_LAYOUT_LIMITS);
+        const resp = await this.sendCommand(buf, 5000);
+        if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
+            try {
+                return JSON.parse(resp.jsonText);
+            } catch (e) {
+                console.error('fetchLayoutLimits parse error:', e);
+            }
+        }
+        return null;
+    }
+
+    public async fetchLayouts(): Promise<{ id: number; name: string }[]> {
+        if (!this.isConnected()) return [];
+        const buf = this.buildConfigPayload(CFG_CMD_GET, CFG_KEY_LAYOUTS);
+        const resp = await this.sendCommand(buf, 5000);
+        if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
+            try {
+                const parsed = JSON.parse(resp.jsonText);
+                return parsed.layouts || [];
+            } catch (e) {
+                console.error('fetchLayouts parse error:', e);
+            }
+        }
+        return [];
+    }
+
+    public async fetchLayoutSingle(id: number): Promise<{ id: number; name: string; keys: number[][] } | null> {
+        if (!this.isConnected()) return null;
+        const requestJson = JSON.stringify({ id });
+        const jsonBytes = new TextEncoder().encode(requestJson);
+        const buf = this.buildConfigPayload(CFG_CMD_GET, CFG_KEY_LAYOUT_SINGLE, jsonBytes);
+        const resp = await this.sendCommand(buf, 5000);
+        if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
+            try {
+                return JSON.parse(resp.jsonText);
+            } catch (e) {
+                console.error('fetchLayoutSingle parse error:', e);
+            }
+        }
+        return null;
+    }
+
+    public async createLayout(name: string): Promise<number | null> {
+        if (!this.isConnected()) return null;
+        const jsonBytes = new TextEncoder().encode(JSON.stringify({ create: name }));
+        const buf = this.buildConfigPayload(CFG_CMD_SET, CFG_KEY_LAYOUT_SINGLE, jsonBytes);
+        const resp = await this.sendCommand(buf, 5000);
+        if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
+            try {
+                const parsed = JSON.parse(resp.jsonText);
+                return parsed.id;
+            } catch (e) {
+                console.error('createLayout parse error:', e);
+            }
+        }
+        return null;
+    }
+
+    public async renameLayout(id: number, newName: string): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        const jsonBytes = new TextEncoder().encode(JSON.stringify({ id, rename: newName }));
+        const buf = this.buildConfigPayload(CFG_CMD_SET, CFG_KEY_LAYOUT_SINGLE, jsonBytes);
+        const resp = await this.sendCommand(buf, 5000);
+        return resp !== null && resp.status === 0;
+    }
+
+    public async deleteLayout(id: number): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        const jsonBytes = new TextEncoder().encode(JSON.stringify({ delete: id }));
+        const buf = this.buildConfigPayload(CFG_CMD_SET, CFG_KEY_LAYOUT_SINGLE, jsonBytes);
+        const resp = await this.sendCommand(buf, 5000);
+        return resp !== null && resp.status === 0;
+    }
+
+    public async saveLayout(id: number, keys: number[][]): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        const jsonBytes = new TextEncoder().encode(JSON.stringify({ id, keys }));
+        const buf = this.buildConfigPayload(CFG_CMD_SET, CFG_KEY_LAYOUT_SINGLE, jsonBytes);
+        const resp = await this.sendCommand(buf, 10000);
+        return resp !== null && resp.status === 0;
     }
 
     // ── Status ──────────────────────────────────────────────────────────

@@ -26,10 +26,8 @@ import {
   PAYLOAD_FLAG_ABORT,
   MODULE_STATUS,
   MODULE_CONFIG,
-  CFG_KEY_LAYER_0,
-  CFG_KEY_LAYER_1,
-  CFG_KEY_LAYER_2,
-  CFG_KEY_LAYER_3,
+  CFG_KEY_LAYOUTS,
+  CFG_KEY_LAYOUT_SINGLE,
   CFG_KEY_PHYSICAL_LAYOUT
 } from './types/protocol';
 import './index.css';
@@ -387,10 +385,8 @@ function App() {
       if (module === MODULE_CONFIG) {
         let keyName = `Key ${keyId}`;
         switch (keyId) {
-          case CFG_KEY_LAYER_0: keyName = 'Layer 0 (Base)'; break;
-          case CFG_KEY_LAYER_1: keyName = 'Layer 1 (FN1)'; break;
-          case CFG_KEY_LAYER_2: keyName = 'Layer 2 (FN2)'; break;
-          case CFG_KEY_LAYER_3: keyName = 'Layer 3 (FN3)'; break;
+          case CFG_KEY_LAYOUTS: keyName = 'Layouts Outline'; break;
+          case CFG_KEY_LAYOUT_SINGLE: keyName = 'Layout Single'; break;
           case CFG_KEY_PHYSICAL_LAYOUT: keyName = 'Physical Layout'; break;
         }
         const text = `[Config] Received data for ${keyName}`;

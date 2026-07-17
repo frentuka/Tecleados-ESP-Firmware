@@ -247,7 +247,7 @@ function InstancedKeyboard({ physicalLayout, opacity }: { physicalLayout: any[] 
     if (document.hidden) return;
     const clampedDelta = Math.min(delta, 0.1);
     const store = useLayoutStore.getState();
-    const { pressedCodes, heldTestKeys, layers, activeLayer } = store;
+    const { pressedCodes, heldTestKeys, layerDataCache, activeLayerId } = store;
     const tempMatrix = new THREE.Matrix4();
     const tempPos = new THREE.Vector3();
     const tempQuat = new THREE.Quaternion();
@@ -258,8 +258,8 @@ function InstancedKeyboard({ physicalLayout, opacity }: { physicalLayout: any[] 
     keyInstancesRef.current.forEach(info => {
       let isPressed = false;
       let code = 0;
-      if (physicalLayout && layers && layers[activeLayer]) {
-        const rowData = layers[activeLayer][info.row];
+      if (physicalLayout && layerDataCache && layerDataCache[activeLayerId]) {
+        const rowData = layerDataCache[activeLayerId][info.row];
         code = rowData ? rowData[info.col] || 0 : 0;
         isPressed = pressedCodes.has(code) || heldTestKeys.has(`${info.row}-${info.col}`);
       }
@@ -330,7 +330,7 @@ function InstancedKeyboard({ physicalLayout, opacity }: { physicalLayout: any[] 
 function KeyboardModel({ isAutoRotating, setIsAutoRotating }: { isAutoRotating: boolean, setIsAutoRotating: (v: boolean) => void }) {
   const group = useRef<THREE.Group>(null)
   const physicalLayout = useLayoutStore(state => state.physicalLayout)
-  const layers = useLayoutStore(state => state.layers)
+  const layerDataCache = useLayoutStore(state => state.layerDataCache)
   const isConnected = useLayoutStore(state => state.isConnected)
 
   const [opacity, setOpacity] = useState(0);
@@ -421,7 +421,7 @@ function KeyboardModel({ isAutoRotating, setIsAutoRotating }: { isAutoRotating: 
       group.current.rotation.x += Math.cos(t * 0.3) * 0.01 * fStrength;
     }
 
-    const hasData = physicalLayout?.length && layers && Object.keys(layers).length > 0;
+    const hasData = physicalLayout?.length && layerDataCache && Object.keys(layerDataCache).length > 0;
     targetFade.current = (isConnected && hasData) ? Math.min(1, targetFade.current + clampedDelta * 0.4) : 0;
     setOpacity(THREE.MathUtils.lerp(opacity, targetFade.current, clampedDelta * 3));
   })

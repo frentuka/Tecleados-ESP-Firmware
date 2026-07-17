@@ -165,7 +165,7 @@ esp_err_t cfg_system_get(cfg_system_t *out_sys) {
     return ESP_ERR_INVALID_ARG;
   if (!s_sys_loaded) {
     esp_err_t err = cfgmod_get_config(CFGMOD_KIND_SYSTEM, "sys", &s_sys);
-    if (err != ESP_OK)
+    if (err != ESP_OK && err != ESP_ERR_NOT_FOUND)
       return err;
     // Always overlay per-device identity; survives sync overwrites of "sys".
     sys_apply_local_id(&s_sys);

@@ -145,6 +145,11 @@ static void write_json_response(cJSON *root,
                                 size_t status_size,
                                 esp_err_t *out_status,
                                 size_t *out_payload_len) {
+    if (!root) {
+        *out_status = ESP_ERR_NOT_FOUND;
+        *out_payload_len = status_size;
+        return;
+    }
     char *json_str = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     if (!json_str) {
@@ -187,6 +192,11 @@ esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
 
   cfgmod_kind_t kind = s_key_map[hdr.key_id].kind;
   const char *key = s_key_map[hdr.key_id].key_name;
+
+  if (!key) {
+    ESP_LOGE(TAG, "Unmapped Key ID: %d", hdr.key_id);
+    return ESP_ERR_INVALID_ARG;
+  }
 
   const uint8_t *data_in = data + sizeof(hdr);
   size_t data_in_len = len - sizeof(hdr);

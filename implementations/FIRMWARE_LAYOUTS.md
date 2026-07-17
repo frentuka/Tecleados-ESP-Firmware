@@ -10,8 +10,8 @@
 - [x] **Phase 1 — Config Module (`cfg_layouts`)** — Rewrite storage, caching, and CRUD API
 - [x] **Phase 2 — Keyboard Module (`kb_layout`, `kb_macro`)** — Dynamic layer count, adaptive layer switching
 - [x] **Phase 3 — Wire Protocol** — New `CFG_KEY_*` endpoints for layout CRUD and limits
-- [ ] **Phase 4 — Configurator Sync** — Protocol types, DeviceController, layout store, and UI
-- [ ] **Phase 5 — Split Module** — Config-sync fragmentation for variable-count layers
+- [x] **Phase 4 — Configurator Sync** — Protocol types, DeviceController, layout store, and UI
+- [x] **Phase 5 — Split Module** — Config-sync fragmentation for variable-count layers
 - [ ] **Phase 6 — Documentation** — Update all affected `.md` files
 - [ ] **Phase 7 — Verification** — Build, flash, end-to-end test
 
