@@ -56,9 +56,10 @@ All key assignments are 16-bit **action codes**:
 | `0x0000` | None |
 | `0x0001–0x00FF` | Standard HID keycodes |
 | `0x0100–0x01FF` | Reserved (future individual consumer codes) |
-| `0x2000–0x20FF` | System actions (layers, BLE, media, RGB) |
+| `0x2000–0x20FF` | System actions (BLE, media, RGB) |
 | `0x3000–0x3FFF` | Custom key IDs |
 | `0x4000–0x4FFF` | Macro IDs |
+| `0x5000–0x50FF` | Layer actions (Momentary, Toggle, On, Off) |
 | `0xFFFF` | `KB_KEY_TRANSPARENT` — falls through to base layer |
 
 System action constants are defined in `kb_layout.h` (`SYS_ACTION_*`, `MEDIA_ACTION_*`).
@@ -111,14 +112,7 @@ A 32-byte (256-bit) bitmap `s_v_nkro[]` holds every currently "pressed" HID keyc
 - `kb_macro_virtual_release(kc)` — clears bit `kc`
 - `kb_macro_send_report()` — snapshots `s_v_nkro` under the mutex (~50 ns), releases it, then retries `kb_send_report()` up to 100× on endpoint-busy. The mutex is **not** held during retries, so virtual press/release on other tasks are never blocked by USB endpoint congestion. A stale snapshot is harmless: the next scan sends a fresh report within ~833 µs.
 
-Layer switching is tracked via `s_is_fn1_held` / `s_is_fn2_held`:
-
-| FN1 | FN2 | Active Layer |
-|-----|-----|--------------|
-| 0 | 0 | BASE |
-| 1 | 0 | FN1 |
-| 0 | 1 | FN2 |
-| 1 | 1 | FN3 |
+Layer switching is tracked dynamically via two 16-bit masks: `s_momentary_layers` and `s_toggled_layers`. The highest active layer bit takes precedence. If no bits are set, it falls back to Base (0).
 
 ---
 
@@ -248,7 +242,7 @@ NKRO→6KRO conversion is only performed when the transport actually requires it
 
 ## Layout / Keymap (`kb_layout.c`)
 
-- The factory-default keymap `keymaps[4][6][18]` is defined **once** in `kb_layout.c` and exported via `extern const` in `kb_layout.h`.
+- The factory-default keymap for the Base layer `keymaps_base[6][18]` is defined **once** in `kb_layout.c` and exported via `extern const` in `kb_layout.h`. All other 15 layers default to transparent.
 - `kb_layout_get_action_code()` delegates to `cfg_layout_get_action_code()` which serves from a PSRAM cache (layer 0 also mirrored in DRAM for hot-path speed).
 - On first boot, NVS is empty; `cfg_layout_load_all()` copies from `keymaps[]` to the cache.
 

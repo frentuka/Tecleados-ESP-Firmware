@@ -1,7 +1,7 @@
 # TEF Keyboard Firmware
 
 > Custom programmable keyboard firmware for the ESP32-S3, built on top of ESP-IDF.
-> Supports USB HID, Bluetooth LE, N-Key Rollover, 64 macros, 120 custom keys, 4 layers, and a React-based web configurator.
+> Supports USB HID, Bluetooth LE, N-Key Rollover, 64 macros, 120 custom keys, 16 layers, and a React-based web configurator.
 
 ---
 
@@ -49,7 +49,7 @@ The firmware is designed around a modular component architecture using ESP-IDF. 
 - **Simultaneous USB + BLE** — Both transports active at once, with routing priority control
 - **Split Keyboard** — Dedicated module for dual-half synchronized communication via ESP-NOW, with dynamic role negotiation and AES-CCM encryption
 - **N-Key Rollover** — 32-byte virtual bitmap tracking all 256 HID keycodes simultaneously
-- **4 Layers** — Base, FN1, FN2, FN3 (FN1+FN2 simultaneously), with transparent key fall-through
+- **16 Layers** — Base (always active) + 15 dynamically named and managed layers, with transparent key fall-through
 - **64 Macros** — Up to 256 events per macro, 8 execution modes (once, repeat, burst, toggle, etc.)
 - **120 Custom Keys** — PressRelease mode (press ≠ release) and MultiAction mode (tap / double-tap / hold)
 - **Tap/Hold Engine** — Generic gesture recognizer for 5 event types with configurable timeouts
@@ -360,7 +360,7 @@ After every successful write, `cfgmod` publishes `CONFIG_EVENT_KIND_UPDATED` so 
 
 | Resource | Limit |
 |----------|-------|
-| Layers | 4 |
+| Layers | 16 |
 | Keys per layer | 108 (6 × 18) |
 | Macros | 64 (IDs 0–63) |
 | Events per macro | 256 |
@@ -552,14 +552,14 @@ Every key in every layer stores a **16-bit action code**. The range of the code 
 
 ## Layer System
 
-The firmware supports **4 independent keymap layers**:
+The firmware supports up to **16 independent keymap layers**:
 
 | Layer | Index | Activation |
 |-------|-------|------------|
-| Base | 0 | Always active (default) |
-| FN1 | 1 | FN1 key held |
-| FN2 | 2 | FN2 key held |
-| FN3 | 3 | FN1 **and** FN2 held simultaneously |
+| Base | 0 | Always active (default fallback) |
+| Custom 1–15 | 1–15 | Dynamically named, activated via layer actions |
+
+Layer states are managed dynamically through `s_momentary_layers` and `s_toggled_layers` bitmasks. The highest active layer takes precedence.
 
 **Transparent Keys (`0xFFFF`):** When the active layer has a transparent action on a key, the lookup falls through to Base (layer 0). This lets you selectively override only the keys you care about in FN layers.
 
@@ -729,10 +729,9 @@ Phase 4 — Commit:       Host ──[LAST]──> Device, Device ──[ACK|OK]
 | `0x00` | `CFG_KEY_TEST` | Test blob | Store test JSON |
 | `0x01` | `CFG_KEY_HELLO` | Hello message | — |
 | `0x02` | `CFG_KEY_PHYSICAL_LAYOUT` | Physical layout JSON | Store layout JSON |
-| `0x03` | `CFG_KEY_LAYER_0` | Base layer | Store Base layer |
-| `0x04` | `CFG_KEY_LAYER_1` | FN1 layer | Store FN1 layer |
-| `0x05` | `CFG_KEY_LAYER_2` | FN2 layer | Store FN2 layer |
-| `0x06` | `CFG_KEY_LAYER_3` | FN3 layer | Store FN3 layer |
+| `0x10` | `CFG_KEY_LAYOUTS` | Layout outline (IDs + names) | — |
+| `0x11` | `CFG_KEY_LAYOUT_SINGLE` | Full layout by `{id}` | Upsert / rename / `{delete: id}` |
+| `0x12` | `CFG_KEY_LAYOUT_LIMITS` | `{maxLayouts}` | — |
 | `0x07` | `CFG_KEY_MACROS` | Macro outline (IDs + names) | — |
 | `0x08` | `CFG_KEY_MACRO_LIMITS` | `{maxEvents, maxMacros}` | — |
 | `0x09` | `CFG_KEY_MACRO_SINGLE` | Full macro by `{id}` | Upsert / `{delete: id}` |

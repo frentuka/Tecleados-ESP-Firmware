@@ -55,9 +55,10 @@ Keys are not just HID constants; they are 16-bit **Action Codes** that define co
 |---|---|---|
 | `0x0001` – `0x00FF` | **HID Key** | Standard keyboard keys (A, B, Shift, etc). |
 | `0x0100` – `0x01FF` | **Media Key** | Consumer controls (Volume, Play/Pause). |
-| `0x2000` – `0x20FF` | **System Action**| Layer toggles, BLE profile swaps, Split pairing. |
+| `0x2000` – `0x20FF` | **System Action**| BLE profile swaps, Split pairing, Media, RGB. |
 | `0x3000` – `0x3FFF` | **Custom Key** | User-defined complex keys (Configurator presets). |
 | `0x4000` – `0x4FFF` | **Macro** | Trigger for a multi-step sequence defined in NVS. |
+| `0x5000` – `0x50FF` | **Layer Action** | Momentary, Toggle, On, Off layer actions. |
 
 ### 2. Combos
 The `kb_combo` engine intercepts keys before they are resolved into single actions. 

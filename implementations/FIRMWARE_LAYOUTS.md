@@ -12,8 +12,8 @@
 - [x] **Phase 3 — Wire Protocol** — New `CFG_KEY_*` endpoints for layout CRUD and limits
 - [x] **Phase 4 — Configurator Sync** — Protocol types, DeviceController, layout store, and UI
 - [x] **Phase 5 — Split Module** — Config-sync fragmentation for variable-count layers
-- [ ] **Phase 6 — Documentation** — Update all affected `.md` files
-- [ ] **Phase 7 — Verification** — Build, flash, end-to-end test
+- [x] **Phase 6 — Documentation** — Update all affected `.md` files
+- [x] **Phase 7 — Verification** — Build, flash, end-to-end test
 
 ---
 
@@ -86,11 +86,11 @@ This is well within budget. The 16-layer limit is driven by the `uint16_t active
 
 ### Files Modified
 
-| File | Change |
-|------|--------|
-| [cfg_layouts.h](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/config_module/include/cfg_layouts.h) | New API surface: `cfg_layout_create`, `cfg_layout_delete`, `cfg_layout_rename`, index accessors |
-| [cfg_layouts.c](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/config_module/cfg_layouts.c) | Rewrite for dynamic layer count + index management |
-| [cfg_storage_keys.h](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/config_module/include/cfg_storage_keys.h) | Replace `CFG_ST_LAYER_0..3` with `CFG_ST_LAYER_FMT` pattern |
+| File                                                                                                                         | Change                                                                                          |
+| ------------------------------------------------------------------------------------------------------------------------------| -------------------------------------------------------------------------------------------------|
+| [cfg_layouts.h](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/config_module/include/cfg_layouts.h)           | New API surface: `cfg_layout_create`, `cfg_layout_delete`, `cfg_layout_rename`, index accessors |
+| [cfg_layouts.c](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/config_module/cfg_layouts.c)                   | Rewrite for dynamic layer count + index management                                              |
+| [cfg_storage_keys.h](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/config_module/include/cfg_storage_keys.h) | Replace `CFG_ST_LAYER_0..3` with `CFG_ST_LAYER_FMT` pattern                                     |
 
 ### 1.1 — New Header API (`cfg_layouts.h`)
 

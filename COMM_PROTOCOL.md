@@ -160,10 +160,9 @@ Byte  Field        Size  Description
 | `0x00` | `CFG_KEY_TEST`           | System     | Returns test JSON               | Stores test JSON        |
 | `0x01` | `CFG_KEY_HELLO`          | System     | Returns hello message           | —                       |
 | `0x02` | `CFG_KEY_PHYSICAL_LAYOUT`| Physical   | Returns layout JSON             | Stores layout JSON      |
-| `0x03` | `CFG_KEY_LAYER_0`        | Layout     | Returns Base layer              | Stores Base layer       |
-| `0x04` | `CFG_KEY_LAYER_1`        | Layout     | Returns FN1 layer               | Stores FN1 layer        |
-| `0x05` | `CFG_KEY_LAYER_2`        | Layout     | Returns FN2 layer               | Stores FN2 layer        |
-| `0x06` | `CFG_KEY_LAYER_3`        | Layout     | Returns FN3 layer               | Stores FN3 layer        |
+| `0x10` | `CFG_KEY_LAYOUTS`        | Layout     | Returns layout outline          | —                       |
+| `0x11` | `CFG_KEY_LAYOUT_SINGLE`  | Layout     | `{id}` → full layout            | Upsert or `{delete:id}` |
+| `0x12` | `CFG_KEY_LAYOUT_LIMITS`  | Layout     | Returns `{maxLayouts}`          | —                       |
 | `0x07` | `CFG_KEY_MACROS`         | Macro      | Returns macro outline           | —                       |
 | `0x08` | `CFG_KEY_MACRO_LIMITS`   | Macro      | Returns `{maxEvents, maxMacros}`| —                       |
 | `0x09` | `CFG_KEY_MACRO_SINGLE`   | Macro      | `{id}` → full macro             | Upsert or `{delete:id}` |
@@ -186,9 +185,10 @@ Byte  Field        Size  Description
 | HID Keys          | `0x0001–0x00FF`  | Standard USB HID usage codes    |
 | Media Keys        | `0x0100–0x01FF`  | Consumer control codes          |
 | Transparent       | `0xFFFF`         | Falls through to layer below    |
-| System Actions    | `0x2000–0x20FF`  | Layer switches, BLE, media, RGB |
+| System Actions    | `0x2000–0x20FF`  | BLE, media, RGB                 |
 | Custom Keys       | `0x3000–0x3FFF`  | User-defined custom key actions |
 | Macros            | `0x4000–0x4FFF`  | Macro trigger codes             |
+| Layer Actions     | `0x5000–0x50FF`  | Momentary, Toggle, On, Off layer|
 
 ## 11. Failure & Recovery
 
