@@ -16,6 +16,7 @@ import {
     CKEY_BASE,
 } from './KeyDefinitions';
 import SearchableKeyModal from './components/SearchableKeyModal';
+import InputModal from './components/InputModal';
 import KeyActionPopover from './components/KeyActionPopover';
 import type { Macro } from './types/macros';
 import { parseKleJson } from './utils/kleParser';
@@ -89,6 +90,41 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
     const isDraggingRef = useRef(false);
     const dragStartedInEditorRef = useRef(false);
     const keysTouchedInDragRef = useRef<Set<string>>(new Set());
+
+    const [inputModalState, setInputModalState] = useState<{
+        isOpen: boolean;
+        title: string;
+        initialValue: string;
+        placeholder: string;
+        onSave: (val: string) => void;
+        onCancel: () => void;
+    }>({
+        isOpen: false,
+        title: '',
+        initialValue: '',
+        placeholder: '',
+        onSave: () => {},
+        onCancel: () => {}
+    });
+
+    const requestInput = (title: string, initialValue: string, placeholder: string): Promise<string | null> => {
+        return new Promise((resolve) => {
+            setInputModalState({
+                isOpen: true,
+                title,
+                initialValue,
+                placeholder,
+                onSave: (val: string) => {
+                    setInputModalState(s => ({ ...s, isOpen: false }));
+                    resolve(val);
+                },
+                onCancel: () => {
+                    setInputModalState(s => ({ ...s, isOpen: false }));
+                    resolve(null);
+                }
+            });
+        });
+    };
 
     const [hoveredKeyId, setHoveredKeyId] = useState<string | null>(null);
     const [hoverAnchorEl, setHoverAnchorEl] = useState<HTMLElement | null>(null);
@@ -511,7 +547,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
     };
 
     const handleCreateLayout = async () => {
-        const name = prompt("Enter new layout name:");
+        const name = await requestInput("Create New Layout", "", "Layout name (max 15 chars)");
         if (!name) return;
         const newId = await hidService.createLayout(name);
         if (newId !== null) {
@@ -525,7 +561,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
     const handleRenameLayout = async (id: number) => {
         const meta = layoutMetas.find(m => m.id === id);
         if (!meta) return;
-        const newName = prompt("Enter new name:", meta.name);
+        const newName = await requestInput("Rename Layout", meta.name, "New layout name");
         if (!newName || newName === meta.name) return;
         const ok = await hidService.renameLayout(id, newName);
         if (ok) {
@@ -803,8 +839,6 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                 </div>
             )}
 
-            {/* Legacy layer tabs div removed — tabs now live in layout-toolbar above */}
-
             {/* Physical layout status */}
             {physLayoutStatus === 'error' && (
                 <div className="layout-placeholder" style={{ background: 'rgba(255,180,0,0.1)', color: '#ffb400', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
@@ -1043,7 +1077,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                                         >
                                                             <span className="key-label">
                                                                 <span className="key-main-label">
-                                                                    {isRowColEditMode ? `R${pk.row} C${pk.col}` : getKeyName(code, macros, customKeys)}
+                                                                    {isRowColEditMode ? `R${pk.row} C${pk.col}` : getKeyName(code, macros, customKeys, layoutMetas)}
                                                                 </span>
                                                                 {!isRowColEditMode && getSecondaryKeyName(code) && (
                                                                     <span className="key-secondary-label">{getSecondaryKeyName(code)}</span>
@@ -1474,6 +1508,16 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                     </div>
                 </>
             )}
+            
+            <InputModal 
+                isOpen={inputModalState.isOpen}
+                title={inputModalState.title}
+                initialValue={inputModalState.initialValue}
+                placeholder={inputModalState.placeholder}
+                onSubmit={inputModalState.onSave}
+                onCancel={inputModalState.onCancel}
+                maxLength={15}
+            />
         </div>
     );
 }
