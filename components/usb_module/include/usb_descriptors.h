@@ -4,6 +4,7 @@
 #define USB_DESCRIPTORS_H_
 
 #include "tusb.h"
+#include "class/hid/hid_device.h"
 
 // ------------ Device Descriptor ------------
 static tusb_desc_device_t const desc_device = {
