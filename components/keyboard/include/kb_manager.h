@@ -26,7 +26,7 @@ void kb_manager_set_matrix_cb(void (*cb)(const uint8_t *matrix, size_t len,
 /**
  * @brief Set scan-rate divisor for battery-aware power saving.
  *
- * Divides the nominal scan rate (1200 Hz) by @p divisor. Use 1 for full speed,
+ * Divides the nominal scan rate (1000 Hz) by @p divisor. Use 1 for full speed,
  * 2 for half speed (600 Hz), 4 for quarter speed (300 Hz), etc.
  * The value 0 is treated as 1 (full speed). Thread-safe.
  *

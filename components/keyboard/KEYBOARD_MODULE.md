@@ -91,7 +91,7 @@ Physical key press
 ## Scan Loop (`kb_manager_task`)
 
 - Runs at priority 5, 6 KB stack, internal RAM.
-- Target rate: **1200 Hz** (`MAX_POLLING_RATE_HZ`).
+- Target rate: **1000 Hz** (`MAX_POLLING_RATE_HZ`).
 - **Idle sleep**: when no keys are pressed, enables GPIO interrupts on all rows (columns driven LOW) and sleeps via `ulTaskNotifyTake`. Woken by ISR on key press. Bypassed when `s_force_active` is enabled (via `kb_manager_set_force_active()`) to allow high-rate polling measurements during benchmarks even if no keys are pressed.
 
 - **GPIO settling**: each column is driven LOW and held for `esp_rom_delay_us(5)` before rows are read. This is a ~5 µs busy-wait — sufficient for GPIO output settling — replacing a former `taskYIELD()` that caused 18 unnecessary context switches per scan (~540 µs wasted per 833 µs budget).

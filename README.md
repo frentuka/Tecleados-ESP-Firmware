@@ -122,7 +122,7 @@ main/
   └────────────────────────────────────────────────────────────────────────────────────────────┘ │
                                                                                                  │
   keyboard/ ───────────────────────────────────────────────────────────────────────────────────┐ │
-  │  kb_manager       Matrix scan task (1200 Hz), debounce, dispatch                           │ │
+  │  kb_manager       Matrix scan task (1000 Hz), debounce, dispatch                           │ │
   │  kb_macro         Virtual NKRO bitmap, action router, macro executor                       │ │
   │  kb_system_action Tap/Hold engine → publishes KB_EVENT_SYSTEM_ACTION                       │ │
   │  kb_custom_key    PressRelease + MultiAction → subscribes to KB_EVENT_SYSTEM_ACTION        │ │
@@ -270,7 +270,7 @@ The core HID pipeline. Responsible for everything from raw GPIO matrix state to 
 
 | File | Responsibility |
 |------|----------------|
-| `kb_manager.c` | Scan task (1200 Hz), debounce (5 scans), report scheduling |
+| `kb_manager.c` | Scan task (1000 Hz), debounce (5 scans), report scheduling |
 | `kb_macro.c` | Virtual NKRO bitmap, action dispatcher, macro + tap worker tasks |
 | `kb_system_action.c` | Generic tap/hold state machine (5 gesture types); publishes `KB_EVENT_SYSTEM_ACTION` |
 | `kb_custom_key.c` | Custom key modes (PressRelease, MultiAction); subscribes to `KB_EVENT_SYSTEM_ACTION` and `CONFIG_EVENT_KIND_UPDATED` |
@@ -284,7 +284,7 @@ The core HID pipeline. Responsible for everything from raw GPIO matrix state to 
 - Columns driven LOW one at a time; `esp_rom_delay_us(5)` settling before rows are read
 - Debounce: **5 consecutive scans** required before a state change is registered
 - Edge detection: XOR bitmaps + `__builtin_ctz` — only changed keys are visited per scan
-- Polling target: **1200 Hz**
+- Polling target: **1000 Hz**
 - Idle: scan task sleeps; GPIO interrupt on any key wakes it
 - Minimum report rate: **1 Hz** (keeps the host alive even when nothing changes)
 

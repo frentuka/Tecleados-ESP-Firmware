@@ -32,7 +32,7 @@
 static const char *TAG = "kb_manager";
 
 /* ---- Tuning ---- */
-static const uint32_t MAX_POLLING_RATE_HZ = 1200;
+static const uint32_t MAX_POLLING_RATE_HZ = 1000;
 static const uint32_t MIN_REPORT_RATE_HZ  = 1;   // Minimum Hz for forced periodic reports
 #define KB_DEBOUNCE_SCANS 5
 
@@ -341,7 +341,7 @@ static void kb_manager_task(void *arg) {
                 ESP_LOGE(TAG, "Low report rate — scans/s: %lu, reports/s: %lu, peak_scan: %lu Hz",
                          (unsigned long)scans_per_sec,
                          (unsigned long)reports_per_sec,
-                         (unsigned long)(peak_scan_hz <= 1200 ? peak_scan_hz : 1200));
+                         (unsigned long)(peak_scan_hz <= 1000 ? peak_scan_hz : 1000));
             }
 
             s_scan_count             = 0;

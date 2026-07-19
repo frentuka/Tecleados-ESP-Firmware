@@ -959,7 +959,7 @@ bool conn_hid_ready(void) {
 ```
 
 > [!WARNING]
-> **Performance is critical here.** `conn_send_keyboard_report` is called from the 1200 Hz scan loop. The current `kb_report.c` path is ~50 cycles (two `if` checks + one function call). The new path adds one pointer dereference (vtable lookup) + one function call. This is negligible — the bottleneck is always the USB/BLE stack, not the dispatcher.
+> **Performance is critical here.** `conn_send_keyboard_report` is called from the 1000 Hz scan loop. The current `kb_report.c` path is ~50 cycles (two `if` checks + one function call). The new path adds one pointer dereference (vtable lookup) + one function call. This is negligible — the bottleneck is always the USB/BLE stack, not the dispatcher.
 
 **System action handler (absorbs `ble_controller.c`):**
 
