@@ -60,6 +60,7 @@ export interface DeviceIdentity {
     // as one device to the host and can hand off BLE connections on role swap.
     ble_shared_name: string;   // BLE advertised name override (empty = use device_name)
     ble_shared_addr: string;   // Shared static random BLE address "AA:BB:CC:DD:EE:FF" (empty = auto)
+    transparent_stack_fallback: boolean;
 }
 
 // Re-export transport for backward compatibility
@@ -368,12 +369,13 @@ export class DeviceController {
             try {
                 const d = JSON.parse(resp.jsonText);
                 return {
-                    device_name:      d.name             ?? 'Antigravity KB',
+                    device_name:      d.name             ?? 'Tecleados MK1',
                     is_split:          d.is_split           ?? false,
                     split_mirror_cols: d.split_mirror_cols ?? false,
                     split_variant:     d.split_variant     ?? '',
                     ble_shared_name:  d.ble_shared_name   ?? '',
                     ble_shared_addr:  d.ble_shared_addr   ?? '',
+                    transparent_stack_fallback: d.transparent_stack_fallback ?? false,
                 };
             } catch (e) {
                 console.error('fetchDeviceIdentity parse error:', e);
@@ -391,6 +393,7 @@ export class DeviceController {
             split_variant:     identity.split_variant,
             ble_shared_name:  identity.ble_shared_name,
             ble_shared_addr:  identity.ble_shared_addr.toUpperCase(),
+            transparent_stack_fallback: identity.transparent_stack_fallback,
         };
         const jsonBytes = new TextEncoder().encode(JSON.stringify(payload));
         const buf = new Uint8Array(3 + jsonBytes.length);

@@ -246,7 +246,7 @@ Single struct (`cfg_system_t`) with:
 
 | Field               | Type       | Default            | Description                 |
 |---------------------|------------|--------------------|-----------------------------|
-| `device_name`       | `char[32]` | `"Antigravity KB"` | BLE advertised device name  |
+| `device_name`       | `char[32]` | `"Tecleados MK1"` | BLE advertised device name  |
 | `sleep_timeout_ms`  | `uint32_t` | `300000` (5 min)   | Idle time before deep sleep |
 | `rgb_brightness`    | `uint8_t`  | `255`              | RGB LED global brightness   |
 | `bluetooth_enabled` | `bool`     | `true`             | Master BLE on/off switch    |

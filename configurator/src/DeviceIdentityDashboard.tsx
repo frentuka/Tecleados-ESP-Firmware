@@ -149,7 +149,7 @@ const DeviceIdentityDashboard: React.FC<DeviceIdentityDashboardProps> = ({ isCon
                             maxLength={31}
                             value={draft.device_name}
                             onChange={e => setField('device_name', e.target.value)}
-                            placeholder="Antigravity KB"
+                            placeholder="Tecleados MK1"
                             className="identity-input"
                         />
                         <span className="identity-char-count">{draft.device_name.length}/31</span>
@@ -219,7 +219,7 @@ const DeviceIdentityDashboard: React.FC<DeviceIdentityDashboardProps> = ({ isCon
                                     maxLength={31}
                                     value={draft.ble_shared_name}
                                     onChange={e => setField('ble_shared_name', e.target.value)}
-                                    placeholder={draft.device_name || 'Antigravity KB'}
+                                    placeholder={draft.device_name || 'Tecleados MK1'}
                                     className="identity-input"
                                 />
                                 <span className="identity-char-count">{draft.ble_shared_name.length}/31</span>
