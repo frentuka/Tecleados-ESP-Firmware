@@ -56,6 +56,7 @@ function App() {
   const [editCkeyId, setEditCkeyId] = useState<number | null>(null);
 
   const [isConnected, setIsConnected] = useState(false);
+  const [deviceName, setDeviceName] = useState<string>('');
   const setLayoutIsConnected = useLayoutStore(state => state.setIsConnected);
   const hasCompletedOnboarding = useOnboardingStore(state => state.hasCompleted);
   const { notification, setNotification, showNotification } = useNotificationStore();
@@ -212,7 +213,12 @@ function App() {
     const handler = (connected: boolean) => {
       setIsConnected(connected);
       setLayoutIsConnected(connected);
-      if (!connected) setDeviceStatus(null);
+      if (!connected) {
+        setDeviceStatus(null);
+        setDeviceName('');
+      } else {
+        setDeviceName(hidService.getDeviceName() || 'Unknown Device');
+      }
 
       // Auto-advance onboarding wizard from Step 0 → Step 1 on connect
       if (connected && !useOnboardingStore.getState().hasCompleted) {
@@ -499,6 +505,12 @@ function App() {
           <div className="header-brand">
             <div className="brand-logo">TC</div>
             <span className="brand-title">Configurator</span>
+            {isConnected && deviceName && (
+              <>
+                <span className="brand-separator"></span>
+                <span className="brand-device-name">{deviceName}</span>
+              </>
+            )}
           </div>
         </div>
 

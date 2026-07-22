@@ -26,6 +26,24 @@ import { useNotificationStore } from './stores/notificationStore';
 import { useLayoutStore } from './stores/layoutStore';
 import { withTimeout, TimeoutError } from './utils/withTimeout';
 import './assets/css/keyboard-layout.css';
+import {
+    DndContext,
+    closestCorners,
+    KeyboardSensor,
+    PointerSensor,
+    useSensor,
+    useSensors,
+} from '@dnd-kit/core';
+import type { DragEndEvent } from '@dnd-kit/core';
+import {
+    arrayMove,
+    SortableContext,
+    sortableKeyboardCoordinates,
+    horizontalListSortingStrategy,
+    useSortable
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { restrictToParentElement, restrictToHorizontalAxis } from '@dnd-kit/modifiers';
 
 // ── Matrix dimensions (must match firmware) ──
 
@@ -65,6 +83,69 @@ const DEFAULT_PHYSICAL_LAYOUT: PhysKey[][] = [
     []
 ];
 
+function BaseLayoutTab({ meta, isActive, hasChanges, onSelect }: any) {
+    return (
+        <button
+            className={`layout-tab-pill layout-tab-pill-base ${isActive ? 'layout-tab-pill-active' : ''} ${hasChanges ? 'layout-tab-pill-changed' : ''}`}
+            onClick={() => onSelect()}
+            title={`${meta.name} (Base Layer)`}
+            style={{ cursor: 'pointer' }}
+        >
+            <span className="layout-tab-pill-name">{meta.name}</span>
+            {hasChanges && (
+                <span className="layout-tab-change-dot" title="Unsaved changes" />
+            )}
+        </button>
+    );
+}
+
+function SortableLayoutTab({ id, meta, isActive, hasChanges, onDelete, onSelect }: any) {
+    const {
+        attributes,
+        listeners,
+        setNodeRef,
+        transform,
+        transition,
+        isDragging
+    } = useSortable({ id });
+
+    const style = {
+        transform: CSS.Translate.toString(transform),
+        transition,
+        zIndex: isDragging ? 1 : 0,
+        opacity: isDragging ? 0.5 : 1,
+    };
+
+    return (
+        <button
+            ref={setNodeRef}
+            style={style}
+            {...attributes}
+            {...listeners}
+            className={`layout-tab-pill ${isActive ? 'layout-tab-pill-active' : ''} ${hasChanges ? 'layout-tab-pill-changed' : ''}`}
+            onClick={(e) => {
+                if (isDragging) return;
+                onSelect();
+            }}
+            title={meta.name}
+        >
+            <span className="layout-tab-pill-name">{meta.name}</span>
+            {hasChanges && (
+                <span className="layout-tab-change-dot" title="Unsaved changes" />
+            )}
+            <span
+                className="layout-tab-delete-btn"
+                title="Delete layout"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => { e.stopPropagation(); onDelete(meta.id); }}
+            >
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor">
+                    <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+                </svg>
+            </span>
+        </button>
+    );
+}
 
 export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, macros, customKeys = [], onLog, onEditEntity }: KeyboardLayoutEditorProps) {
     const { showNotification } = useNotificationStore();
@@ -84,7 +165,18 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
     const [hasPhysLayoutChanges, setHasPhysLayoutChanges] = useState(false);
     const [rowInput, setRowInput] = useState('');
     const [colInput, setColInput] = useState('');
-    const [draggedLayoutId, setDraggedLayoutId] = useState<number | null>(null);
+    
+    const sensors = useSensors(
+        useSensor(PointerSensor, {
+            activationConstraint: {
+                distance: 5,
+            },
+        }),
+        useSensor(KeyboardSensor, {
+            coordinateGetter: sortableKeyboardCoordinates,
+        })
+    );
+
     const menuRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const lastClickedKeyRef = useRef<string | null>(null);
@@ -642,26 +734,25 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
 
     const currentLayer = layerDataCache[activeLayerId];
 
-    const handleLayoutDrop = async (targetLayoutId: number) => {
-        if (draggedLayoutId === null || draggedLayoutId === targetLayoutId) return;
-        
-        const draggedIndex = layoutMetas.findIndex(m => m.id === draggedLayoutId);
-        const targetIndex = layoutMetas.findIndex(m => m.id === targetLayoutId);
-        
-        if (draggedIndex === -1 || targetIndex === -1) return;
-        if (targetIndex === 0) return; // Cannot drop onto Base layer
-        
-        const newMetas = [...layoutMetas];
-        const [removed] = newMetas.splice(draggedIndex, 1);
-        newMetas.splice(targetIndex, 0, removed);
-        
-        setLayoutMetas(newMetas);
-        
-        const newOrder = newMetas.map(m => m.id);
-        const success = await hidService.getDeviceController()?.reorderLayouts(newOrder);
-        if (!success) {
-            console.error("Failed to reorder layouts");
-            // Here we could reload layouts if we wanted to revert the UI on failure
+    const handleDragEnd = async (event: DragEndEvent) => {
+        const { active, over } = event;
+
+        if (over && active.id !== over.id) {
+            const oldIndex = layoutMetas.findIndex(m => m.id === active.id);
+            const newIndex = layoutMetas.findIndex(m => m.id === over.id);
+            
+            if (oldIndex === -1 || newIndex === -1) return;
+            if (newIndex === 0) return; // Cannot drop onto Base layer
+
+            const newMetas = arrayMove(layoutMetas, oldIndex, newIndex);
+            setLayoutMetas(newMetas);
+            
+            const newOrder = newMetas.map(m => m.id);
+            const success = await hidService.reorderLayouts(newOrder);
+            if (!success) {
+                console.error("Failed to reorder layouts");
+                // Here we could reload layouts if we wanted to revert the UI on failure
+            }
         }
     };
 
@@ -671,36 +762,36 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
             <div className="layout-toolbar" onMouseDown={(e) => e.stopPropagation()}>
                 {/* Left: Layer tabs */}
                 <div className="layout-tabs-group">
-                    {layoutMetas.map((meta, i) => (
-                        <button
-                            key={meta.id}
-                            draggable={i !== 0}
-                            onDragStart={() => setDraggedLayoutId(meta.id)}
-                            onDragOver={(e) => { e.preventDefault(); /* allow drop */ }}
-                            onDrop={() => handleLayoutDrop(meta.id)}
-                            onDragEnd={() => setDraggedLayoutId(null)}
-                            className={`layout-tab-pill ${activeLayerId === meta.id ? 'layout-tab-pill-active' : ''} ${hasChanges[meta.id] ? 'layout-tab-pill-changed' : ''} ${i === 0 ? 'layout-tab-pill-base' : ''}`}
-                            onClick={() => { setActiveLayerId(meta.id); setSelectedKeys(new Set()); }}
-                            title={meta.name}
-                        >
-                            <span className="layout-tab-pill-name">{meta.name}</span>
-                            {hasChanges[meta.id] && (
-                                <span className="layout-tab-change-dot" title="Unsaved changes" />
-                            )}
-                            {/* Trash icon — floats above tab on hover, no inline space */}
-                            {i !== 0 && (
-                                <span
-                                    className="layout-tab-delete-btn"
-                                    title="Delete layout"
-                                    onClick={(e) => { e.stopPropagation(); handleDeleteLayout(meta.id); }}
-                                >
-                                    <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor">
-                                        <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
-                                    </svg>
-                                </span>
-                            )}
-                        </button>
-                    ))}
+                    {layoutMetas.length > 0 && (
+                        <BaseLayoutTab
+                            meta={layoutMetas[0]}
+                            isActive={activeLayerId === layoutMetas[0].id}
+                            hasChanges={hasChanges[layoutMetas[0].id]}
+                            onSelect={() => { setActiveLayerId(layoutMetas[0].id); setSelectedKeys(new Set()); }}
+                        />
+                    )}
+                    <DndContext 
+                        sensors={sensors} 
+                        collisionDetection={closestCorners} 
+                        onDragEnd={handleDragEnd}
+                        modifiers={[restrictToParentElement, restrictToHorizontalAxis]}
+                    >
+                        <div style={{ display: 'flex', gap: '0.4rem' }}>
+                            <SortableContext items={layoutMetas.slice(1).map(m => m.id)} strategy={horizontalListSortingStrategy}>
+                                {layoutMetas.slice(1).map((meta) => (
+                                    <SortableLayoutTab
+                                        key={meta.id}
+                                        id={meta.id}
+                                        meta={meta}
+                                        isActive={activeLayerId === meta.id}
+                                        hasChanges={hasChanges[meta.id]}
+                                        onDelete={handleDeleteLayout}
+                                        onSelect={() => { setActiveLayerId(meta.id); setSelectedKeys(new Set()); }}
+                                    />
+                                ))}
+                            </SortableContext>
+                        </div>
+                    </DndContext>
 
                     {layoutMetas.length < maxLayouts && (
                         <button
