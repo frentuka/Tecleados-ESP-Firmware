@@ -161,3 +161,162 @@
   animation: keyPopIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+/* Layer Key Tooltip */
+.layer-key-btn {
+  position: relative;
+  overflow: visible !important;
+}
+
+.layer-key-tooltip {
+  position: absolute;
+  background: rgba(15, 20, 30, 0.95);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 0.75rem;
+  border-radius: 8px;
+  width: max-content;
+  max-width: 200px;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+  z-index: 99999;
+  pointer-events: none;
+  animation: tooltipFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.layer-key-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border-width: 6px;
+  border-style: solid;
+  border-color: rgba(15, 20, 30, 0.95) transparent transparent transparent;
+}
+
+.tooltip-desc {
+  font-size: 0.8rem;
+  color: var(--text-primary);
+}
+
+.tooltip-legend {
+  font-size: 0.75rem;
+  color: #9ca3af;
+  font-style: italic;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  margin-top: 0.5rem;
+  padding-top: 0.4rem;
+}
+
+@keyframes tooltipFadeIn {
+  from { opacity: 0; transform: translate(-50%, calc(-100% + 8px)); }
+  to { opacity: 1; transform: translate(-50%, -100%); }
+}
+
+/* Layer Context Menu */
+.layer-context-menu {
+  position: fixed;
+  background: rgba(15, 20, 30, 0.95);
+  backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  width: 220px;
+  box-shadow: 0 20px 40px rgba(0,0,0,0.6), 0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+  z-index: 99999;
+  padding: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  animation: ctxMenuPopIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes ctxMenuPopIn {
+  from { opacity: 0; transform: scale(0.95) translateY(-5px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.layer-context-header {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.5);
+  padding: 0.25rem 0.5rem 0.5rem 0.5rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  margin-bottom: 0.25rem;
+}
+
+.layer-ctx-btn {
+  background: transparent;
+  border: none;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.2s ease;
+}
+
+.layer-ctx-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.ctx-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.1);
+}
+
+.ctx-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.ctx-title {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #fff;
+}
+
+.ctx-desc {
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+/* Distinct Colors for Actions */
+.ctx-hold:hover .ctx-icon {
+  background: rgba(59, 130, 246, 0.2);
+  color: #60a5fa;
+}
+.ctx-hold .ctx-icon { color: #3b82f6; }
+
+.ctx-toggle:hover .ctx-icon {
+  background: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+}
+.ctx-toggle .ctx-icon { color: #10b981; }
+
+.ctx-on:hover .ctx-icon {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+}
+.ctx-on .ctx-icon { color: #f59e0b; }
+
+.ctx-off:hover .ctx-icon {
+  background: rgba(244, 63, 94, 0.2);
+  color: #fb7185;
+}
+.ctx-off .ctx-icon { color: #f43f5e; }
+
+.layer-btn-label {
+  display: block;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

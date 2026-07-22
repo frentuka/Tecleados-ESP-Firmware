@@ -45,6 +45,19 @@ export const SYSTEM_ACTION_NAMES: Record<number, string> = {
     0x201B: 'RGB S-', 0x201C: 'RGB B+', 0x201D: 'RGB B-',
 };
 
+export const SYSTEM_ACTION_DESCRIPTIONS: Record<number, string> = {
+    0x2003: 'Turns on Bluetooth module', 0x2004: 'Turns off Bluetooth module', 0x2005: 'Toggles Bluetooth on/off',
+    0x2006: 'Switches to Bluetooth Profile 1', 0x2007: 'Switches to Bluetooth Profile 2', 0x2008: 'Switches to Bluetooth Profile 3',
+    0x2009: 'Switches to Bluetooth Profile 4', 0x200A: 'Switches to Bluetooth Profile 5', 0x200B: 'Switches to Bluetooth Profile 6',
+    0x200C: 'Switches to Bluetooth Profile 7', 0x200D: 'Switches to Bluetooth Profile 8', 0x200E: 'Switches to Bluetooth Profile 9',
+    0x2010: 'Increases screen brightness', 0x2011: 'Decreases screen brightness',
+    0x2012: 'Increases volume', 0x2013: 'Decreases volume', 0x2014: 'Mutes/unmutes audio',
+    0x2015: 'Skips to next media track', 0x2016: 'Goes to previous media track', 0x2017: 'Plays/pauses current media',
+    0x2018: 'Next RGB lighting mode', 0x2019: 'Previous RGB lighting mode', 
+    0x201A: 'Increases RGB animation speed', 0x201B: 'Decreases RGB animation speed', 
+    0x201C: 'Increases RGB brightness', 0x201D: 'Decreases RGB brightness',
+};
+
 export const TRANSPARENT = 0xFFFF;
 export const MACRO_BASE = 0x4000;
 export const CKEY_BASE = 0x3000;
@@ -205,12 +218,14 @@ export function getCKeyOptions(customKeys: { id: number, name: string }[]) {
 }
 
 export function getLayerKeyOptions(layouts: { id: number, name: string }[]) {
-    const options: { label: string, value: number }[] = [];
+    const options: { label: string, value: number, layoutId: number, layoutName: string }[] = [];
     layouts.forEach(l => {
-        options.push({ label: `Hold Layer: ${l.name}`, value: LAYER_ACTION_MOMENTARY + l.id });
-        options.push({ label: `Toggle Layer: ${l.name}`, value: LAYER_ACTION_TOGGLE + l.id });
-        options.push({ label: `Turn Layer ON: ${l.name}`, value: LAYER_ACTION_ON + l.id });
-        options.push({ label: `Turn Layer OFF: ${l.name}`, value: LAYER_ACTION_OFF + l.id });
+        options.push({ 
+            label: `Layer: ${l.name}`, 
+            value: LAYER_ACTION_MOMENTARY + l.id,
+            layoutId: l.id,
+            layoutName: l.name
+        });
     });
     return options;
 }

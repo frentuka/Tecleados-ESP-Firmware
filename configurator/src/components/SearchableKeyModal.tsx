@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { ALL_KEYS, getKeyClass, TRANSPARENT, getMacroKeyOptions, getCKeyOptions, getLayerKeyOptions, MACRO_BASE, CKEY_BASE, getSecondaryKeyName, LAYER_ACTION_MIN, LAYER_ACTION_MAX } from '../KeyDefinitions';
+import { ALL_KEYS, getKeyClass, TRANSPARENT, getMacroKeyOptions, getCKeyOptions, getLayerKeyOptions, MACRO_BASE, CKEY_BASE, getSecondaryKeyName, LAYER_ACTION_MIN, LAYER_ACTION_MAX, SYSTEM_ACTION_DESCRIPTIONS } from '../KeyDefinitions';
 import { useLayoutStore } from '../stores/layoutStore';
 import type { Macro } from '../types/macros';
 import type { CustomKey } from '../types/customKeys';
 import '../assets/css/searchable-key-modal.css';
+import LayerKeyButton from './LayerKeyButton';
+import SystemKeyButton from './SystemKeyButton';
 
 interface SearchableKeyModalProps {
     title?: string;
@@ -277,20 +279,48 @@ export default function SearchableKeyModal({ currentValue, macros, customKeys, o
                                 <div key={cat.name} className="key-category">
                                     <h5>{cat.name}</h5>
                                     <div className="key-option-grid">
-                                        {catKeys.map((k, index) => (
-                                            <button
-                                                key={k.value}
-                                                className={`key-option key-option-anim ${k.value === currentValue ? 'active' : ''} ${getKeyClass(k.value)}`}
-                                                onClick={() => onSelect(k.value)}
-                                                title={k.label}
-                                                style={{ animationDelay: `${Math.min(index * 0.015, 0.4)}s` }}
-                                            >
-                                                <span className="key-option-label">{k.label}</span>
-                                                {getSecondaryKeyName(k.value) && (
-                                                    <span className="key-option-secondary-label">{getSecondaryKeyName(k.value)}</span>
-                                                )}
-                                            </button>
-                                        ))}
+                                        {catKeys.map((k: any, index) => {
+                                            if (cat.name === 'Layers') {
+                                                return (
+                                                    <LayerKeyButton
+                                                        key={k.value}
+                                                        layoutId={k.layoutId}
+                                                        layoutName={k.layoutName}
+                                                        currentValue={currentValue}
+                                                        onSelect={onSelect}
+                                                        animationDelay={`${Math.min(index * 0.015, 0.4)}s`}
+                                                    />
+                                                );
+                                            }
+                                            if (cat.name === 'System / BLE') {
+                                                return (
+                                                    <SystemKeyButton
+                                                        key={k.value}
+                                                        value={k.value}
+                                                        label={k.label}
+                                                        description={SYSTEM_ACTION_DESCRIPTIONS[k.value] || 'System Action'}
+                                                        isActive={k.value === currentValue}
+                                                        keyClass={getKeyClass(k.value)}
+                                                        onSelect={onSelect}
+                                                        animationDelay={`${Math.min(index * 0.015, 0.4)}s`}
+                                                    />
+                                                );
+                                            }
+                                            return (
+                                                <button
+                                                    key={k.value}
+                                                    className={`key-option key-option-anim ${k.value === currentValue ? 'active' : ''} ${getKeyClass(k.value)}`}
+                                                    onClick={() => onSelect(k.value)}
+                                                    title={k.label}
+                                                    style={{ animationDelay: `${Math.min(index * 0.015, 0.4)}s` }}
+                                                >
+                                                    <span className="key-option-label">{k.label}</span>
+                                                    {getSecondaryKeyName(k.value) && (
+                                                        <span className="key-option-secondary-label">{getSecondaryKeyName(k.value)}</span>
+                                                    )}
+                                                </button>
+                                            );
+                                        })}
                                     </div>
                                 </div>
                             );
