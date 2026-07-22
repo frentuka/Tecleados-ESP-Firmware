@@ -2,6 +2,7 @@
 
 #include "class/hid/hid.h"
 #include "kb_matrix.h"
+#include "cfg_layouts.h" // For CFG_LAYOUT_MAX_COUNT
 #include <stdint.h>
 
 /* ---- Special marker ---- */
@@ -26,9 +27,7 @@
 #define ACTION_CODE_MACRO_MAX 0x4FFF
 
 /* ---- System action codes (within ACTION_CODE_SYSTEM_*) ---- */
-#define SYS_ACTION_LAYER_BASE  (ACTION_CODE_SYSTEM_MIN + 0)
-#define SYS_ACTION_LAYER_FN1   (ACTION_CODE_SYSTEM_MIN + 1)
-#define SYS_ACTION_LAYER_FN2   (ACTION_CODE_SYSTEM_MIN + 2)
+// Removed hardcoded SYS_ACTION_LAYER_* as layers now use the 0x5000 block
 
 #define SYS_ACTION_BLE_ON      (ACTION_CODE_SYSTEM_MIN + 3)
 #define SYS_ACTION_BLE_OFF     (ACTION_CODE_SYSTEM_MIN + 4)
@@ -68,18 +67,28 @@
 #define SYS_ACTION_SPLIT_DISCONNECT    (ACTION_CODE_SYSTEM_MIN + 32)
 
 /* ---- Layers ---- */
-#define KB_LAYER_COUNT 4
+#define KB_LAYER_MAX       CFG_LAYOUT_MAX_COUNT  // 16
+#define KB_LAYER_BASE      0
 
-typedef enum {
-    KB_LAYER_BASE = 0,
-    KB_LAYER_FN1  = 1,
-    KB_LAYER_FN2  = 2,
-    KB_LAYER_FN3  = 3, /* FN3 = FN1 + FN2 held simultaneously */
-} kb_layer_t;
+/* ---- Layer action codes (within ACTION_CODE_LAYER_MIN) ---- */
+#define ACTION_CODE_LAYER_MIN          0x5000
+#define ACTION_CODE_LAYER_MOMENTARY    (ACTION_CODE_LAYER_MIN + 0x00) // 0x5000 - 0x500F
+#define ACTION_CODE_LAYER_TOGGLE       (ACTION_CODE_LAYER_MIN + 0x10) // 0x5010 - 0x501F
+#define ACTION_CODE_LAYER_ON           (ACTION_CODE_LAYER_MIN + 0x20) // 0x5020 - 0x502F
+#define ACTION_CODE_LAYER_OFF          (ACTION_CODE_LAYER_MIN + 0x30) // 0x5030 - 0x503F
+#define ACTION_CODE_LAYER_CLEAR_ALL    (ACTION_CODE_LAYER_MIN + 0x40) // 0x5040 - Return to Base (Panic)
+
+// Utility checks:
+#define IS_LAYER_ACTION(a)    ((a) >= ACTION_CODE_LAYER_MIN && (a) <= ACTION_CODE_LAYER_CLEAR_ALL)
+#define IS_LAYER_MOMENTARY(a) ((a) >= ACTION_CODE_LAYER_MOMENTARY && (a) <= ACTION_CODE_LAYER_MOMENTARY + 15)
+#define IS_LAYER_TOGGLE(a)    ((a) >= ACTION_CODE_LAYER_TOGGLE && (a) <= ACTION_CODE_LAYER_TOGGLE + 15)
+#define IS_LAYER_ON(a)        ((a) >= ACTION_CODE_LAYER_ON && (a) <= ACTION_CODE_LAYER_ON + 15)
+#define IS_LAYER_OFF(a)       ((a) >= ACTION_CODE_LAYER_OFF && (a) <= ACTION_CODE_LAYER_OFF + 15)
+#define LAYER_ID_FROM_ACTION(a) ((uint8_t)((a) & 0x0F))
 
 /* ---- Default compile-time keymap ---- */
 /* Defined once in kb_layout.c; used by cfg_layouts.c as the factory default. */
-extern const uint16_t keymaps[KB_LAYER_COUNT][KB_MATRIX_ROW_COUNT][KB_MATRIX_COL_COUNT];
+extern const uint16_t keymaps_base[KB_MATRIX_ROW_COUNT][KB_MATRIX_COL_COUNT];
 
 /* ---- Lookup ---- */
-uint16_t kb_layout_get_action_code(uint8_t row, uint8_t col, uint8_t layer);
+uint16_t kb_layout_get_action_code(uint8_t row, uint8_t col, uint16_t layer_mask);

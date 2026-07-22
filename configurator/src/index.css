@@ -161,6 +161,25 @@ h3 {
   letter-spacing: -0.02em;
 }
 
+.brand-separator {
+  width: 1px;
+  height: 18px;
+  background: rgba(255, 255, 255, 0.15);
+  margin: 0 0.75rem 0 0.5rem;
+}
+
+.brand-device-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  letter-spacing: 0.02em;
+  box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.02);
+}
+
 .header-center {
   display: flex;
   justify-content: center;

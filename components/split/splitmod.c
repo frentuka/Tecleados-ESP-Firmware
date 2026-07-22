@@ -36,7 +36,8 @@
 
 static bool is_syncable_config(cfgmod_kind_t kind, const char *key)
 {
-    // Specific check for dynamic sub-keys and main indicators (Macros and Custom Keys)
+    // Specific check for dynamic sub-keys and main indicators (Layouts, Macros and Custom Keys)
+    if (kind == CFGMOD_KIND_LAYOUT && (strncmp(key, "ly_", 3) == 0 || strcmp(key, "lay_idx") == 0)) return true;
     if (kind == CFGMOD_KIND_MACRO && (strncmp(key, "mac_", 4) == 0 || strcmp(key, "macros") == 0)) return true;
     if (kind == CFGMOD_KIND_CKEY  && (strncmp(key, "ck_", 3) == 0  || strcmp(key, "ckeys") == 0)) return true;
 

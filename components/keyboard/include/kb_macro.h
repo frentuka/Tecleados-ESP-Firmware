@@ -24,9 +24,9 @@ void kb_macro_virtual_press(uint8_t hid_keycode);
 void kb_macro_virtual_release(uint8_t hid_keycode);
 
 /**
- * @brief Get the currently active layer
+ * @brief Get the bitmask of all currently active layers (Base is always bit 0)
  */
-uint8_t kb_macro_get_active_layer(void);
+uint16_t kb_macro_get_layer_mask(void);
 
 /**
  * @brief Force a report to be sent from the current virtual state

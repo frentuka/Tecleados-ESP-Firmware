@@ -26,10 +26,8 @@ import {
   PAYLOAD_FLAG_ABORT,
   MODULE_STATUS,
   MODULE_CONFIG,
-  CFG_KEY_LAYER_0,
-  CFG_KEY_LAYER_1,
-  CFG_KEY_LAYER_2,
-  CFG_KEY_LAYER_3,
+  CFG_KEY_LAYOUTS,
+  CFG_KEY_LAYOUT_SINGLE,
   CFG_KEY_PHYSICAL_LAYOUT
 } from './types/protocol';
 import './index.css';
@@ -58,6 +56,7 @@ function App() {
   const [editCkeyId, setEditCkeyId] = useState<number | null>(null);
 
   const [isConnected, setIsConnected] = useState(false);
+  const [deviceName, setDeviceName] = useState<string>('');
   const setLayoutIsConnected = useLayoutStore(state => state.setIsConnected);
   const hasCompletedOnboarding = useOnboardingStore(state => state.hasCompleted);
   const { notification, setNotification, showNotification } = useNotificationStore();
@@ -214,7 +213,12 @@ function App() {
     const handler = (connected: boolean) => {
       setIsConnected(connected);
       setLayoutIsConnected(connected);
-      if (!connected) setDeviceStatus(null);
+      if (!connected) {
+        setDeviceStatus(null);
+        setDeviceName('');
+      } else {
+        setDeviceName(hidService.getDeviceName() || 'Unknown Device');
+      }
 
       // Auto-advance onboarding wizard from Step 0 → Step 1 on connect
       if (connected && !useOnboardingStore.getState().hasCompleted) {
@@ -387,10 +391,8 @@ function App() {
       if (module === MODULE_CONFIG) {
         let keyName = `Key ${keyId}`;
         switch (keyId) {
-          case CFG_KEY_LAYER_0: keyName = 'Layer 0 (Base)'; break;
-          case CFG_KEY_LAYER_1: keyName = 'Layer 1 (FN1)'; break;
-          case CFG_KEY_LAYER_2: keyName = 'Layer 2 (FN2)'; break;
-          case CFG_KEY_LAYER_3: keyName = 'Layer 3 (FN3)'; break;
+          case CFG_KEY_LAYOUTS: keyName = 'Layouts Outline'; break;
+          case CFG_KEY_LAYOUT_SINGLE: keyName = 'Layout Single'; break;
           case CFG_KEY_PHYSICAL_LAYOUT: keyName = 'Physical Layout'; break;
         }
         const text = `[Config] Received data for ${keyName}`;
@@ -503,6 +505,12 @@ function App() {
           <div className="header-brand">
             <div className="brand-logo">TC</div>
             <span className="brand-title">Configurator</span>
+            {isConnected && deviceName && (
+              <>
+                <span className="brand-separator"></span>
+                <span className="brand-device-name">{deviceName}</span>
+              </>
+            )}
           </div>
         </div>
 

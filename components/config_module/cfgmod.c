@@ -14,6 +14,7 @@
 #include "cfg_custom_keys.h"
 #include "cfg_macros.h"
 #include "cfg_combos.h"
+#include "cfg_layouts.h"
 #include "event_bus.h"
 
 static inline void cfgmod_post_update_event(cfgmod_kind_t kind, const char *key) {
@@ -102,10 +103,9 @@ static const cfgmod_key_map_t s_key_map[CFG_KEY_MAX] = {
    [CFG_KEY_TEST]    = { CFGMOD_KIND_SYSTEM, "test" },
    [CFG_KEY_HELLO]   = { CFGMOD_KIND_SYSTEM, "hello" },
    [CFG_KEY_PHYSICAL_LAYOUT] = { CFGMOD_KIND_PHYSICAL, "physical" },
-   [CFG_KEY_LAYER_0] = { CFGMOD_KIND_LAYOUT, "ly0" },
-   [CFG_KEY_LAYER_1] = { CFGMOD_KIND_LAYOUT, "ly1" },
-   [CFG_KEY_LAYER_2] = { CFGMOD_KIND_LAYOUT, "ly2" },
-   [CFG_KEY_LAYER_3] = { CFGMOD_KIND_LAYOUT, "ly3" },
+   [CFG_KEY_LAYOUTS]       = { CFGMOD_KIND_LAYOUT, "layouts" },
+   [CFG_KEY_LAYOUT_SINGLE] = { CFGMOD_KIND_LAYOUT, "layouts" },
+   [CFG_KEY_LAYOUT_LIMITS] = { CFGMOD_KIND_LAYOUT, "layouts" },
    [CFG_KEY_MACROS]  = { CFGMOD_KIND_MACRO, "macros" },
    [CFG_KEY_MACRO_LIMITS] = { CFGMOD_KIND_MACRO, "macros" },
    [CFG_KEY_MACRO_SINGLE] = { CFGMOD_KIND_MACRO, "macros" },
@@ -145,6 +145,11 @@ static void write_json_response(cJSON *root,
                                 size_t status_size,
                                 esp_err_t *out_status,
                                 size_t *out_payload_len) {
+    if (!root) {
+        *out_status = ESP_ERR_NOT_FOUND;
+        *out_payload_len = status_size;
+        return;
+    }
     char *json_str = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     if (!json_str) {
@@ -188,6 +193,11 @@ esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
   cfgmod_kind_t kind = s_key_map[hdr.key_id].kind;
   const char *key = s_key_map[hdr.key_id].key_name;
 
+  if (!key) {
+    ESP_LOGE(TAG, "Unmapped Key ID: %d", hdr.key_id);
+    return ESP_ERR_INVALID_ARG;
+  }
+
   const uint8_t *data_in = data + sizeof(hdr);
   size_t data_in_len = len - sizeof(hdr);
 
@@ -204,8 +214,122 @@ esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
   memset(out_payload, 0, out_payload_max);
   size_t actual_payload_len = 0;
 
+  // ---- Layout handlers ----
+  if (hdr.key_id == CFG_KEY_LAYOUTS && hdr.cmd == CFG_CMD_GET) {
+    write_json_response(layouts_serialize_outline(),
+                        out_payload, out_payload_max, status_size,
+                        &status, &actual_payload_len);
+
+  } else if (hdr.key_id == CFG_KEY_LAYOUTS && hdr.cmd == CFG_CMD_SET) {
+    cJSON *req = parse_json_from_bytes(data_in, data_in_len);
+    status = ESP_FAIL;
+    if (req) {
+      cJSON *order_arr = cJSON_GetObjectItem(req, "order");
+      if (cJSON_IsArray(order_arr)) {
+        int count = cJSON_GetArraySize(order_arr);
+        uint8_t *new_order = malloc(count);
+        if (new_order) {
+          for (int i = 0; i < count; i++) {
+            cJSON *item = cJSON_GetArrayItem(order_arr, i);
+            if (cJSON_IsNumber(item)) {
+                new_order[i] = (uint8_t)item->valueint;
+            } else {
+                new_order[i] = 0xFF;
+            }
+          }
+          status = cfg_layout_reorder(new_order, count);
+          free(new_order);
+        } else {
+          status = ESP_ERR_NO_MEM;
+        }
+      }
+      cJSON_Delete(req);
+    }
+    actual_payload_len = 0;  } else if (hdr.key_id == CFG_KEY_LAYOUT_LIMITS && hdr.cmd == CFG_CMD_GET) {
+    write_json_response(layouts_serialize_limits(),
+                        out_payload, out_payload_max, status_size,
+                        &status, &actual_payload_len);
+
+  } else if (hdr.key_id == CFG_KEY_LAYOUT_SINGLE && hdr.cmd == CFG_CMD_GET) {
+    cJSON *req = parse_json_from_bytes(data_in, data_in_len);
+    uint8_t requested_id = 0xFF;
+    if (req) {
+      cJSON *id_item = cJSON_GetObjectItem(req, "id");
+      if (cJSON_IsNumber(id_item)) requested_id = (uint8_t)id_item->valueint;
+      cJSON_Delete(req);
+    }
+    if (requested_id != 0xFF) {
+      write_json_response(layouts_serialize_single(requested_id),
+                          out_payload, out_payload_max, status_size,
+                          &status, &actual_payload_len);
+    } else {
+      status = ESP_ERR_INVALID_ARG;
+      actual_payload_len = status_size;
+    }
+
+  } else if (hdr.key_id == CFG_KEY_LAYOUT_SINGLE && hdr.cmd == CFG_CMD_SET) {
+    cJSON *root = parse_json_from_bytes(data_in, data_in_len);
+    if (root) {
+        cJSON *create_item = cJSON_GetObjectItem(root, "create");
+        cJSON *delete_item = cJSON_GetObjectItem(root, "delete");
+        cJSON *rename_item = cJSON_GetObjectItem(root, "rename");
+        cJSON *keys_item   = cJSON_GetObjectItem(root, "keys");
+        cJSON *id_item     = cJSON_GetObjectItem(root, "id");
+        
+        if (create_item && cJSON_IsString(create_item)) {
+            uint8_t new_id;
+            status = cfg_layout_create(create_item->valuestring, &new_id);
+            if (status == ESP_OK) {
+                cJSON *resp = cJSON_CreateObject();
+                cJSON_AddNumberToObject(resp, "id", new_id);
+                write_json_response(resp, out_payload, out_payload_max, status_size, &status, &actual_payload_len);
+            } else {
+                actual_payload_len = status_size;
+            }
+        } else if (delete_item && cJSON_IsNumber(delete_item)) {
+            status = cfg_layout_delete((uint8_t)delete_item->valueint);
+            actual_payload_len = status_size;
+        } else if (id_item && cJSON_IsNumber(id_item)) {
+            uint8_t id = (uint8_t)id_item->valueint;
+            if (rename_item && cJSON_IsString(rename_item)) {
+                status = cfg_layout_rename(id, rename_item->valuestring);
+                actual_payload_len = status_size;
+            } else if (keys_item && cJSON_IsArray(keys_item)) {
+                cfg_layer_t layer;
+                memset(&layer, 0, sizeof(layer));
+                int r = 0;
+                cJSON *row;
+                cJSON_ArrayForEach(row, keys_item) {
+                    if (r < KB_MATRIX_ROW_COUNT && cJSON_IsArray(row)) {
+                        int c = 0;
+                        cJSON *col;
+                        cJSON_ArrayForEach(col, row) {
+                            if (c < KB_MATRIX_COL_COUNT && cJSON_IsNumber(col)) {
+                                layer.keys[r][c] = (uint16_t)col->valueint;
+                            }
+                            c++;
+                        }
+                    }
+                    r++;
+                }
+                status = cfg_layout_set_layer(id, &layer);
+                actual_payload_len = status_size;
+            } else {
+                status = ESP_ERR_INVALID_ARG;
+                actual_payload_len = status_size;
+            }
+        } else {
+            status = ESP_ERR_INVALID_ARG;
+            actual_payload_len = status_size;
+        }
+        cJSON_Delete(root);
+    } else {
+        status = ESP_ERR_INVALID_ARG;
+        actual_payload_len = status_size;
+    }
+
   // ---- Macro handlers ----
-  if (hdr.key_id == CFG_KEY_MACRO_LIMITS && hdr.cmd == CFG_CMD_GET) {
+  } else if (hdr.key_id == CFG_KEY_MACRO_LIMITS && hdr.cmd == CFG_CMD_GET) {
     write_json_response(macros_serialize_limits(),
                         out_payload, out_payload_max, status_size,
                         &status, &actual_payload_len);
@@ -605,6 +729,30 @@ esp_err_t cfgmod_read_storage(cfgmod_kind_t kind, const char *key,
   if (err != ESP_OK) return err;
 
   err = nvs_get_blob(handle, nvs_key, out_buf, inout_len);
+  nvs_close(handle);
+  return err;
+}
+
+esp_err_t cfgmod_delete_storage(cfgmod_kind_t kind, const char *key) {
+  const char *ns, *nvs_key;
+  char nvs_key_buf[16] = {0};
+  esp_err_t err = resolve_ns_and_key(kind, key, &ns, &nvs_key, nvs_key_buf, sizeof(nvs_key_buf));
+  if (err != ESP_OK) return err;
+
+  nvs_handle_t handle;
+  err = nvs_open(ns, NVS_READWRITE, &handle);
+  if (err != ESP_OK) return err;
+
+  err = nvs_erase_key(handle, nvs_key);
+  if (err == ESP_OK) {
+    err = nvs_commit(handle);
+    ESP_LOGI(TAG, "NVS erase_key %s/%s success", ns, nvs_key);
+  } else if (err == ESP_ERR_NVS_NOT_FOUND) {
+    err = ESP_OK; // Ignore if already doesn't exist
+  } else {
+    ESP_LOGW(TAG, "NVS erase_key %s/%s failed (err 0x%x)", ns, nvs_key, err);
+  }
+  
   nvs_close(handle);
   return err;
 }

@@ -94,6 +94,7 @@ const DEFAULT_IDENTITY: DeviceIdentity = {
     split_variant: '',
     ble_shared_name: '',
     ble_shared_addr: '',
+    transparent_stack_fallback: false,
 };
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -131,7 +132,8 @@ const DeviceDashboard: React.FC<DeviceDashboardProps> = ({
         draft.split_mirror_cols !== saved.split_mirror_cols ||
         draft.split_variant     !== saved.split_variant     ||
         draft.ble_shared_name  !== saved.ble_shared_name   ||
-        draft.ble_shared_addr  !== saved.ble_shared_addr;
+        draft.ble_shared_addr  !== saved.ble_shared_addr   ||
+        draft.transparent_stack_fallback !== saved.transparent_stack_fallback;
 
     // ── Split state ───────────────────────────────────────────────────────
 
@@ -385,10 +387,23 @@ const DeviceDashboard: React.FC<DeviceDashboardProps> = ({
                                     maxLength={31}
                                     value={draft.device_name}
                                     onChange={e => setField('device_name', e.target.value)}
-                                    placeholder="Antigravity KB"
+                                    placeholder="Tecleados MK1"
                                     className="dd-input"
                                 />
                                 <span className="dd-char-count">{draft.device_name.length}/31</span>
+                            </div>
+                        </FieldGroup>
+
+                        <FieldGroup label="Transparent Key Fall-Through" hint="If enabled, a transparent key (0xFFFF) will evaluate the next highest active layer instead of falling straight to Base layer.">
+                            <div className="dd-toggle-row" style={{ marginTop: 4 }}>
+                                <Toggle
+                                    id="dd-transparent-fallback"
+                                    checked={draft.transparent_stack_fallback}
+                                    onChange={v => setField('transparent_stack_fallback', v)}
+                                />
+                                <label htmlFor="dd-transparent-fallback" className="dd-toggle-label">
+                                    {draft.transparent_stack_fallback ? 'Enabled (Stack)' : 'Disabled (Direct-to-Base)'}
+                                </label>
                             </div>
                         </FieldGroup>
 
@@ -540,7 +555,7 @@ const DeviceDashboard: React.FC<DeviceDashboardProps> = ({
                                             maxLength={31}
                                             value={draft.ble_shared_name}
                                             onChange={e => setField('ble_shared_name', e.target.value)}
-                                            placeholder={draft.device_name || 'Antigravity KB'}
+                                            placeholder={draft.device_name || 'Tecleados MK1'}
                                             className="dd-input"
                                         />
                                         <span className="dd-char-count">{draft.ble_shared_name.length}/31</span>

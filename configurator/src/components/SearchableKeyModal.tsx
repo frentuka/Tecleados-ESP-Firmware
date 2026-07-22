@@ -1,9 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { ALL_KEYS, getKeyClass, TRANSPARENT, getMacroKeyOptions, getCKeyOptions, MACRO_BASE, CKEY_BASE, getSecondaryKeyName } from '../KeyDefinitions';
+import { ALL_KEYS, getKeyClass, TRANSPARENT, getMacroKeyOptions, getCKeyOptions, getLayerKeyOptions, MACRO_BASE, CKEY_BASE, getSecondaryKeyName, LAYER_ACTION_MIN, LAYER_ACTION_MAX, SYSTEM_ACTION_DESCRIPTIONS } from '../KeyDefinitions';
+import { useLayoutStore } from '../stores/layoutStore';
 import type { Macro } from '../types/macros';
 import type { CustomKey } from '../types/customKeys';
 import '../assets/css/searchable-key-modal.css';
+import LayerKeyButton from './LayerKeyButton';
+import SystemKeyButton from './SystemKeyButton';
 
 interface SearchableKeyModalProps {
     title?: string;
@@ -106,6 +109,7 @@ export default function SearchableKeyModal({ currentValue, macros, customKeys, o
     const [selectedMenu, setSelectedMenu] = useState<MenuType | null>(null);
     const [searchTerm, setSearchTerm] = useState('');
     const inputRef = useRef<HTMLInputElement>(null);
+    const layouts = useLayoutStore(state => state.layoutMetas);
 
     // Focus input when mounted
     useEffect(() => {
@@ -114,7 +118,8 @@ export default function SearchableKeyModal({ currentValue, macros, customKeys, o
 
     const macroOptions = getMacroKeyOptions(macros);
     const ckeyOptions  = getCKeyOptions(customKeys || []);
-    const combinedKeys = [...ALL_KEYS, ...macroOptions, ...ckeyOptions];
+    const layerOptions = getLayerKeyOptions(layouts);
+    const combinedKeys = [...ALL_KEYS, ...macroOptions, ...ckeyOptions, ...layerOptions];
 
     const filteredKeys = combinedKeys.filter(k => {
         const primary = k.label.toLowerCase();
@@ -133,6 +138,7 @@ export default function SearchableKeyModal({ currentValue, macros, customKeys, o
         { name: 'Navigation',  filter: (v: number) => (v >= 0x46 && v <= 0x52) || v === 0x65 || v === 0x39, menu: 'key' },
         { name: 'F-Keys',      filter: (v: number) => v >= 0x3A && v <= 0x45, menu: 'key' },
         { name: 'Modifiers',   filter: (v: number) => v >= 0xE0 && v <= 0xE7, menu: 'key' },
+        { name: 'Layers',      filter: (v: number) => v >= LAYER_ACTION_MIN && v <= LAYER_ACTION_MAX, menu: 'system' },
         { name: 'System / BLE',filter: (v: number) => v >= 0x2000 && v <= 0x20FF, menu: 'system' },
     ];
 
@@ -273,20 +279,48 @@ export default function SearchableKeyModal({ currentValue, macros, customKeys, o
                                 <div key={cat.name} className="key-category">
                                     <h5>{cat.name}</h5>
                                     <div className="key-option-grid">
-                                        {catKeys.map((k, index) => (
-                                            <button
-                                                key={k.value}
-                                                className={`key-option key-option-anim ${k.value === currentValue ? 'active' : ''} ${getKeyClass(k.value)}`}
-                                                onClick={() => onSelect(k.value)}
-                                                title={k.label}
-                                                style={{ animationDelay: `${Math.min(index * 0.015, 0.4)}s` }}
-                                            >
-                                                <span className="key-option-label">{k.label}</span>
-                                                {getSecondaryKeyName(k.value) && (
-                                                    <span className="key-option-secondary-label">{getSecondaryKeyName(k.value)}</span>
-                                                )}
-                                            </button>
-                                        ))}
+                                        {catKeys.map((k: any, index) => {
+                                            if (cat.name === 'Layers') {
+                                                return (
+                                                    <LayerKeyButton
+                                                        key={k.value}
+                                                        layoutId={k.layoutId}
+                                                        layoutName={k.layoutName}
+                                                        currentValue={currentValue}
+                                                        onSelect={onSelect}
+                                                        animationDelay={`${Math.min(index * 0.015, 0.4)}s`}
+                                                    />
+                                                );
+                                            }
+                                            if (cat.name === 'System / BLE') {
+                                                return (
+                                                    <SystemKeyButton
+                                                        key={k.value}
+                                                        value={k.value}
+                                                        label={k.label}
+                                                        description={SYSTEM_ACTION_DESCRIPTIONS[k.value] || 'System Action'}
+                                                        isActive={k.value === currentValue}
+                                                        keyClass={getKeyClass(k.value)}
+                                                        onSelect={onSelect}
+                                                        animationDelay={`${Math.min(index * 0.015, 0.4)}s`}
+                                                    />
+                                                );
+                                            }
+                                            return (
+                                                <button
+                                                    key={k.value}
+                                                    className={`key-option key-option-anim ${k.value === currentValue ? 'active' : ''} ${getKeyClass(k.value)}`}
+                                                    onClick={() => onSelect(k.value)}
+                                                    title={k.label}
+                                                    style={{ animationDelay: `${Math.min(index * 0.015, 0.4)}s` }}
+                                                >
+                                                    <span className="key-option-label">{k.label}</span>
+                                                    {getSecondaryKeyName(k.value) && (
+                                                        <span className="key-option-secondary-label">{getSecondaryKeyName(k.value)}</span>
+                                                    )}
+                                                </button>
+                                            );
+                                        })}
                                     </div>
                                 </div>
                             );

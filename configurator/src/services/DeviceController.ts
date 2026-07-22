@@ -17,6 +17,9 @@ import {
     MODULE_SPLIT,
     CFG_CMD_GET,
     CFG_CMD_SET,
+    CFG_KEY_LAYOUTS,
+    CFG_KEY_LAYOUT_LIMITS,
+    CFG_KEY_LAYOUT_SINGLE,
     CFG_KEY_MACROS,
     CFG_KEY_MACRO_LIMITS,
     CFG_KEY_MACRO_SINGLE,
@@ -57,6 +60,7 @@ export interface DeviceIdentity {
     // as one device to the host and can hand off BLE connections on role swap.
     ble_shared_name: string;   // BLE advertised name override (empty = use device_name)
     ble_shared_addr: string;   // Shared static random BLE address "AA:BB:CC:DD:EE:FF" (empty = auto)
+    transparent_stack_fallback: boolean;
 }
 
 // Re-export transport for backward compatibility
@@ -114,6 +118,102 @@ export class DeviceController {
         buf[2] = keyId;
         if (data) buf.set(data, 3);
         return buf;
+    }
+
+    // ── Layouts ──────────────────────────────────────────────────────────
+
+    public async fetchLayoutLimits(): Promise<{ maxLayouts: number } | null> {
+        if (!this.isConnected()) return null;
+        const buf = this.buildConfigPayload(CFG_CMD_GET, CFG_KEY_LAYOUT_LIMITS);
+        const resp = await this.sendCommand(buf, 5000);
+        if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
+            try {
+                return JSON.parse(resp.jsonText);
+            } catch (e) {
+                console.error('fetchLayoutLimits parse error:', e);
+            }
+        }
+        return null;
+    }
+
+    public async fetchLayouts(): Promise<{ id: number; name: string }[]> {
+        if (!this.isConnected()) return [];
+        const buf = this.buildConfigPayload(CFG_CMD_GET, CFG_KEY_LAYOUTS);
+        const resp = await this.sendCommand(buf, 5000);
+        if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
+            try {
+                const parsed = JSON.parse(resp.jsonText);
+                return parsed.layouts || [];
+            } catch (e) {
+                console.error('fetchLayouts parse error:', e);
+            }
+        }
+        return [];
+    }
+
+    public async reorderLayouts(order: number[]): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        const requestJson = JSON.stringify({ order });
+        const jsonBytes = new TextEncoder().encode(requestJson);
+        const buf = this.buildConfigPayload(CFG_CMD_SET, CFG_KEY_LAYOUTS, jsonBytes);
+        const resp = await this.sendCommand(buf, 5000);
+        return resp !== null && resp.status === 0;
+    }
+
+    public async fetchLayoutSingle(id: number): Promise<{ id: number; name: string; keys: number[][] } | null> {
+        if (!this.isConnected()) return null;
+        const requestJson = JSON.stringify({ id });
+        const jsonBytes = new TextEncoder().encode(requestJson);
+        const buf = this.buildConfigPayload(CFG_CMD_GET, CFG_KEY_LAYOUT_SINGLE, jsonBytes);
+        const resp = await this.sendCommand(buf, 5000);
+        if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
+            try {
+                return JSON.parse(resp.jsonText);
+            } catch (e) {
+                console.error('fetchLayoutSingle parse error:', e);
+            }
+        }
+        return null;
+    }
+
+    public async createLayout(name: string): Promise<number | null> {
+        if (!this.isConnected()) return null;
+        const jsonBytes = new TextEncoder().encode(JSON.stringify({ create: name }));
+        const buf = this.buildConfigPayload(CFG_CMD_SET, CFG_KEY_LAYOUT_SINGLE, jsonBytes);
+        const resp = await this.sendCommand(buf, 5000);
+        if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
+            try {
+                const parsed = JSON.parse(resp.jsonText);
+                return parsed.id;
+            } catch (e) {
+                console.error('createLayout parse error:', e);
+            }
+        }
+        return null;
+    }
+
+    public async renameLayout(id: number, newName: string): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        const jsonBytes = new TextEncoder().encode(JSON.stringify({ id, rename: newName }));
+        const buf = this.buildConfigPayload(CFG_CMD_SET, CFG_KEY_LAYOUT_SINGLE, jsonBytes);
+        const resp = await this.sendCommand(buf, 5000);
+        return resp !== null && resp.status === 0;
+    }
+
+    public async deleteLayout(id: number): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        const jsonBytes = new TextEncoder().encode(JSON.stringify({ delete: id }));
+        const buf = this.buildConfigPayload(CFG_CMD_SET, CFG_KEY_LAYOUT_SINGLE, jsonBytes);
+        const resp = await this.sendCommand(buf, 5000);
+        return resp !== null && resp.status === 0;
+    }
+
+    public async saveLayout(id: number, keys: number[][]): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        const jsonBytes = new TextEncoder().encode(JSON.stringify({ id, keys }));
+        const buf = this.buildConfigPayload(CFG_CMD_SET, CFG_KEY_LAYOUT_SINGLE, jsonBytes);
+        const resp = await this.sendCommand(buf, 10000);
+        return resp !== null && resp.status === 0;
     }
 
     // ── Status ──────────────────────────────────────────────────────────
@@ -278,12 +378,13 @@ export class DeviceController {
             try {
                 const d = JSON.parse(resp.jsonText);
                 return {
-                    device_name:      d.name             ?? 'Antigravity KB',
+                    device_name:      d.name             ?? 'Tecleados MK1',
                     is_split:          d.is_split           ?? false,
                     split_mirror_cols: d.split_mirror_cols ?? false,
                     split_variant:     d.split_variant     ?? '',
                     ble_shared_name:  d.ble_shared_name   ?? '',
                     ble_shared_addr:  d.ble_shared_addr   ?? '',
+                    transparent_stack_fallback: d.transparent_stack_fallback ?? false,
                 };
             } catch (e) {
                 console.error('fetchDeviceIdentity parse error:', e);
@@ -301,6 +402,7 @@ export class DeviceController {
             split_variant:     identity.split_variant,
             ble_shared_name:  identity.ble_shared_name,
             ble_shared_addr:  identity.ble_shared_addr.toUpperCase(),
+            transparent_stack_fallback: identity.transparent_stack_fallback,
         };
         const jsonBytes = new TextEncoder().encode(JSON.stringify(payload));
         const buf = new Uint8Array(3 + jsonBytes.length);

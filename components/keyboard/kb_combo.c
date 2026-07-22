@@ -31,7 +31,7 @@ typedef struct {
     uint8_t  row, col;
     int64_t  timestamp_us;
     uint16_t action_code;   // Resolved at suppression time
-    uint8_t  layer;
+    uint16_t layer_mask;
 } suppressed_key_t;
 static suppressed_key_t s_suppressed[MAX_SUPPRESSED];
 static uint8_t          s_suppressed_count = 0;
@@ -89,13 +89,13 @@ static void discard_all_suppressed_for_combo(const cfg_combo_t *combo) {
     }
 }
 
-static void release_individual_keys_for_combo(const cfg_combo_t *combo, uint8_t layer) {
+static void release_individual_keys_for_combo(const cfg_combo_t *combo, uint16_t layer_mask) {
     // Used when cancelKeys is true and a combo triggers.
     // Retroactively release the individual keys that were already sent.
     for (uint8_t k = 0; k < combo->key_count; k++) {
         uint8_t cr = combo->keys[k].row;
         uint8_t cc = combo->keys[k].col;
-        uint16_t action = kb_layout_get_action_code(cr, cc, layer);
+        uint16_t action = kb_layout_get_action_code(cr, cc, layer_mask);
         if (action != ACTION_CODE_NONE) {
             kb_macro_process_action(action, false);
         }
@@ -161,7 +161,7 @@ void kb_combo_init(void) {
  * Runtime Engine
  * ================================================================ */
 
-bool kb_combo_process_key(uint8_t row, uint8_t col, bool is_pressed, uint8_t layer) {
+bool kb_combo_process_key(uint8_t row, uint8_t col, bool is_pressed, uint16_t layer_mask) {
     if (s_combo_count == 0) return false;
 
     bool is_delayed_trigger = false;
@@ -171,7 +171,7 @@ bool kb_combo_process_key(uint8_t row, uint8_t col, bool is_pressed, uint8_t lay
         combo_rt_t *rt = &s_combo_rt[i];
 
         // 1. Layer filtering
-        if ((cmb->active_layers & (1 << layer)) == 0) continue;
+        if ((cmb->active_layers & layer_mask) == 0) continue;
 
         // 2. Check if this key is part of the combo
         int trigger_idx = -1;
@@ -234,7 +234,7 @@ bool kb_combo_process_key(uint8_t row, uint8_t col, bool is_pressed, uint8_t lay
                 if (cmb->delayed_press) {
                     discard_all_suppressed_for_combo(cmb);
                 } else if (cmb->cancel_keys) {
-                    release_individual_keys_for_combo(cmb, layer);
+                    release_individual_keys_for_combo(cmb, layer_mask);
                 }
 
                 // Fire combo action
@@ -272,8 +272,8 @@ bool kb_combo_process_key(uint8_t row, uint8_t col, bool is_pressed, uint8_t lay
                 s_suppressed[s_suppressed_count].row = row;
                 s_suppressed[s_suppressed_count].col = col;
                 s_suppressed[s_suppressed_count].timestamp_us = esp_timer_get_time();
-                s_suppressed[s_suppressed_count].action_code = kb_layout_get_action_code(row, col, layer);
-                s_suppressed[s_suppressed_count].layer = layer;
+                s_suppressed[s_suppressed_count].action_code = kb_layout_get_action_code(row, col, layer_mask);
+                s_suppressed[s_suppressed_count].layer_mask = layer_mask;
                 s_suppressed_count++;
             }
             return true; // Consumed (suppressed)
@@ -313,7 +313,7 @@ void kb_combo_tick(int64_t now_us) {
         
         for (size_t c = 0; c < s_combo_count; c++) {
             const cfg_combo_t *cmb = &s_combos[c];
-            if (!cmb->delayed_press || (cmb->active_layers & (1 << s_suppressed[i].layer)) == 0) continue;
+            if (!cmb->delayed_press || (cmb->active_layers & s_suppressed[i].layer_mask) == 0) continue;
             
             bool is_trigger = false;
             for (uint8_t k = 0; k < cmb->key_count; k++) {

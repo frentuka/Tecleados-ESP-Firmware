@@ -52,7 +52,7 @@ Each kind writes to its own NVS namespace for isolation and to stay within NVS's
 
 | Kind              | NVS Namespace | Key pattern                   | Notes                           |
 |-------------------|---------------|-------------------------------|---------------------------------|
-| LAYOUT            | `cfg_lay`     | `ly0`, `ly1`, `ly2`, `ly3`    | One blob per layer              |
+| LAYOUT            | `cfg_lay`     | `ly_0`…`ly_15`, `lay_idx`     | Individual blobs + bitmap index |
 | MACRO             | `cfg_mac`     | `mac_0`…`mac_63`, `mac_idx`   | Individual blobs + bitmap index |
 | CONNECTION (BLE)  | `cfg`         | `k2_ble_cfg` (prefixed)       | Uses fallback prefix scheme     |
 | SYSTEM            | `cfg`         | `k3_sys` (prefixed)           | Uses fallback prefix scheme     |
@@ -116,7 +116,9 @@ The config module registers with the USB module as `MODULE_CONFIG` via `usbmod_r
 | `CFG_KEY_TEST`            | GET     | —                             | Raw NVS blob                         |
 | `CFG_KEY_HELLO`           | GET     | —                             | Raw NVS blob                         |
 | `CFG_KEY_PHYSICAL_LAYOUT` | GET/SET | JSON or —                     | Physical layout JSON                 |
-| `CFG_KEY_LAYER_0..3`      | GET/SET | JSON or —                     | `{"keys": [[...], ...]}`             |
+| `CFG_KEY_LAYOUTS`         | GET     | —                             | Layout outline (IDs + names)         |
+| `CFG_KEY_LAYOUT_SINGLE`   | GET/SET | `{"id": N}` or layout JSON    | Full layout JSON with `keys` array   |
+| `CFG_KEY_LAYOUT_LIMITS`   | GET     | —                             | `{"maxLayouts": 16}`                 |
 | `CFG_KEY_MACROS`          | GET     | —                             | `{"macros": [{id, name, execMode}…]}`|
 | `CFG_KEY_MACRO_LIMITS`    | GET     | —                             | `{"maxEvents": 256, "maxMacros": 64}`|
 | `CFG_KEY_MACRO_SINGLE`    | GET     | `{"id": N}`                   | Full macro JSON with `elements`      |
@@ -139,10 +141,10 @@ The config module registers with the USB module as `MODULE_CONFIG` via `usbmod_r
 
 **Files:** [cfg_layouts.c](cfg_layouts.c), [include/cfg_layouts.h](include/cfg_layouts.h)
 
-Stores four keyboard layers (0–3). Each layer is a `cfg_layer_t` — a 2D array of `uint16_t` action codes with shape `[KB_MATRIX_ROW_COUNT][KB_MATRIX_COL_COUNT]` (5×15 = 75 keys).
+Stores up to **16 keyboard layers** (0–15). Each layer is a `cfg_layer_t` — a 2D array of `uint16_t` action codes with shape `[KB_MATRIX_ROW_COUNT][KB_MATRIX_COL_COUNT]` (5×15 = 75 keys).
 
 **Caching strategy** (three-tier, minimizes PSRAM reads on hot path):
-- `s_psram_cache` — all four layers in PSRAM (allocated on first `cfg_layout_load_all()`)
+- `s_psram_cache` — all 16 slots cached in PSRAM (allocated on first `cfg_layout_load_all()`)
 - `s_dram_base` — layer 0 always mirrored in DRAM; zero latency for base-layer lookups
 - `s_dram_swap` — one additional layer cached in DRAM at a time; swapped on access from PSRAM
 
@@ -152,7 +154,10 @@ Stores four keyboard layers (0–3). Each layer is a `cfg_layer_t` — a 2D arra
 
 **On USB SET**: `layout_update_cb()` reloads the affected layer into the PSRAM cache and updates the DRAM mirrors if applicable.
 
-**NVS keys:** `ly0`, `ly1`, `ly2`, `ly3` in namespace `cfg_lay`.
+### 5. Layout Dynamic Sub-System (`cfg_layouts.c`)
+Manages multiple custom keyboard layouts up to a hard limit (`CFG_LAYOUT_MAX_COUNT`, typically 16).
+
+**Storage:** Each layer is stored as an individual NVS blob under `ly_<id>` in namespace `cfg_lay`. A `cfg_layout_index_t` struct (16-bit bitmask + names array + order array) under `lay_idx` tracks which IDs exist, their names, and their precedence order.
 
 ---
 
@@ -244,7 +249,7 @@ Single struct (`cfg_system_t`) with:
 
 | Field               | Type       | Default            | Description                 |
 |---------------------|------------|--------------------|-----------------------------|
-| `device_name`       | `char[32]` | `"Antigravity KB"` | BLE advertised device name  |
+| `device_name`       | `char[32]` | `"Tecleados MK1"` | BLE advertised device name  |
 | `sleep_timeout_ms`  | `uint32_t` | `300000` (5 min)   | Idle time before deep sleep |
 | `rgb_brightness`    | `uint8_t`  | `255`              | RGB LED global brightness   |
 | `bluetooth_enabled` | `bool`     | `true`             | Master BLE on/off switch    |

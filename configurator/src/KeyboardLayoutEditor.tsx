@@ -4,8 +4,7 @@ import {
     MODULE_CONFIG,
     CFG_CMD_GET,
     CFG_CMD_SET,
-    CFG_KEY_PHYSICAL_LAYOUT,
-    CFG_KEY_LAYER_0,
+    CFG_KEY_PHYSICAL_LAYOUT
 } from './HIDService';
 import type { CustomKey } from './types/customKeys';
 import type { PhysKey } from './types/device';
@@ -17,6 +16,7 @@ import {
     CKEY_BASE,
 } from './KeyDefinitions';
 import SearchableKeyModal from './components/SearchableKeyModal';
+import InputModal from './components/InputModal';
 import KeyActionPopover from './components/KeyActionPopover';
 import type { Macro } from './types/macros';
 import { parseKleJson } from './utils/kleParser';
@@ -26,15 +26,31 @@ import { useNotificationStore } from './stores/notificationStore';
 import { useLayoutStore } from './stores/layoutStore';
 import { withTimeout, TimeoutError } from './utils/withTimeout';
 import './assets/css/keyboard-layout.css';
+import {
+    DndContext,
+    closestCorners,
+    KeyboardSensor,
+    PointerSensor,
+    useSensor,
+    useSensors,
+} from '@dnd-kit/core';
+import type { DragEndEvent } from '@dnd-kit/core';
+import {
+    arrayMove,
+    SortableContext,
+    sortableKeyboardCoordinates,
+    horizontalListSortingStrategy,
+    useSortable
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { restrictToParentElement, restrictToHorizontalAxis } from '@dnd-kit/modifiers';
 
 // ── Matrix dimensions (must match firmware) ──
-const LAYER_COUNT = 4;
-const LAYER_NAMES = ['Base', 'FN1', 'FN2', 'FN3'];
+
 const MATRIX_ROWS = 6;
 const MATRIX_COLS = 18;
 
 // ── Types ──
-type LayerData = number[][]; // ROWS × COLS
 
 interface KeyboardLayoutEditorProps {
     isConnected: boolean;
@@ -46,49 +62,7 @@ interface KeyboardLayoutEditorProps {
     onEditEntity?: (code: number) => void;
 }
 
-// ── Factory default keymaps (mirrors keymaps[] in kb_layout.h) ──
-// Values are standard USB HID usage codes + system action codes from firmware
-// Matrix: 6 rows × 18 cols
-const T = 0xFFFF; // KB_KEY_TRANSPARENT
-const N = 0x00;   // HID_KEY_NONE (unused position)
-const DEFAULT_KEYMAPS: LayerData[] = [
-    // Layer 0: Base
-    [
-        [0x29, 0x1E, 0x1F, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x2D, 0x2E, 0x2A, 0x49, N, N, N],
-        [0x2B, 0x14, 0x1A, 0x08, 0x15, 0x17, 0x1C, 0x18, 0x0C, 0x12, 0x13, 0x2F, 0x30, 0x31, 0x4A, N, N, N],
-        [0x39, 0x04, 0x16, 0x07, 0x09, 0x0A, 0x0B, 0x0D, 0x0E, 0x0F, 0x33, 0x34, 0x28, N, 0x4B, N, N, N],
-        [0xE1, N, 0x1D, 0x1B, 0x06, 0x19, 0x05, 0x11, 0x10, 0x36, 0x37, 0x38, 0xE5, 0x52, 0x4E, N, N, N],
-        [0xE0, 0xE3, 0xE2, N, N, 0x2C, N, N, N, 0xE6, 0x2001, 0x2002, 0x50, 0x51, 0x4F, N, N, N],
-        [N, N, N, N, N, N, N, N, N, N, N, N, N, N, N, N, N, N],
-    ],
-    // Layer 1: FN1
-    [
-        [0x35, 0x2011, 0x2010, T, T, T, T, 0x2016, 0x2017, 0x2015, 0x2014, 0x2013, 0x2012, T, 0x4C, N, N, N],
-        [T, T, T, T, T, T, T, T, T, T, T, T, T, T, 0x4D, N, N, N],
-        [T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, N, N, N],
-        [T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, N, N, N],
-        [T, T, T, T, T, T, T, T, T, 0x65, T, T, T, T, T, N, N, N],
-        [N, N, N, N, N, N, N, N, N, N, N, N, N, N, N, N, N, N],
-    ],
-    // Layer 2: FN2
-    [
-        [T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, N, N, N],
-        [T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, N, N, N],
-        [T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, N, N, N],
-        [T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, N, N, N],
-        [T, T, T, T, T, T, T, T, T, 0x65, T, T, T, T, T, N, N, N],
-        [N, N, N, N, N, N, N, N, N, N, N, N, N, N, N, N, N, N],
-    ],
-    // Layer 3: FN3 (FN1+FN2)
-    [
-        [T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, N, N, N],
-        [T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, N, N, N],
-        [T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, N, N, N],
-        [T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, N, N, N],
-        [T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, N, N, N],
-        [N, N, N, N, N, N, N, N, N, N, N, N, N, N, N, N, N, N],
-    ],
-];
+
 
 // ── Physical layout fallback (65% KLE) ─────────────────────────────────────
 // Each entry: { row, col, w, h, x, y } in KLE-unit coordinates.
@@ -109,11 +83,74 @@ const DEFAULT_PHYSICAL_LAYOUT: PhysKey[][] = [
     []
 ];
 
+function BaseLayoutTab({ meta, isActive, hasChanges, onSelect }: any) {
+    return (
+        <button
+            className={`layout-tab-pill layout-tab-pill-base ${isActive ? 'layout-tab-pill-active' : ''} ${hasChanges ? 'layout-tab-pill-changed' : ''}`}
+            onClick={() => onSelect()}
+            title={`${meta.name} (Base Layer)`}
+            style={{ cursor: 'pointer' }}
+        >
+            <span className="layout-tab-pill-name">{meta.name}</span>
+            {hasChanges && (
+                <span className="layout-tab-change-dot" title="Unsaved changes" />
+            )}
+        </button>
+    );
+}
+
+function SortableLayoutTab({ id, meta, isActive, hasChanges, onDelete, onSelect }: any) {
+    const {
+        attributes,
+        listeners,
+        setNodeRef,
+        transform,
+        transition,
+        isDragging
+    } = useSortable({ id });
+
+    const style = {
+        transform: CSS.Translate.toString(transform),
+        transition,
+        zIndex: isDragging ? 1 : 0,
+        opacity: isDragging ? 0.5 : 1,
+    };
+
+    return (
+        <button
+            ref={setNodeRef}
+            style={style}
+            {...attributes}
+            {...listeners}
+            className={`layout-tab-pill ${isActive ? 'layout-tab-pill-active' : ''} ${hasChanges ? 'layout-tab-pill-changed' : ''}`}
+            onClick={(e) => {
+                if (isDragging) return;
+                onSelect();
+            }}
+            title={meta.name}
+        >
+            <span className="layout-tab-pill-name">{meta.name}</span>
+            {hasChanges && (
+                <span className="layout-tab-change-dot" title="Unsaved changes" />
+            )}
+            <span
+                className="layout-tab-delete-btn"
+                title="Delete layout"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => { e.stopPropagation(); onDelete(meta.id); }}
+            >
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor">
+                    <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+                </svg>
+            </span>
+        </button>
+    );
+}
 
 export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, macros, customKeys = [], onLog, onEditEntity }: KeyboardLayoutEditorProps) {
     const { showNotification } = useNotificationStore();
-    const { physicalLayout, setPhysicalLayout, layers, setLayers, activeLayer, setActiveLayer, pressedCodes, setPressedCodes, heldTestKeys, setHeldTestKeys } = useLayoutStore();
-    const [layerStatus, setLayerStatus] = useState<('idle' | 'loading' | 'loaded' | 'error')[]>(['idle', 'idle', 'idle', 'idle']);
+    const { physicalLayout, setPhysicalLayout, layoutMetas, setLayoutMetas, layerDataCache, setLayerDataCache, activeLayerId, setActiveLayerId, maxLayouts, pressedCodes, setPressedCodes, heldTestKeys, setHeldTestKeys } = useLayoutStore();
+    const [layerStatus, setLayerStatus] = useState<Record<number, 'idle' | 'loading' | 'loaded' | 'error'>>({});
     const [physLayoutStatus, setPhysLayoutStatus] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle');
     const [showKleImport, setShowKleImport] = useState(false);
     const [kleInput, setKleInput] = useState('');
@@ -121,19 +158,66 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
     const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
-    const [hasChanges, setHasChanges] = useState<boolean[]>([false, false, false, false]);
+    const [hasChanges, setHasChanges] = useState<Record<number, boolean>>({});
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const [isKeyTestMode, setIsKeyTestMode] = useState(false);
     const [isRowColEditMode, setIsRowColEditMode] = useState(false);
     const [hasPhysLayoutChanges, setHasPhysLayoutChanges] = useState(false);
     const [rowInput, setRowInput] = useState('');
     const [colInput, setColInput] = useState('');
+    
+    const sensors = useSensors(
+        useSensor(PointerSensor, {
+            activationConstraint: {
+                distance: 5,
+            },
+        }),
+        useSensor(KeyboardSensor, {
+            coordinateGetter: sortableKeyboardCoordinates,
+        })
+    );
+
     const menuRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const lastClickedKeyRef = useRef<string | null>(null);
     const isDraggingRef = useRef(false);
     const dragStartedInEditorRef = useRef(false);
     const keysTouchedInDragRef = useRef<Set<string>>(new Set());
+
+    const [inputModalState, setInputModalState] = useState<{
+        isOpen: boolean;
+        title: string;
+        initialValue: string;
+        placeholder: string;
+        onSave: (val: string) => void;
+        onCancel: () => void;
+    }>({
+        isOpen: false,
+        title: '',
+        initialValue: '',
+        placeholder: '',
+        onSave: () => {},
+        onCancel: () => {}
+    });
+
+    const requestInput = (title: string, initialValue: string, placeholder: string): Promise<string | null> => {
+        return new Promise((resolve) => {
+            setInputModalState({
+                isOpen: true,
+                title,
+                initialValue,
+                placeholder,
+                onSave: (val: string) => {
+                    setInputModalState(s => ({ ...s, isOpen: false }));
+                    resolve(val);
+                },
+                onCancel: () => {
+                    setInputModalState(s => ({ ...s, isOpen: false }));
+                    resolve(null);
+                }
+            });
+        });
+    };
 
     const [hoveredKeyId, setHoveredKeyId] = useState<string | null>(null);
     const [hoverAnchorEl, setHoverAnchorEl] = useState<HTMLElement | null>(null);
@@ -229,7 +313,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
             version: 1,
             matrixRows: MATRIX_ROWS,
             matrixCols: MATRIX_COLS,
-            layers: layers.map((l, i) => l || DEFAULT_KEYMAPS[i]),
+            layers: Object.values(layerDataCache),
             timestamp: new Date().toISOString()
         };
 
@@ -263,9 +347,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                     setHasPhysLayoutChanges(true); // Mark as changed so user can save to device
                 }
                 if (data.layers && Array.isArray(data.layers)) {
-                    setLayers(data.layers);
-                    setLayerStatus(data.layers.map((l: LayerData | null) => l ? 'loaded' : 'idle'));
-                    setHasChanges(data.layers.map((l: LayerData | null) => l !== null));
+                    showNotification('Importing layers is not fully supported in the new layout system yet.', 'warning');
                 }
                 const msg = 'Layout imported from JSON. Remember to save layout and layers to device.';
                 onLogRef.current(msg);
@@ -301,8 +383,8 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
         // Clear layout store on disconnect so 3D background fades out
         if (!isConnected) {
             setPhysicalLayout(null);
-            setLayers([null, null, null, null]);
-            setActiveLayer(0);
+            setLayerDataCache({});
+            setActiveLayerId(0);
         }
         return () => {
             // We can't safely async await on unmount without hanging, but we do our best
@@ -310,7 +392,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                 hidService.clearInjectedKeys().catch(() => { });
             }
         };
-    }, [isConnected, isKeyTestMode, exitKeyTestMode, setPhysicalLayout, setLayers, setActiveLayer]);
+    }, [isConnected, isKeyTestMode, exitKeyTestMode, setPhysicalLayout, setLayerDataCache, setActiveLayerId]);
 
 
     // ── Global Key Listeners ──
@@ -456,43 +538,59 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
         return buf;
     };
 
-    // ── Fetch a single layer from device ──
-    const fetchLayer = useCallback(async (layerIdx: number): Promise<boolean> => {
-        if (!isConnected) return false;
+    const fetchLayouts = useCallback(async () => {
+        const metas = await hidService.fetchLayouts();
+        setLayoutMetas(metas);
 
-        setLayerStatus(prev => { const n = [...prev]; n[layerIdx] = 'loading'; return n; });
-
-        const keyId = CFG_KEY_LAYER_0 + layerIdx;
-        const payload = buildConfigPayload(CFG_CMD_GET, keyId);
-        onLogRef.current(`Requested Layer ${layerIdx} (GET)`);
-
-        const resp = await hidService.sendCommand(payload);
-
-        if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
-            try {
-                const parsed = JSON.parse(resp.jsonText);
-                if (parsed.keys && Array.isArray(parsed.keys)) {
-                    setLayers(prev => {
-                        const next = [...prev];
-                        next[layerIdx] = parsed.keys;
-                        return next;
-                    });
-                    setLayerStatus(prev => { const n = [...prev]; n[layerIdx] = 'loaded'; return n; });
-                    onLogRef.current(`Layer ${layerIdx} loaded (${LAYER_NAMES[layerIdx]})`);
-                    return true;
-                }
-            } catch (e) {
-                console.error('Layout parse error:', e);
-            }
+        if (metas.length > 0 && !metas.some((m: any) => m.id === activeLayerId)) {
+            setActiveLayerId(metas[0].id);
         }
 
-        setLayerStatus(prev => { const n = [...prev]; n[layerIdx] = 'error'; return n; });
-        onLogRef.current(`Layer ${layerIdx} fetch failed`);
-        showNotification(`Failed to load Layer ${layerIdx}`, 'error');
-        return false;
-    }, [isConnected, showNotification]);
+        const newCache: Record<number, any> = {};
+        const newStatus: Record<number, 'idle' | 'loading' | 'loaded' | 'error'> = {};
+        const newChanges: Record<number, boolean> = {};
+
+        for (const meta of metas) {
+            newStatus[meta.id] = 'loading';
+            setLayerStatus(prev => ({ ...prev, [meta.id]: 'loading' }));
+            
+            const layoutData = await hidService.fetchLayoutSingle(meta.id);
+            if (layoutData) {
+                newCache[meta.id] = layoutData.keys;
+                newStatus[meta.id] = 'loaded';
+                onLogRef.current(`Layout ${meta.id} loaded (${meta.name})`);
+            } else {
+                newStatus[meta.id] = 'error';
+                onLogRef.current(`Failed to load layout ${meta.id} (${meta.name})`);
+            }
+            newChanges[meta.id] = false;
+        }
+
+        setLayerDataCache(newCache);
+        setLayerStatus(prev => ({ ...prev, ...newStatus }));
+        setHasChanges(prev => ({ ...prev, ...newChanges }));
+
+    }, [activeLayerId, setActiveLayerId, setLayoutMetas, setLayerDataCache]);
 
     // ── Fetch physical layout + all layers sequentially on connect ──
+    const fetchPhysicalLayout = useCallback(async () => {
+        const plPayload = buildConfigPayload(CFG_CMD_GET, CFG_KEY_PHYSICAL_LAYOUT);
+        const plResp = await hidService.sendCommand(plPayload);
+        if (plResp && plResp.status === 0 && plResp.jsonText.trim().length > 0) {
+            const parsed = parsePhysicalLayoutJson(plResp.jsonText);
+            if (parsed) {
+                setPhysicalLayout(parsed);
+                setPhysLayoutStatus('loaded');
+                onLogRef.current('Physical layout loaded from device');
+                return true;
+            }
+        }
+        setPhysLayoutStatus('error');
+        setPhysicalLayout(DEFAULT_PHYSICAL_LAYOUT);
+        onLogRef.current('Physical layout fetch failed - using default');
+        return false;
+    }, [setPhysicalLayout]);
+
     useEffect(() => {
         if (!isConnected) {
             hasFetchedRef.current = false;
@@ -502,103 +600,130 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
         hasFetchedRef.current = true;
 
         (async () => {
-            // Fetch physical layout first
             setPhysLayoutStatus('loading');
-            const plPayload = buildConfigPayload(CFG_CMD_GET, CFG_KEY_PHYSICAL_LAYOUT);
-            console.log('[LayoutEditor] Fetching physical layout, payload:', Array.from(plPayload).map(b => b.toString(16).padStart(2, '0')).join(' '));
-            onLogRef.current('Requested Physical Layout (GET)');
+            await fetchPhysicalLayout();
 
-            const plResp = await hidService.sendCommand(plPayload);
-            console.log('[LayoutEditor] Physical layout response:', plResp ? { status: plResp.status, cmd: plResp.cmd, keyId: plResp.keyId, jsonLen: plResp.jsonText.length, json: plResp.jsonText.substring(0, 100) } : 'NULL (timeout)');
-
-            if (plResp && plResp.status === 0 && plResp.jsonText.trim().length > 0) {
-                const parsed = parsePhysicalLayoutJson(plResp.jsonText);
-                if (parsed) {
-                    setPhysicalLayout(parsed);
-                    setPhysLayoutStatus('loaded');
-                    onLogRef.current('Physical layout loaded from device');
-                } else {
-                    setPhysLayoutStatus('error');
-                    setPhysicalLayout(DEFAULT_PHYSICAL_LAYOUT);
-                    onLogRef.current('Physical layout parse error - using default');
-                }
-            } else {
-                setPhysLayoutStatus('error');
-                setPhysicalLayout(DEFAULT_PHYSICAL_LAYOUT);
-                onLogRef.current('Physical layout fetch failed - using default');
-                showNotification('Failed to fetch physical layout, using default', 'warning');
+            // Fetch limits first
+            const limits = await hidService.fetchLayoutLimits();
+            if (limits) {
+                useLayoutStore.getState().setMaxLayouts(limits.maxLayouts);
             }
 
-            // Then fetch all layers
-            for (let i = 0; i < LAYER_COUNT; i++) {
-                console.log(`[LayoutEditor] Fetching layer ${i}...`);
-                await fetchLayer(i);
-            }
+            await fetchLayouts();
         })();
-    }, [isConnected, fetchLayer]);
+    }, [isConnected, fetchPhysicalLayout, fetchLayouts]);
 
-    // ── Save all modified layers sequentially ──
+    // ── Save all modified layouts sequentially ──
     const saveAllModifiedLayers = async () => {
         if (!isConnected) return;
 
         setIsSaving(true);
-        const layersToSave = hasChanges.map((changed, i) => changed ? i : -1).filter(i => i !== -1);
+        const layoutsToSave = Object.keys(hasChanges).map(Number).filter(id => hasChanges[id]);
 
-        for (const layerIdx of layersToSave) {
-            const layerData = layers[layerIdx];
+        for (const id of layoutsToSave) {
+            const layerData = layerDataCache[id];
             if (!layerData) continue;
 
-            const keyId = CFG_KEY_LAYER_0 + layerIdx;
-            const jsonStr = JSON.stringify({ keys: layerData });
-            const jsonBytes = new TextEncoder().encode(jsonStr);
-            const payload = buildConfigPayload(CFG_CMD_SET, keyId, jsonBytes);
-
-            try {
-                const resp = await withTimeout(hidService.sendCommand(payload), 7000);
-                if (resp && resp.status === 0) {
-                    onLogRef.current(`Layer ${layerIdx} (${LAYER_NAMES[layerIdx]}) saved to device`);
-                    setHasChanges(prev => {
-                        const next = [...prev];
-                        next[layerIdx] = false;
-                        return next;
-                    });
-                    showNotification(`Layer ${layerIdx} saved`, 'success');
-                } else {
-                    onLogRef.current(`Layer ${layerIdx} save failed`);
-                    showNotification(`Failed to save Layer ${layerIdx}`, 'error');
-                }
-            } catch (e) {
-                if (e instanceof TimeoutError) {
-                    onLogRef.current(`Layer ${layerIdx} save timed out`);
-                    showNotification(`Layer ${layerIdx} save timed out — please retry`, 'error');
-                } else {
-                    onLogRef.current(`Layer ${layerIdx} save failed`);
-                    showNotification(`Failed to save Layer ${layerIdx}`, 'error');
-                }
+            const ok = await hidService.saveLayout(id, layerData);
+            if (ok) {
+                const name = layoutMetas.find(m => m.id === id)?.name || 'Unknown';
+                onLogRef.current(`Layout ${id} (${name}) saved to device`);
+                setHasChanges(prev => ({ ...prev, [id]: false }));
+                showNotification(`Layout ${id} saved`, 'success');
+            } else {
+                onLogRef.current(`Layout ${id} save failed`);
+                showNotification(`Failed to save Layout ${id}`, 'error');
             }
         }
 
         setIsSaving(false);
     };
 
+    const handleCreateLayout = async () => {
+        const name = await requestInput("Create New Layout", "", "Layout name (max 15 chars)");
+        if (!name) return;
+        const newId = await hidService.createLayout(name);
+        if (newId !== null) {
+            fetchLayouts();
+            setActiveLayerId(newId);
+        } else {
+            showNotification("Failed to create layout", "error");
+        }
+    };
+
+    const handleRenameLayout = async (id: number) => {
+        const meta = layoutMetas.find(m => m.id === id);
+        if (!meta) return;
+        const newName = await requestInput("Rename Layout", meta.name, "New layout name");
+        if (!newName || newName === meta.name) return;
+        const ok = await hidService.renameLayout(id, newName);
+        if (ok) {
+            fetchLayouts();
+        } else {
+            showNotification("Failed to rename layout", "error");
+        }
+    };
+
+    const handleDuplicateLayout = async (id: number) => {
+        const meta = layoutMetas.find(m => m.id === id);
+        if (!meta) return;
+        
+        if (layoutMetas.length >= maxLayouts) {
+            showNotification("Maximum layouts reached", "warning");
+            return;
+        }
+
+        const newName = await requestInput("Duplicate Layout", `${meta.name} Copy`, "New layout name (max 15 chars)");
+        if (!newName) return;
+        
+        const newId = await hidService.createLayout(newName);
+        if (newId !== null) {
+            let keys = layerDataCache[id];
+            if (!keys) {
+                const data = await hidService.fetchLayoutSingle(id);
+                if (data) keys = data.keys;
+            }
+            if (keys) {
+                const ok = await hidService.saveLayout(newId, keys);
+                if (!ok) {
+                    showNotification("Created layout but failed to copy keys", "error");
+                }
+            }
+            await fetchLayouts();
+            setActiveLayerId(newId);
+            showNotification(`Layout '${meta.name}' duplicated`, "success");
+        } else {
+            showNotification("Failed to duplicate layout", "error");
+        }
+    };
+
+    const handleDeleteLayout = async (id: number) => {
+        const meta = layoutMetas.find(m => m.id === id);
+        if (!meta) return;
+        if (window.confirm(`Delete layout '${meta.name}'? This cannot be undone.`)) {
+            const ok = await hidService.deleteLayout(id);
+            if (ok) {
+                fetchLayouts();
+            } else {
+                showNotification("Failed to delete layout", "error");
+            }
+        }
+    };
+
     // ── Key edit handler (supports multi-key) ──
     const handleMultiKeyChange = (newValue: number) => {
-        setLayers(prev => {
-            const next = [...prev];
-            if (!next[activeLayer]) return next;
-            const layerCopy = next[activeLayer]!.map(r => [...r]);
+        setLayerDataCache(prev => {
+            const next = { ...prev };
+            if (!next[activeLayerId]) return next;
+            const layerCopy = next[activeLayerId].map(r => [...r]);
             selectedKeys.forEach(kid => {
                 const [r, c] = kid.split('-').map(Number);
                 if (layerCopy[r] && c < layerCopy[r].length) layerCopy[r][c] = newValue;
             });
-            next[activeLayer] = layerCopy;
+            next[activeLayerId] = layerCopy;
             return next;
         });
-        setHasChanges(prev => {
-            const next = [...prev];
-            next[activeLayer] = true;
-            return next;
-        });
+        setHasChanges(prev => ({ ...prev, [activeLayerId]: true }));
     };
 
     // ── Flatten layout for shift-click range ──
@@ -607,7 +732,29 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
         return layout.flatMap(row => row.map(pk => `${pk.row}-${pk.col}`));
     }, [physicalLayout]);
 
-    const currentLayer = layers[activeLayer];
+    const currentLayer = layerDataCache[activeLayerId];
+
+    const handleDragEnd = async (event: DragEndEvent) => {
+        const { active, over } = event;
+
+        if (over && active.id !== over.id) {
+            const oldIndex = layoutMetas.findIndex(m => m.id === active.id);
+            const newIndex = layoutMetas.findIndex(m => m.id === over.id);
+            
+            if (oldIndex === -1 || newIndex === -1) return;
+            if (newIndex === 0) return; // Cannot drop onto Base layer
+
+            const newMetas = arrayMove(layoutMetas, oldIndex, newIndex);
+            setLayoutMetas(newMetas);
+            
+            const newOrder = newMetas.map(m => m.id);
+            const success = await hidService.reorderLayouts(newOrder);
+            if (!success) {
+                console.error("Failed to reorder layouts");
+                // Here we could reload layouts if we wanted to revert the UI on failure
+            }
+        }
+    };
 
     return (
         <div className="layout-editor" onMouseDown={(e) => { if (e.target === e.currentTarget) setSelectedKeys(new Set()); }}>
@@ -615,42 +762,48 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
             <div className="layout-toolbar" onMouseDown={(e) => e.stopPropagation()}>
                 {/* Left: Layer tabs */}
                 <div className="layout-tabs-group">
-                    {LAYER_NAMES.map((name, i) => (
-                        <button
-                            key={i}
-                            className={`layout-tab-pill ${activeLayer === i ? 'layout-tab-pill-active' : ''} ${hasChanges[i] ? 'layout-tab-pill-changed' : ''} ${i === 0 ? 'layout-tab-pill-base' : ''}`}
-                            onClick={() => { setActiveLayer(i); setSelectedKeys(new Set()); }}
-                            title={name}
-                        >
-                            <span className="layout-tab-pill-name">{name}</span>
-                            {hasChanges[i] && (
-                                <span className="layout-tab-change-dot" title="Unsaved changes" />
-                            )}
-                            {/* Trash icon — floats above tab on hover, no inline space */}
-                            {i !== 0 && (
-                                <span
-                                    className="layout-tab-delete-btn"
-                                    title="Delete layout (coming soon)"
-                                    onClick={(e) => e.stopPropagation() /* future: delete layout */}
-                                >
-                                    <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor">
-                                        <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
-                                    </svg>
-                                </span>
-                            )}
-                        </button>
-                    ))}
-
-                    {/* Add new layout button */}
-                    <button
-                        className="layout-tab-add-btn"
-                        title="Add new layout (coming soon)"
-                        onClick={() => { /* future: add new layout */ }}
+                    {layoutMetas.length > 0 && (
+                        <BaseLayoutTab
+                            meta={layoutMetas[0]}
+                            isActive={activeLayerId === layoutMetas[0].id}
+                            hasChanges={hasChanges[layoutMetas[0].id]}
+                            onSelect={() => { setActiveLayerId(layoutMetas[0].id); setSelectedKeys(new Set()); }}
+                        />
+                    )}
+                    <DndContext 
+                        sensors={sensors} 
+                        collisionDetection={closestCorners} 
+                        onDragEnd={handleDragEnd}
+                        modifiers={[restrictToParentElement, restrictToHorizontalAxis]}
                     >
+                        <div style={{ display: 'flex', gap: '0.4rem' }}>
+                            <SortableContext items={layoutMetas.slice(1).map(m => m.id)} strategy={horizontalListSortingStrategy}>
+                                {layoutMetas.slice(1).map((meta) => (
+                                    <SortableLayoutTab
+                                        key={meta.id}
+                                        id={meta.id}
+                                        meta={meta}
+                                        isActive={activeLayerId === meta.id}
+                                        hasChanges={hasChanges[meta.id]}
+                                        onDelete={handleDeleteLayout}
+                                        onSelect={() => { setActiveLayerId(meta.id); setSelectedKeys(new Set()); }}
+                                    />
+                                ))}
+                            </SortableContext>
+                        </div>
+                    </DndContext>
+
+                    {layoutMetas.length < maxLayouts && (
+                        <button
+                            className="layout-tab-add-btn"
+                            title="Add new layout"
+                            onClick={() => { handleCreateLayout(); }}
+                        >
                         <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
                             <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
                         </svg>
-                    </button>
+                        </button>
+                    )}
                 </div>
 
                 {/* Right: Options menu */}
@@ -712,11 +865,23 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                 </button>
                             )}
                             {isDeveloperMode && <div className="dropdown-divider" />}
-                            <button className="dropdown-item" onClick={() => { fetchLayer(activeLayer); setIsMenuOpen(false); }}>
+                            <button className="dropdown-item" onClick={() => { fetchLayouts(); setIsMenuOpen(false); }}>
                                 <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
                                     <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
                                 </svg>
                                 Refresh
+                            </button>
+                            <button className="dropdown-item" onClick={() => { handleRenameLayout(activeLayerId); setIsMenuOpen(false); }}>
+                                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                                    <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
+                                </svg>
+                                Rename layout
+                            </button>
+                            <button className="dropdown-item" onClick={() => { handleDuplicateLayout(activeLayerId); setIsMenuOpen(false); }}>
+                                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                                    <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z" />
+                                </svg>
+                                Duplicate layout
                             </button>
                             <button className="dropdown-item" onClick={() => { exportLayout(); setIsMenuOpen(false); }}>
                                 <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
@@ -732,22 +897,20 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                             </button>
                             <div className="dropdown-divider" />
                             <button className="dropdown-item dropdown-item-danger" onClick={() => {
-                                setLayers(prev => {
-                                    const next = [...prev];
-                                    next[activeLayer] = DEFAULT_KEYMAPS[activeLayer].map(r => [...r]);
+                                setLayerDataCache(prev => {
+                                    const next = { ...prev };
+                                    if (next[activeLayerId]) {
+                                        next[activeLayerId] = next[activeLayerId].map(r => r.map(() => 0x0000));
+                                    }
                                     return next;
                                 });
-                                setHasChanges(prev => {
-                                    const next = [...prev];
-                                    next[activeLayer] = true;
-                                    return next;
-                                });
+                                setHasChanges(prev => ({ ...prev, [activeLayerId]: true }));
                                 setIsMenuOpen(false);
                             }}>
                                 <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
                                     <path d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z" />
                                 </svg>
-                                Restore defaults
+                                Clear layout keys
                             </button>
                         </div>
                     )}
@@ -802,13 +965,14 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
 
                                 try {
                                     const resp = await withTimeout(hidService.sendCommand(payload), 7000);
-                                    console.log('[LayoutEditor] KLE Apply SET response:', resp ? { status: resp.status, statusHex: '0x' + resp.status.toString(16), cmd: resp.cmd, keyId: resp.keyId, jsonLen: resp.jsonText.length } : 'NULL (timeout)');
+                                    const r = resp as any;
+                                    console.log('[LayoutEditor] KLE Apply SET response:', r ? { status: r.status, statusHex: '0x' + r.status.toString(16), cmd: r.cmd, keyId: r.keyId, jsonLen: r.jsonText.length } : 'NULL (timeout)');
 
-                                    if (resp && resp.status === 0) {
+                                    if (r && r.status === 0) {
                                         onLogRef.current(`KLE layout saved to device: ${parsed.length} rows, ${parsed.reduce((s, r) => s + r.length, 0)} keys (${jsonBytes.length} bytes)`);
                                         showNotification('Physical layout updated', 'success');
                                     } else {
-                                        onLogRef.current(`KLE layout save failed (status: ${resp?.status ?? 'timeout'})`);
+                                        onLogRef.current(`KLE layout save failed (status: ${r?.status ?? 'timeout'})`);
                                         showNotification('Failed to update physical layout', 'error');
                                     }
                                 } catch (e) {
@@ -834,8 +998,6 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                 </div>
             )}
 
-            {/* Legacy layer tabs div removed — tabs now live in layout-toolbar above */}
-
             {/* Physical layout status */}
             {physLayoutStatus === 'error' && (
                 <div className="layout-placeholder" style={{ background: 'rgba(255,180,0,0.1)', color: '#ffb400', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
@@ -848,11 +1010,11 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                 <div className="layout-placeholder">
                     {!isConnected
                         ? 'Connect device to load layout.'
-                        : layerStatus[activeLayer] === 'loading'
-                            ? `Loading ${LAYER_NAMES[activeLayer]} layer from device...`
-                            : layerStatus[activeLayer] === 'error'
-                                ? `⚠ Failed to load ${LAYER_NAMES[activeLayer]} layer. Device may not support layout config yet. Try "Reset to Default" then "Save" to initialize.`
-                                : `No data for ${LAYER_NAMES[activeLayer]} layer.`
+                        : layerStatus[activeLayerId] === 'loading'
+                            ? `Loading layout from device...`
+                            : layerStatus[activeLayerId] === 'error'
+                                ? `⚠ Failed to load layout.`
+                                : `No data for layout.`
                     }
                 </div>
             ) : (
@@ -1074,7 +1236,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                                         >
                                                             <span className="key-label">
                                                                 <span className="key-main-label">
-                                                                    {isRowColEditMode ? `R${pk.row} C${pk.col}` : getKeyName(code, macros, customKeys)}
+                                                                    {isRowColEditMode ? `R${pk.row} C${pk.col}` : getKeyName(code, macros, customKeys, layoutMetas)}
                                                                 </span>
                                                                 {!isRowColEditMode && getSecondaryKeyName(code) && (
                                                                     <span className="key-secondary-label">{getSecondaryKeyName(code)}</span>
@@ -1488,7 +1650,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                     Save Layout
                                 </button>
                             )}
-                            {hasChanges.some(c => c) && (
+                            {Object.values(hasChanges).some(c => c) && (
                                 <button
                                     className={`btn btn-success btn-apply-active`}
                                     disabled={isSaving}
@@ -1505,6 +1667,16 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                     </div>
                 </>
             )}
+            
+            <InputModal 
+                isOpen={inputModalState.isOpen}
+                title={inputModalState.title}
+                initialValue={inputModalState.initialValue}
+                placeholder={inputModalState.placeholder}
+                onSubmit={inputModalState.onSave}
+                onCancel={inputModalState.onCancel}
+                maxLength={15}
+            />
         </div>
     );
 }

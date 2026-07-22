@@ -34,7 +34,6 @@ export const SECONDARY_HID_LEGENDS: Record<number, string> = {
 
 // System action code names (from kb_layout.h)
 export const SYSTEM_ACTION_NAMES: Record<number, string> = {
-    0x2000: 'L.BASE', 0x2001: 'L.FN1', 0x2002: 'L.FN2',
     0x2003: 'BLE ON', 0x2004: 'BLE OFF', 0x2005: 'BLE TG',
     0x2006: 'BLE 1', 0x2007: 'BLE 2', 0x2008: 'BLE 3',
     0x2009: 'BLE 4', 0x200A: 'BLE 5', 0x200B: 'BLE 6',
@@ -46,16 +45,36 @@ export const SYSTEM_ACTION_NAMES: Record<number, string> = {
     0x201B: 'RGB S-', 0x201C: 'RGB B+', 0x201D: 'RGB B-',
 };
 
+export const SYSTEM_ACTION_DESCRIPTIONS: Record<number, string> = {
+    0x2003: 'Turns on Bluetooth module', 0x2004: 'Turns off Bluetooth module', 0x2005: 'Toggles Bluetooth on/off',
+    0x2006: 'Switches to Bluetooth Profile 1', 0x2007: 'Switches to Bluetooth Profile 2', 0x2008: 'Switches to Bluetooth Profile 3',
+    0x2009: 'Switches to Bluetooth Profile 4', 0x200A: 'Switches to Bluetooth Profile 5', 0x200B: 'Switches to Bluetooth Profile 6',
+    0x200C: 'Switches to Bluetooth Profile 7', 0x200D: 'Switches to Bluetooth Profile 8', 0x200E: 'Switches to Bluetooth Profile 9',
+    0x2010: 'Increases screen brightness', 0x2011: 'Decreases screen brightness',
+    0x2012: 'Increases volume', 0x2013: 'Decreases volume', 0x2014: 'Mutes/unmutes audio',
+    0x2015: 'Skips to next media track', 0x2016: 'Goes to previous media track', 0x2017: 'Plays/pauses current media',
+    0x2018: 'Next RGB lighting mode', 0x2019: 'Previous RGB lighting mode', 
+    0x201A: 'Increases RGB animation speed', 0x201B: 'Decreases RGB animation speed', 
+    0x201C: 'Increases RGB brightness', 0x201D: 'Decreases RGB brightness',
+};
+
 export const TRANSPARENT = 0xFFFF;
-export const MACRO_BASE  = 0x4000;
-export const CKEY_BASE   = 0x3000;
+export const MACRO_BASE = 0x4000;
+export const CKEY_BASE = 0x3000;
+export const LAYER_ACTION_MIN = 0x5000;
+export const LAYER_ACTION_MOMENTARY = 0x5000;
+export const LAYER_ACTION_TOGGLE = 0x5010;
+export const LAYER_ACTION_ON = 0x5020;
+export const LAYER_ACTION_OFF = 0x5030;
+export const LAYER_ACTION_MAX = 0x503F;
 
 export function getKeyClass(code: number): string {
     if (code === TRANSPARENT) return 'key-transparent';
     if (code === 0) return 'key-none';
     if (code >= 0x3A && code <= 0x45) return 'key-fkey';
     if (code >= 0x2000 && code <= 0x20FF) return 'key-system';
-    if (code >= CKEY_BASE  && code <= 0x3FFF) return 'key-ckey';
+    if (code >= LAYER_ACTION_MIN && code <= LAYER_ACTION_MAX) return 'key-system';
+    if (code >= CKEY_BASE && code <= 0x3FFF) return 'key-ckey';
     if (code >= MACRO_BASE && code <= 0x40FF) return 'key-macro';
     const isModifier = code >= 0xE0 && code <= 0xE7;
     const isAction = (code >= 0x28 && code <= 0x2B) || // Enter, Esc, Bksp, Tab
@@ -109,8 +128,6 @@ export const ALL_KEYS: { label: string; value: number }[] = [
     { label: 'Right Ctrl', value: 0xE4 }, { label: 'Right Shift', value: 0xE5 },
     { label: 'Right Alt', value: 0xE6 }, { label: 'Right GUI', value: 0xE7 },
     // System actions
-    { label: 'Layer Base', value: 0x2000 }, { label: 'Layer FN1', value: 0x2001 },
-    { label: 'Layer FN2', value: 0x2002 },
     { label: 'Brightness +', value: 0x2010 }, { label: 'Brightness -', value: 0x2011 },
     { label: 'Volume +', value: 0x2012 }, { label: 'Volume -', value: 0x2013 },
     { label: 'Mute', value: 0x2014 },
@@ -154,7 +171,8 @@ export const BROWSER_CODE_TO_HID: Record<string, number> = {
 export function getKeyName(
     code: number,
     macros?: { id: number, name: string }[],
-    customKeys?: { id: number, name: string }[]
+    customKeys?: { id: number, name: string }[],
+    layouts?: { id: number, name: string }[]
 ): string {
     if (code === TRANSPARENT) return '▽';
     if (code === 0) return '';
@@ -166,6 +184,15 @@ export function getKeyName(
     if (code >= MACRO_BASE && code <= 0x40FF) {
         const macro = macros?.find(m => (MACRO_BASE + m.id) === code);
         return macro ? macro.name : `M${code - MACRO_BASE}`;
+    }
+    if (code >= LAYER_ACTION_MIN && code <= LAYER_ACTION_MAX) {
+        const id = code & 0x0F;
+        const layout = layouts?.find(l => l.id === id);
+        const name = layout ? layout.name : `Layer ${id}`;
+        if (code >= LAYER_ACTION_OFF) return `Turn Layer OFF: ${name}`;
+        if (code >= LAYER_ACTION_ON) return `Turn Layer ON: ${name}`;
+        if (code >= LAYER_ACTION_TOGGLE) return `Toggle Layer: ${name}`;
+        return `Hold Layer: ${name}`;
     }
     if (SYSTEM_ACTION_NAMES[code]) return SYSTEM_ACTION_NAMES[code];
     if (HID_KEY_NAMES[code]) return HID_KEY_NAMES[code];
@@ -188,4 +215,17 @@ export function getCKeyOptions(customKeys: { id: number, name: string }[]) {
         label: `CK: ${ck.name}`,
         value: CKEY_BASE + ck.id
     }));
+}
+
+export function getLayerKeyOptions(layouts: { id: number, name: string }[]) {
+    const options: { label: string, value: number, layoutId: number, layoutName: string }[] = [];
+    layouts.forEach(l => {
+        options.push({ 
+            label: `Layer: ${l.name}`, 
+            value: LAYER_ACTION_MOMENTARY + l.id,
+            layoutId: l.id,
+            layoutName: l.name
+        });
+    });
+    return options;
 }

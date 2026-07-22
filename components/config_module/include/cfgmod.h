@@ -28,10 +28,9 @@ typedef enum cfgmod_key_id : uint8_t {
   CFG_KEY_TEST = 0,
   CFG_KEY_HELLO,
   CFG_KEY_PHYSICAL_LAYOUT,
-  CFG_KEY_LAYER_0,
-  CFG_KEY_LAYER_1,
-  CFG_KEY_LAYER_2,
-  CFG_KEY_LAYER_3,
+  CFG_KEY_LAYOUTS = 0x10,
+  CFG_KEY_LAYOUT_SINGLE = 0x11,
+  CFG_KEY_LAYOUT_LIMITS = 0x12,
   CFG_KEY_MACROS,
   CFG_KEY_MACRO_LIMITS,
   CFG_KEY_MACRO_SINGLE,
@@ -103,3 +102,6 @@ esp_err_t cfgmod_read_storage(cfgmod_kind_t kind, const char *key,
 // Write a blob to NVS for a kind/key pair.
 esp_err_t cfgmod_write_storage(cfgmod_kind_t kind, const char *key,
                                const void *data, size_t len);
+
+// Delete a blob from NVS for a kind/key pair.
+esp_err_t cfgmod_delete_storage(cfgmod_kind_t kind, const char *key);

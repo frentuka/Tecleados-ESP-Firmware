@@ -18,6 +18,9 @@ typedef struct {
   // so they can seamlessly hand off BLE connections when roles swap.
   char    ble_shared_name[32]; // BLE advertised name override (empty = use device_name)
   uint8_t ble_shared_addr[6];  // Shared static random BLE address base (all-zero = auto-derive)
+  
+  // Layer switching fallback behavior
+  bool transparent_stack_fallback;
 } cfg_system_t;
 
 // Registers the system serializer with cfgmod

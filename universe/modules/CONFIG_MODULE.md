@@ -35,7 +35,7 @@ The module partitions data into dedicated NVS namespaces to prevent key collisio
 
 | Namespace | Kind | Content |
 |---|---|---|
-| `cfg_lay` | `LAYOUT` | Matrix action codes (Layers 0-3). |
+| `cfg_lay` | `LAYOUT` | Matrix action codes (Layers 0-15) and `lay_idx`. |
 | `cfg_mac` | `MACRO` | Macro event sequences and the `mac_idx`. |
 | `cfg_ck` | `CKEY` | Press/Release/Tap/Hold rules and `ck_idx`. |
 | `cfg_spl` | `SPLIT` | ESP-NOW pairing data and role configuration. |
@@ -74,7 +74,9 @@ Communications follow a **Request/Response** pattern on the Comm channel.
 | Key ID | Field | Description |
 |---|---|---|
 | `0x02` | `PHYSICAL_LAYOUT` | Raw geometry for the UI configurator. |
-| `0x03–06` | `LAYER_0..3` | Action codes for the key matrix layers. |
+| `0x10` | `LAYOUTS` | Layout outline (IDs + names). |
+| `0x11` | `LAYOUT_SINGLE` | Detailed action codes for a layout (GET/SET/DELETE). |
+| `0x12` | `LAYOUT_LIMITS` | Returns max layout slots. |
 | `0x07` | `MACROS` | The full macro outline (names and IDs). |
 | `0x08` | `MACRO_LIMITS` | Returns max events per macro and max macro slots. |
 | `0x09` | `MACRO_SINGLE` | Detailed event sequence for one macro (GET/SET/DELETE). |

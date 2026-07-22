@@ -48,6 +48,7 @@ static void sys_default(void *out_struct) {
   s->split_variant[0] = '\0';
   s->ble_shared_name[0] = '\0';
   memset(s->ble_shared_addr, 0, sizeof(s->ble_shared_addr));
+  s->transparent_stack_fallback = false; // Direct-to-Base by default
 }
 
 static bool sys_deserialize(cJSON *root, void *out_struct) {
@@ -91,6 +92,11 @@ static bool sys_deserialize(cJSON *root, void *out_struct) {
       for (int i = 0; i < 6; i++) s->ble_shared_addr[i] = (uint8_t)b[i];
     }
   }
+  
+  cJSON *fallback = cJSON_GetObjectItem(root, "transparent_stack_fallback");
+  if (cJSON_IsBool(fallback)) {
+      s->transparent_stack_fallback = cJSON_IsTrue(fallback);
+  }
 
   return true;
 }
@@ -122,6 +128,7 @@ static cJSON *sys_serialize(const void *in_struct) {
   } else {
     cJSON_AddStringToObject(root, "ble_shared_addr", "");
   }
+  cJSON_AddBoolToObject(root, "transparent_stack_fallback", s->transparent_stack_fallback);
 
   return root;
 }
@@ -158,7 +165,7 @@ esp_err_t cfg_system_get(cfg_system_t *out_sys) {
     return ESP_ERR_INVALID_ARG;
   if (!s_sys_loaded) {
     esp_err_t err = cfgmod_get_config(CFGMOD_KIND_SYSTEM, "sys", &s_sys);
-    if (err != ESP_OK)
+    if (err != ESP_OK && err != ESP_ERR_NOT_FOUND)
       return err;
     // Always overlay per-device identity; survives sync overwrites of "sys".
     sys_apply_local_id(&s_sys);

@@ -32,7 +32,7 @@
 static const char *TAG = "kb_manager";
 
 /* ---- Tuning ---- */
-static const uint32_t MAX_POLLING_RATE_HZ = 1200;
+static const uint32_t MAX_POLLING_RATE_HZ = 1000;
 static const uint32_t MIN_REPORT_RATE_HZ  = 1;   // Minimum Hz for forced periodic reports
 #define KB_DEBOUNCE_SCANS 5
 
@@ -49,7 +49,7 @@ static uint8_t s_remote_matrix[KB_MATRIX_BITMAP_BYTES];
 static portMUX_TYPE s_remote_matrix_lock = portMUX_INITIALIZER_UNLOCKED;
 
 /* ---- Matrix-change callback (split keyboard SLAVE mode) ---- */
-typedef void (*matrix_cb_t)(const uint8_t *matrix, size_t len, uint8_t layer);
+typedef void (*matrix_cb_t)(const uint8_t *matrix, size_t len, uint16_t layer_mask);
 static volatile matrix_cb_t s_matrix_cb = NULL;
 
 /* ---- Pause control ---- */
@@ -106,7 +106,7 @@ void kb_manager_set_force_active(bool active)
 
 
 void kb_manager_set_matrix_cb(void (*cb)(const uint8_t *matrix, size_t len,
-                                          uint8_t layer))
+                                          uint16_t layer_mask))
 {
     s_matrix_cb = cb;
 }
@@ -341,7 +341,7 @@ static void kb_manager_task(void *arg) {
                 ESP_LOGE(TAG, "Low report rate — scans/s: %lu, reports/s: %lu, peak_scan: %lu Hz",
                          (unsigned long)scans_per_sec,
                          (unsigned long)reports_per_sec,
-                         (unsigned long)(peak_scan_hz <= 1200 ? peak_scan_hz : 1200));
+                         (unsigned long)(peak_scan_hz <= 1000 ? peak_scan_hz : 1000));
             }
 
             s_scan_count             = 0;
@@ -358,7 +358,8 @@ static void kb_manager_task(void *arg) {
             bool cb_changed = !s_cb_last_valid ||
                               memcmp(s_matrix, s_cb_last, KB_MATRIX_BITMAP_BYTES) != 0;
             if (cb_changed) {
-                mcb(s_matrix, KB_MATRIX_BITMAP_BYTES, kb_macro_get_active_layer());
+                // Split BLE matrix sync expects an 8-bit layer, just pass 0 for now as it's only logged
+                mcb(s_matrix, KB_MATRIX_BITMAP_BYTES, 0);
                 memcpy(s_cb_last, s_matrix, KB_MATRIX_BITMAP_BYTES);
                 s_cb_last_valid = true;
             }
@@ -410,18 +411,18 @@ static void kb_manager_task(void *arg) {
 
                         if (curr) {
                             /* Key down: resolve action on current layer and remember it */
-                            uint8_t layer    = kb_macro_get_active_layer();
-                            if (kb_combo_process_key(r, c, true, layer)) {
+                            uint16_t layer_mask = kb_macro_get_layer_mask();
+                            if (kb_combo_process_key(r, c, true, layer_mask)) {
                                 d &= (uint8_t)(d - 1);
                                 continue;
                             }
-                            uint16_t action  = kb_layout_get_action_code(r, c, layer);
+                            uint16_t action  = kb_layout_get_action_code(r, c, layer_mask);
                             s_active_action_codes[r][c] = action;
                             kb_macro_process_action(action, true);
                         } else {
                             /* Key up: fire release on the same action code as the press */
-                            uint8_t layer = kb_macro_get_active_layer();
-                            kb_combo_process_key(r, c, false, layer);
+                            uint16_t layer_mask = kb_macro_get_layer_mask();
+                            kb_combo_process_key(r, c, false, layer_mask);
                             uint16_t action = s_active_action_codes[r][c];
                             kb_macro_process_action(action, false);
                             s_active_action_codes[r][c] = ACTION_CODE_NONE;
@@ -495,7 +496,7 @@ void kb_manager_start(void) {
 }
 
 void kb_manager_test_nkro_keypress(uint8_t row, uint8_t col) {
-    uint16_t kc = kb_layout_get_action_code(row, col, KB_LAYER_BASE);
+    uint16_t kc = kb_layout_get_action_code(row, col, 1 << KB_LAYER_BASE);
     if (kc == ACTION_CODE_NONE || kc >= NKRO_KEYS) return;
 
     uint8_t nkro[NKRO_BYTES];

@@ -11,7 +11,7 @@ It acts as the primary "Producer" of data in the system, either fulfilling repor
 
 ##  Internal Architecture
 
-The module is not a single entity but a coordinated system of specialized tasks and state machines designed to maintain a **1200Hz polling rate** while handling asynchronous events like macro execution and configuration updates.
+The module is not a single entity but a coordinated system of specialized tasks and state machines designed to maintain a **1000Hz polling rate** while handling asynchronous events like macro execution and configuration updates.
 
 ### 1. The Multi-Task Pipeline
 
@@ -23,7 +23,7 @@ The module is not a single entity but a coordinated system of specialized tasks 
 | `kb_tap_n` (x4) | 4 | Any | Worker tasks for fire-and-forget taps (e.g. from custom keys). |
 
 ### 2. High-Performance Matrix scanning
-The `kb_mgr` task drives the column GPIOs and reads the row GPIOs at a rate of 1200 times per second. To achieve this without starving the rest of the system, it uses an **Interrupt-Driven Wake** mechanism:
+The `kb_mgr` task drives the column GPIOs and reads the row GPIOs at a rate of 1000 times per second. To achieve this without starving the rest of the system, it uses an **Interrupt-Driven Wake** mechanism:
 
 - When no keys are held, the task enters a blocked state (`ulTaskNotifyTake`).
 - Any GPIO change on the matrix triggers a hardware interrupt.
@@ -55,9 +55,10 @@ Keys are not just HID constants; they are 16-bit **Action Codes** that define co
 |---|---|---|
 | `0x0001` – `0x00FF` | **HID Key** | Standard keyboard keys (A, B, Shift, etc). |
 | `0x0100` – `0x01FF` | **Media Key** | Consumer controls (Volume, Play/Pause). |
-| `0x2000` – `0x20FF` | **System Action**| Layer toggles, BLE profile swaps, Split pairing. |
+| `0x2000` – `0x20FF` | **System Action**| BLE profile swaps, Split pairing, Media, RGB. |
 | `0x3000` – `0x3FFF` | **Custom Key** | User-defined complex keys (Configurator presets). |
 | `0x4000` – `0x4FFF` | **Macro** | Trigger for a multi-step sequence defined in NVS. |
+| `0x5000` – `0x50FF` | **Layer Action** | Momentary, Toggle, On, Off layer actions. |
 
 ### 2. Combos
 The `kb_combo` engine intercepts keys before they are resolved into single actions. 
@@ -131,7 +132,7 @@ graph TD
 
 | File | Responsibility |
 |---|---|
-| `kb_manager.c` | Task management, 1200Hz loop, debouncing, and matrix merging logic. |
+| `kb_manager.c` | Task management, 1000Hz loop, debouncing, and matrix merging logic. |
 | `kb_matrix.c` | Low-level GPIO scanning and Interrupt-on-change initialization. |
 | `kb_layout.c` | Keymap lookup and recursive layer fallback (`KB_KEY_TRANSPARENT`). |
 | `kb_macro.c` | Multithreaded macro executor with stacking and cancellation support. |

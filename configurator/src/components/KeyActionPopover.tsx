@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { MACRO_BASE, CKEY_BASE, getKeyName, getSecondaryKeyName } from '../KeyDefinitions';
+import { useLayoutStore } from '../stores/layoutStore';
 import type { Macro } from '../types/macros';
 import type { CustomKey } from '../types/customKeys';
 import '../assets/css/key-action-popover.css';
@@ -19,6 +20,7 @@ export default function KeyActionPopover({ code, anchorEl, macros, customKeys, o
     const [isVisible, setIsVisible] = useState(false);
     const [pos, setPos] = useState({ top: -1000, left: -1000 }); // Render off-screen initially
     const popoverRef = useRef<HTMLDivElement>(null);
+    const layouts = useLayoutStore(state => state.layoutMetas);
 
     useEffect(() => {
         // Compute position initially and on resize/scroll
@@ -88,7 +90,7 @@ export default function KeyActionPopover({ code, anchorEl, macros, customKeys, o
         );
     }
 
-    const keyLabel = getKeyName(code, macros, customKeys);
+    const keyLabel = getKeyName(code, macros, customKeys, layouts);
     const secLabel = getSecondaryKeyName(code);
 
     return createPortal(

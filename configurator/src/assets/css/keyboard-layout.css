@@ -66,6 +66,23 @@
   transition: color 0.2s, background 0.2s, border-color 0.2s, transform 0.15s;
 }
 
+/* Specifically style the base layer tab to look foundational */
+.layout-tab-pill.layout-tab-pill-base {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px dashed rgba(255, 255, 255, 0.15);
+  font-style: italic;
+}
+
+.layout-tab-pill.layout-tab-pill-base:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.layout-tab-pill.layout-tab-pill-base.layout-tab-pill-active {
+  background: rgba(88, 166, 255, 0.08);
+  border: 1px dashed rgba(88, 166, 255, 0.4);
+}
+
 .layout-tab-pill:hover {
   color: var(--text-primary);
   background: rgba(255, 255, 255, 0.06);
