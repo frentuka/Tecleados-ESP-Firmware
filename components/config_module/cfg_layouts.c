@@ -142,6 +142,8 @@ esp_err_t cfg_layout_load_all(void) {
       memset(&s_idx, 0, sizeof(s_idx));
       s_idx.active_mask = 0x0001;
       strncpy(s_idx.names[0], "Base", CFG_LAYOUT_NAME_LEN);
+      s_idx.order[0] = 0;
+      memset(&s_idx.order[1], 0xFF, CFG_LAYOUT_MAX_COUNT - 1);
       cfgmod_write_storage(CFGMOD_KIND_LAYOUT, CFG_ST_LAYER_IDX, &s_idx, sizeof(s_idx));
       ESP_LOGI(TAG, "Initialized default layout index");
   }
@@ -149,6 +151,7 @@ esp_err_t cfg_layout_load_all(void) {
   // Enforce Base layer protection
   s_idx.active_mask |= 0x0001;
   strncpy(s_idx.names[0], "Base", CFG_LAYOUT_NAME_LEN);
+  s_idx.order[0] = 0;
 
   for (uint8_t i = 0; i < CFG_LAYOUT_MAX_COUNT; i++) {
     if (s_idx.active_mask & (1 << i)) {
@@ -271,6 +274,13 @@ esp_err_t cfg_layout_create(const char *name, uint8_t *out_id) {
     s_idx.active_mask |= (1 << id);
     strncpy(s_idx.names[id], name, CFG_LAYOUT_NAME_LEN);
     s_idx.names[id][CFG_LAYOUT_NAME_LEN - 1] = '\0';
+    
+    for (int i = 1; i < CFG_LAYOUT_MAX_COUNT; i++) {
+        if (s_idx.order[i] == 0xFF) {
+            s_idx.order[i] = id;
+            break;
+        }
+    }
 
     if (s_psram_cache) {
         for (int r = 0; r < KB_MATRIX_ROW_COUNT; r++) {
@@ -300,6 +310,20 @@ esp_err_t cfg_layout_delete(uint8_t id) {
 
     s_idx.active_mask &= ~(1 << id);
     memset(s_idx.names[id], 0, CFG_LAYOUT_NAME_LEN);
+    
+    int order_idx = -1;
+    for (int i = 1; i < CFG_LAYOUT_MAX_COUNT; i++) {
+        if (s_idx.order[i] == id) {
+            order_idx = i;
+            break;
+        }
+    }
+    if (order_idx != -1) {
+        for (int i = order_idx; i < CFG_LAYOUT_MAX_COUNT - 1; i++) {
+            s_idx.order[i] = s_idx.order[i + 1];
+        }
+        s_idx.order[CFG_LAYOUT_MAX_COUNT - 1] = 0xFF;
+    }
 
     if (s_psram_cache) {
         memset(&s_psram_cache[id], 0, sizeof(cfg_layer_t));
@@ -328,6 +352,34 @@ esp_err_t cfg_layout_rename(uint8_t id, const char *new_name) {
 
     strncpy(s_idx.names[id], new_name, CFG_LAYOUT_NAME_LEN);
     s_idx.names[id][CFG_LAYOUT_NAME_LEN - 1] = '\0';
+    
+    cfgmod_write_storage(CFGMOD_KIND_LAYOUT, CFG_ST_LAYER_IDX, &s_idx, sizeof(s_idx));
+
+    config_update_event_t ev = { .kind = (uint8_t)CFGMOD_KIND_LAYOUT };
+    strlcpy(ev.key, CFG_ST_LAYER_IDX, sizeof(ev.key));
+    esp_event_post(CONFIG_EVENTS, CONFIG_EVENT_KIND_UPDATED, &ev, sizeof(ev), 0);
+
+    return ESP_OK;
+}
+
+esp_err_t cfg_layout_reorder(const uint8_t *new_order, uint8_t count) {
+    if (!new_order || count > CFG_LAYOUT_MAX_COUNT) return ESP_ERR_INVALID_ARG;
+    if (count > 0 && new_order[0] != 0) return ESP_ERR_NOT_ALLOWED; // Base layer must be index 0
+    
+    // Validate all IDs
+    for (int i = 0; i < count; i++) {
+        if (new_order[i] >= CFG_LAYOUT_MAX_COUNT || !cfg_layout_exists(new_order[i])) {
+            return ESP_ERR_INVALID_ARG;
+        }
+    }
+    
+    // Check count matches active count
+    if (count != cfg_layout_get_count()) return ESP_ERR_INVALID_ARG;
+    
+    memset(s_idx.order, 0xFF, CFG_LAYOUT_MAX_COUNT);
+    for (int i = 0; i < count; i++) {
+        s_idx.order[i] = new_order[i];
+    }
     
     cfgmod_write_storage(CFGMOD_KIND_LAYOUT, CFG_ST_LAYER_IDX, &s_idx, sizeof(s_idx));
 
@@ -367,10 +419,11 @@ cJSON *layouts_serialize_outline(void) {
     cJSON_AddItemToObject(root, "layouts", layouts);
     
     for (uint8_t i = 0; i < CFG_LAYOUT_MAX_COUNT; i++) {
-        if (cfg_layout_exists(i)) {
+        uint8_t id = s_idx.order[i];
+        if (id != 0xFF && cfg_layout_exists(id)) {
             cJSON *item = cJSON_CreateObject();
-            cJSON_AddNumberToObject(item, "id", i);
-            cJSON_AddStringToObject(item, "name", s_idx.names[i]);
+            cJSON_AddNumberToObject(item, "id", id);
+            cJSON_AddStringToObject(item, "name", s_idx.names[id]);
             cJSON_AddItemToArray(layouts, item);
         }
     }

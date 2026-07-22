@@ -84,6 +84,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
     const [hasPhysLayoutChanges, setHasPhysLayoutChanges] = useState(false);
     const [rowInput, setRowInput] = useState('');
     const [colInput, setColInput] = useState('');
+    const [draggedLayoutId, setDraggedLayoutId] = useState<number | null>(null);
     const menuRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const lastClickedKeyRef = useRef<string | null>(null);
@@ -641,6 +642,29 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
 
     const currentLayer = layerDataCache[activeLayerId];
 
+    const handleLayoutDrop = async (targetLayoutId: number) => {
+        if (draggedLayoutId === null || draggedLayoutId === targetLayoutId) return;
+        
+        const draggedIndex = layoutMetas.findIndex(m => m.id === draggedLayoutId);
+        const targetIndex = layoutMetas.findIndex(m => m.id === targetLayoutId);
+        
+        if (draggedIndex === -1 || targetIndex === -1) return;
+        if (targetIndex === 0) return; // Cannot drop onto Base layer
+        
+        const newMetas = [...layoutMetas];
+        const [removed] = newMetas.splice(draggedIndex, 1);
+        newMetas.splice(targetIndex, 0, removed);
+        
+        setLayoutMetas(newMetas);
+        
+        const newOrder = newMetas.map(m => m.id);
+        const success = await hidService.getDeviceController()?.reorderLayouts(newOrder);
+        if (!success) {
+            console.error("Failed to reorder layouts");
+            // Here we could reload layouts if we wanted to revert the UI on failure
+        }
+    };
+
     return (
         <div className="layout-editor" onMouseDown={(e) => { if (e.target === e.currentTarget) setSelectedKeys(new Set()); }}>
             {/* ── Unified Layout Toolbar: Layer tabs + Add + Options menu ── */}
@@ -650,6 +674,11 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                     {layoutMetas.map((meta, i) => (
                         <button
                             key={meta.id}
+                            draggable={i !== 0}
+                            onDragStart={() => setDraggedLayoutId(meta.id)}
+                            onDragOver={(e) => { e.preventDefault(); /* allow drop */ }}
+                            onDrop={() => handleLayoutDrop(meta.id)}
+                            onDragEnd={() => setDraggedLayoutId(null)}
                             className={`layout-tab-pill ${activeLayerId === meta.id ? 'layout-tab-pill-active' : ''} ${hasChanges[meta.id] ? 'layout-tab-pill-changed' : ''} ${i === 0 ? 'layout-tab-pill-base' : ''}`}
                             onClick={() => { setActiveLayerId(meta.id); setSelectedKeys(new Set()); }}
                             title={meta.name}

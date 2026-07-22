@@ -21,6 +21,7 @@ const DEFAULT_IDENTITY: DeviceIdentity = {
     split_variant: '',
     ble_shared_name: '',
     ble_shared_addr: '',
+    transparent_stack_fallback: false,
 };
 
 // ── Component ──────────────────────────────────────────────────────────────────
@@ -39,7 +40,8 @@ const DeviceIdentityDashboard: React.FC<DeviceIdentityDashboardProps> = ({ isCon
         draft.split_mirror_cols !== saved.split_mirror_cols ||
         draft.split_variant     !== saved.split_variant     ||
         draft.ble_shared_name  !== saved.ble_shared_name   ||
-        draft.ble_shared_addr  !== saved.ble_shared_addr;
+        draft.ble_shared_addr  !== saved.ble_shared_addr   ||
+        draft.transparent_stack_fallback !== saved.transparent_stack_fallback;
 
     // ── Fetch ──────────────────────────────────────────────────────────────
 

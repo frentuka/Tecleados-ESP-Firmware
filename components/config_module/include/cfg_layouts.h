@@ -19,6 +19,7 @@ typedef struct cfg_layer {
 typedef struct __attribute__((packed)) {
     uint16_t active_mask;
     char     names[CFG_LAYOUT_MAX_COUNT][CFG_LAYOUT_NAME_LEN];
+    uint8_t  order[CFG_LAYOUT_MAX_COUNT];
 } cfg_layout_index_t;
 
 // ── Registration & Init ──
@@ -36,6 +37,7 @@ esp_err_t   cfg_layout_set_layer(uint8_t layer, const cfg_layer_t *in);
 esp_err_t   cfg_layout_create(const char *name, uint8_t *out_id);
 esp_err_t   cfg_layout_delete(uint8_t id);
 esp_err_t   cfg_layout_rename(uint8_t id, const char *new_name);
+esp_err_t   cfg_layout_reorder(const uint8_t *new_order, uint8_t count);
 
 // ── Index accessors ──
 uint8_t     cfg_layout_get_count(void);                  // Number of active layouts

@@ -151,6 +151,15 @@ export class DeviceController {
         return [];
     }
 
+    public async reorderLayouts(order: number[]): Promise<boolean> {
+        if (!this.isConnected()) return false;
+        const requestJson = JSON.stringify({ order });
+        const jsonBytes = new TextEncoder().encode(requestJson);
+        const buf = this.buildConfigPayload(CFG_CMD_SET, CFG_KEY_LAYOUTS, jsonBytes);
+        const resp = await this.sendCommand(buf, 5000);
+        return resp !== null && resp.status === 0;
+    }
+
     public async fetchLayoutSingle(id: number): Promise<{ id: number; name: string; keys: number[][] } | null> {
         if (!this.isConnected()) return null;
         const requestJson = JSON.stringify({ id });

@@ -154,7 +154,10 @@ Stores up to **16 keyboard layers** (0–15). Each layer is a `cfg_layer_t` — 
 
 **On USB SET**: `layout_update_cb()` reloads the affected layer into the PSRAM cache and updates the DRAM mirrors if applicable.
 
-**Storage:** Each layer is stored as an individual NVS blob under `ly_<id>` in namespace `cfg_lay`. A `cfg_layout_index_t` struct (16-bit bitmask + names array) under `lay_idx` tracks which IDs exist and their names.
+### 5. Layout Dynamic Sub-System (`cfg_layouts.c`)
+Manages multiple custom keyboard layouts up to a hard limit (`CFG_LAYOUT_MAX_COUNT`, typically 16).
+
+**Storage:** Each layer is stored as an individual NVS blob under `ly_<id>` in namespace `cfg_lay`. A `cfg_layout_index_t` struct (16-bit bitmask + names array + order array) under `lay_idx` tracks which IDs exist, their names, and their precedence order.
 
 ---
 

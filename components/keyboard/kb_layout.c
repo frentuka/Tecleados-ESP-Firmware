@@ -56,9 +56,19 @@ uint16_t kb_layout_get_action_code(uint8_t row, uint8_t col, uint16_t layer_mask
         sys.transparent_stack_fallback = false;
     }
 
+    const cfg_layout_index_t *idx = cfg_layout_get_index();
+
     if (!sys.transparent_stack_fallback) {
         // Direct to base logic
-        uint8_t top_layer = layer_mask ? 31 - __builtin_clz((unsigned)layer_mask) : 0;
+        uint8_t top_layer = 0;
+        for (int i = CFG_LAYOUT_MAX_COUNT - 1; i >= 0; i--) {
+            uint8_t id = idx->order[i];
+            if (id != 0xFF && (layer_mask & (1 << id))) {
+                top_layer = id;
+                break;
+            }
+        }
+        
         uint16_t kc = cfg_layout_get_action_code(row, col, top_layer);
         
         if (kc == KB_KEY_TRANSPARENT && top_layer != 0) {
@@ -68,14 +78,14 @@ uint16_t kb_layout_get_action_code(uint8_t row, uint8_t col, uint16_t layer_mask
     }
 
     // Stack fall-through
-    uint16_t valid_mask = layer_mask;
-    while (valid_mask) {
-        uint8_t top_layer = 31 - __builtin_clz((unsigned)valid_mask);
-        uint16_t kc = cfg_layout_get_action_code(row, col, top_layer);
-        if (kc != KB_KEY_TRANSPARENT) {
-            return kc;
+    for (int i = CFG_LAYOUT_MAX_COUNT - 1; i >= 0; i--) {
+        uint8_t id = idx->order[i];
+        if (id != 0xFF && (layer_mask & (1 << id))) {
+            uint16_t kc = cfg_layout_get_action_code(row, col, id);
+            if (kc != KB_KEY_TRANSPARENT) {
+                return kc;
+            }
         }
-        valid_mask &= ~(1u << top_layer);
     }
     
     // Always fall back to Base

@@ -220,7 +220,32 @@ esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
                         out_payload, out_payload_max, status_size,
                         &status, &actual_payload_len);
 
-  } else if (hdr.key_id == CFG_KEY_LAYOUT_LIMITS && hdr.cmd == CFG_CMD_GET) {
+  } else if (hdr.key_id == CFG_KEY_LAYOUTS && hdr.cmd == CFG_CMD_SET) {
+    cJSON *req = parse_json_from_bytes(data_in, data_in_len);
+    status = ESP_FAIL;
+    if (req) {
+      cJSON *order_arr = cJSON_GetObjectItem(req, "order");
+      if (cJSON_IsArray(order_arr)) {
+        int count = cJSON_GetArraySize(order_arr);
+        uint8_t *new_order = malloc(count);
+        if (new_order) {
+          for (int i = 0; i < count; i++) {
+            cJSON *item = cJSON_GetArrayItem(order_arr, i);
+            if (cJSON_IsNumber(item)) {
+                new_order[i] = (uint8_t)item->valueint;
+            } else {
+                new_order[i] = 0xFF;
+            }
+          }
+          status = cfg_layout_reorder(new_order, count);
+          free(new_order);
+        } else {
+          status = ESP_ERR_NO_MEM;
+        }
+      }
+      cJSON_Delete(req);
+    }
+    actual_payload_len = 0;  } else if (hdr.key_id == CFG_KEY_LAYOUT_LIMITS && hdr.cmd == CFG_CMD_GET) {
     write_json_response(layouts_serialize_limits(),
                         out_payload, out_payload_max, status_size,
                         &status, &actual_payload_len);
