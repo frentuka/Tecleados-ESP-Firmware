@@ -1432,12 +1432,12 @@ Since there is only one `rx_buf` (21.5 KB) and `tx_buf` for blast transfers, con
 
 ### Documentation Updates (all phases)
 
-| File | Action |
-|------|--------|
-| `universe/modules/BLE_MODULE.md` | Update with COMM service documentation |
-| `universe/modules/USB_MODULE.md` | Update with transport abstraction documentation |
-| `universe/modules/CONFIGURATOR.md` | Update with dual-transport support |
-| `COMM_PROTOCOL.md` | Add BLE transport section |
-| `components/ble_module/BLE_MODULE.md` | Update local module docs |
-| `components/usb_module/USB_MODULE.md` | Update local module docs |
-| `components/comm_module/COMM_MODULE.md` | NEW — Document the new comm_module |
+| File                                    | Action                                          |
+| -----------------------------------------| -------------------------------------------------|
+| `universe/modules/BLE_MODULE.md`        | Update with COMM service documentation          |
+| `universe/modules/USB_MODULE.md`        | Update with transport abstraction documentation |
+| `universe/modules/CONFIGURATOR.md`      | Update with dual-transport support              |
+| `COMM_PROTOCOL.md`                      | Add BLE transport section                       |
+| `components/ble_module/BLE_MODULE.md`   | Update local module docs                        |
+| `components/usb_module/USB_MODULE.md`   | Update local module docs                        |
+| `components/comm_module/COMM_MODULE.md` | NEW — Document the new comm_module              |
