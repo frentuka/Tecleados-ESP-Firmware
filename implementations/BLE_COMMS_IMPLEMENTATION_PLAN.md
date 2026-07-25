@@ -185,10 +185,12 @@ Char 3:     COMM MTU (Read)
 However, to support variable packet lengths (see Decision 4) gracefully, the monolithic `usb_packet_msg_t` struct will be decomposed. Instead of a hardcoded 63-byte struct with padding logic, an incoming packet of length `N` will be logically and physically divided into three parts:
 
 1. **Header**: Defined as `comm_packet_header_t` (4 bytes: `flags`, `remaining_packets`, `payload_len`), located at `(0 .. sizeof(Header) - 1)`.
-2. **Payload**: Located at `(sizeof(Header) .. N - 2)`.
-3. **CRC**: Located at the end of the packet `N - 1`.
+2. **Payload**: Located at `(sizeof(Header) .. sizeof(Header) + payload_len - 1)`.
+3. **CRC**: Located immediately after the payload at index `sizeof(comm_packet_header_t) + header->payload_len`.
 
-This means the minimum theoretical packet size becomes `sizeof(comm_packet_header_t) + 0 + 1` (which is 5 bytes). `comm_dispatch.c` and `comm_crc.c` will treat incoming data as a raw `uint8_t *` array of length `N`, cast the first bytes to `comm_packet_header_t`, validate the CRC at `N - 1`, and access the payload directly. This makes dynamic MTU sizing fundamentally simpler. The configurator's `HIDTransport.ts` protocol logic can be reused with only the physical I/O layer swapped.
+This means the minimum theoretical packet size becomes `sizeof(comm_packet_header_t) + 0 + 1` (which is 5 bytes). `comm_dispatch.c` and `comm_crc.c` will treat incoming data as a raw `uint8_t *` array of physical transport length `N`. Because transports like USB rigidly pad packets with zeroes up to 63 bytes, the protocol engine **must not** look at `N - 1` for the CRC. 
+
+Instead, it will cast the first bytes to `comm_packet_header_t`, determine the expected logical length (`sizeof(header) + payload_len + 1`), verify that the physical length `N` is sufficient (`if (N < expected_logical_length) return error;`), validate the CRC at the logical end, and access the payload. Any padding bytes provided by the transport after the CRC are simply ignored. This makes dynamic MTU sizing fundamentally simpler. The configurator's `HIDTransport.ts` protocol logic can be reused with only the physical I/O layer swapped.
 
 ### Decision 4: Variable Packet Sizing (MTU Independence)
 
@@ -199,7 +201,7 @@ This means the minimum theoretical packet size becomes `sizeof(comm_packet_heade
 - `COMM_REPORT_SIZE` (63) becomes `COMM_MAX_PACKET_SIZE` (63).
 - Each transport defines its `max_packet_size`. USB always returns 63. BLE returns `min(63, ble_att_mtu(conn) - 3)`.
 - The `comm_tx` task dynamically chunks large payloads based on the target transport's `max_packet_size` (Payload per packet = max_packet_size - 5).
-- The configurator reads a new `COMM_MTU` GATT characteristic upon connection to discover the negotiated size and chunks its outbound Web Bluetooth writes accordingly.
+- To avoid race conditions with asynchronous MTU negotiation, the `COMM_MTU` characteristic supports `READ` and `NOTIFY`. The firmware pushes a notification when `BLE_GAP_EVENT_MTU` completes. The configurator subscribes to notifications and reads the initial value to determine the negotiated size, chunking its outbound Web Bluetooth writes accordingly.
 
 This allows the protocol to seamlessly scale down to 20-byte packets (15 bytes of payload) on legacy BLE connections, while running at 63 bytes on USB and modern BLE connections, with zero application-layer fragmentation hacks.
 
@@ -386,7 +388,7 @@ This is the most critical header — it defines the entire protocol vocabulary.
 | `usb_packet_msg_t` | `comm_packet_header_t` | Decomposed from a 63-byte buffer to just the 4-byte header |
 | `usb_msg_module_t` | `comm_module_id_t` | The module ID enum |
 | `USB_MODULE_COUNT` | `COMM_MODULE_COUNT` | End sentinel for the enum |
-| `usb_data_callback_t` | `comm_data_callback_t` | The callback function pointer typedef |
+| `usb_data_callback_t` | `comm_data_callback_t` | The callback function pointer typedef. **Must be updated to accept `comm_transport_t source` as its first parameter.** |
 
 **Additions to `comm_defs.h`:**
 
@@ -459,17 +461,23 @@ const comm_transport_ops_t *comm_transport_get(comm_transport_t id);
 void comm_transport_receive_packet(comm_transport_t source,
                                    const uint8_t *packet, uint16_t len);
 
-/** Get the current reply-target transport. This returns a static 
- *  variable set by the processing task, ensuring thread safety when 
- *  comm_send_payload() is called synchronously from a module callback. */
-comm_transport_t comm_transport_get_reply_target(void);
+// Note: comm_transport_get_reply_target is completely removed.
+// comm_send_payload now requires explicit targeting to eliminate global state.
 ```
 
 **`comm_transport.c`:**
 
 - Stores `comm_transport_ops_t` in a static array indexed by `comm_transport_t`
-- `comm_transport_receive_packet()` creates a `comm_queue_item_t` (defined in `comm_dispatch.h`) containing the `source` transport and the raw packet, then enqueues it into `comm_dispatch`'s processing queue.
-- (The global `s_reply_transport` is removed to prevent race conditions; the reply target is tracked per-packet in the queue).
+- `comm_transport_receive_packet()` creates a `comm_queue_item_t` (defined in `comm_dispatch.h`) by value, guaranteeing safe memory boundaries across tasks:
+  ```c
+  typedef struct {
+      comm_transport_t source;
+      uint16_t len;
+      uint8_t data[COMM_MAX_PACKET_SIZE]; 
+  } comm_queue_item_t;
+  ```
+  It then enqueues this struct into `comm_dispatch`'s processing queue.
+- No global `s_reply_transport` state is maintained. Callbacks are completely stateless.
 
 ---
 
@@ -514,7 +522,7 @@ bool comm_send_single_packet(comm_transport_t target, uint8_t *packet, uint16_t 
 **What moves:**
 - `usb_processing_queue` → `s_comm_processing_queue` (Now holds `comm_queue_item_t` instead of raw packets)
 - `process_incoming_packet()` — The flag router (RX vs TX, blast reconcile, etc.)
-- `usb_processing_task()` → `comm_processing_task()` (Now sets `s_current_reply_target` from the dequeued item before processing)
+- `usb_processing_task()` → `comm_processing_task()` (Extracts the `source` transport from the dequeued `comm_queue_item_t` and passes it explicitly into the callback router)
 - `timeouts_task()` → `comm_timeouts_task()`
 - `s_module_callbacks[]` array, `register_callback()`, `execute_callback()`
 - `usb_callbacks_init()` → `comm_dispatch_init()` — creates the queue and spawns both tasks. (Also, move the misplaced `#include <freertos/...>` directives from inside the function body to the top of the file).
@@ -578,9 +586,10 @@ void comm_init(void);
 /** Register a module callback for incoming COMM data. */
 void comm_register_callback(comm_module_id_t module, comm_data_callback_t cb);
 
-/** Send a payload to the configurator via the current reply-target transport.
- *  This is the primary API for module callbacks to respond to requests. */
-bool comm_send_payload(const uint8_t *payload, uint16_t payload_len);
+/** Send a payload to the configurator via a specific transport.
+ *  This is the primary API for module callbacks to respond to requests.
+ *  Callbacks receive the 'source' transport and must pass it back here as the 'target'. */
+bool comm_send_payload(comm_transport_t target, const uint8_t *payload, uint16_t payload_len);
 ```
 
 ---
@@ -884,11 +893,11 @@ static const ble_uuid128_t comm_mtu_uuid = BLE_UUID128_INIT(
 |---------------|-----------|------------|----------|
 | COMM RX | Client → Device | WRITE, WRITE_NO_RSP | Encrypted |
 | COMM TX | Device → Client | READ, NOTIFY | Encrypted |
-| COMM MTU | Device → Client | READ | Encrypted |
+| COMM MTU | Device → Client | READ, NOTIFY | Encrypted |
 
 The RX access callback receives written data and passes it to `comm_channel_receive_packet(COMM_TRANSPORT_BLE, ...)`.
 
-The MTU read access callback evaluates the current connection and returns `ble_comm_get_max_packet_size()`.
+The MTU read access callback returns `ble_comm_get_max_packet_size()`. When `blemod.c` processes a `BLE_GAP_EVENT_MTU` event, it must trigger the transport adapter to notify subscribed clients of the new MTU value via this characteristic.
 
 The TX characteristic stores the latest outgoing packet. When the firmware needs to send data, it calls `ble_gatts_notify_custom()` on the TX handle.
 
@@ -967,23 +976,23 @@ static bool ble_comm_send_packet(const uint8_t *packet, uint16_t len) {
     if (s_comm_conn_handle == BLE_HS_CONN_HANDLE_NONE) return false;
     if (!s_comm_subscribed) return false;
 
-    // To prevent COMM from starving HID during blast TX, ensure we have
-    // at least 10 free mbufs (about half the pool) before allocating.
-    // If we're below this threshold, or if allocation fails, wait and retry.
+    // To prevent COMM from starving HID during blast TX, attempt allocation
+    // and wait/retry if the mbuf pool is exhausted.
     uint32_t wait_timeout_ticks = pdMS_TO_TICKS(250);
     if (wait_timeout_ticks == 0) wait_timeout_ticks = 1;
     TickType_t start_tick = xTaskGetTickCount();
 
-    while (os_msys_num_free() < 10) {
+    struct os_mbuf *om = NULL;
+    while (om == NULL) {
+        om = ble_hs_mbuf_from_flat(packet, len);
+        if (om) break;
+        
         if (xTaskGetTickCount() - start_tick > wait_timeout_ticks) {
             ESP_LOGW("BLE_COMM", "mbuf pool starved, timeout");
             return false;
         }
-        vTaskDelay(pdMS_TO_TICKS(5));
+        vTaskDelay(pdMS_TO_TICKS(5)); // Safe to block here (called from comm_tx task, not NimBLE host)
     }
-
-    struct os_mbuf *om = ble_hs_mbuf_from_flat(packet, len);
-    if (!om) return false;
 
     // Note: ble_gatts_notify_custom inherently consumes the mbuf regardless
     // of success or failure. Do NOT call os_mbuf_free_chain() here to prevent double-free corruption.
@@ -1098,16 +1107,21 @@ export class BLETransport implements ITransport {
         this.rxChar = await service.getCharacteristic(COMM_RX_CHAR_UUID);
         this.txChar = await service.getCharacteristic(COMM_TX_CHAR_UUID);
 
-        // Read the negotiated max packet size
-        const mtuChar = await service.getCharacteristic(COMM_MTU_CHAR_UUID);
-        const mtuVal = await mtuChar.readValue();
-        const maxPacketSize = mtuVal.getUint8(0);
-        this.protocol.setMaxPacketSize(maxPacketSize);
-
         // Subscribe to notifications (TX: device → configurator)
         await this.txChar.startNotifications();
-        this.txChar.addEventListener('characteristicvaluechanged',
-            this.onNotification.bind(this));
+        this.txChar.addEventListener('characteristicvaluechanged', this.onNotification.bind(this));
+
+        // Subscribe to MTU updates (Handle async BLE_GAP_EVENT_MTU race condition)
+        const mtuChar = await service.getCharacteristic(COMM_MTU_CHAR_UUID);
+        await mtuChar.startNotifications();
+        mtuChar.addEventListener('characteristicvaluechanged', (event) => {
+            const val = (event.target as BluetoothRemoteGATTCharacteristic).value!;
+            this.protocol.setMaxPacketSize(val.getUint8(0));
+        });
+        
+        // Read the initial MTU *after* subscribing to guarantee no updates are missed
+        const mtuVal = await mtuChar.readValue();
+        this.protocol.setMaxPacketSize(mtuVal.getUint8(0));
     }
 
     async sendPacket(data: Uint8Array): Promise<void> {
@@ -1305,12 +1319,12 @@ Ensure the BLE COMM channel works correctly in split keyboard configurations.
 | `usb_processing_queue` | FreeRTOS queue (thread-safe) | None — both USB and BLE enqueue here |
 | TX buffer/queue | FreeRTOS queue + semaphore | Add per-transport TX state (see below) |
 | Module callbacks array | Written once at init, read-only after | None |
-| `s_reply_transport` | Single-threaded (processing task) | Simple static variable inside `comm_dispatch.c` |
+| `s_reply_transport` | N/A | Removed completely. Target is explicitly passed down the call chain |
 | Blast RX State | None (assumes one active transport) | Reject incoming `FIRST` packets from alternate transport if blast is active |
 
 **Per-transport TX state:** The current TX system uses a single set of buffers (`tx_buf`, blast state, etc.).
 
-**Solution:** The TX queue already serializes sends. `comm_send_payload()` reads the static `s_current_reply_target` and injects it into the `tx_queue_item_t`. The TX task dequeues one-at-a-time, reading the target transport directly from the item.
+**Solution:** The TX queue already serializes sends. `comm_send_payload(target, ...)` takes the `target` parameter passed by the module and injects it into the `tx_queue_item_t`. The TX task dequeues one-at-a-time, reading the target transport directly from the item.
 **Note on Broadcasting:** Unsolicited broadcasting is explicitly removed. The configurator will request updates (e.g., polling) and those requests will be fulfilled. No unsolicited data will ever be sent, which vastly simplifies the queueing architecture.
 
 **Enhancement:** Extend `tx_queue_item_t` to include the target transport:
@@ -1323,7 +1337,7 @@ typedef struct {
 } tx_queue_item_t;
 ```
 
-`comm_send_payload(payload, len)` must internally call `comm_transport_get_reply_target()` and assign it to the newly minted `tx_queue_item_t.target` before pushing it to the FreeRTOS queue.
+`comm_send_payload(target, payload, len)` receives the `target` directly from the caller and assigns it to the newly minted `tx_queue_item_t.target` before pushing it to the FreeRTOS queue.
 
 ### Memory Budget
 
