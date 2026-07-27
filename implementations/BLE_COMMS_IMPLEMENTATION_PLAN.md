@@ -4,6 +4,25 @@
 
 ---
 
+## Table of Contents
+
+- [Step-by-Step Implementation Task List](#step-by-step-implementation-task-list)
+- [Situation Analysis](#situation-analysis)
+- [Architectural Strategy](#architectural-strategy)
+- [Terminology](#terminology)
+- [Key Design Decisions](#key-design-decisions)
+- [Phased Rollout Summary](#phased-rollout-summary)
+- [Phase 0 — `comm_module` Extraction](#phase-0--comm_module-extraction)
+- [Phase 1 — BLE COMM GATT Service](#phase-1--ble-comm-gatt-service)
+- [Phase 2 — Configurator Dual-Transport Support](#phase-2--configurator-dual-transport-support)
+- [Phase 3 — Split Keyboard BLE COMM Verification](#phase-3--split-keyboard-ble-comm-verification)
+- [Cross-Cutting Concerns](#cross-cutting-concerns)
+- [Platform Compatibility Matrix](#platform-compatibility-matrix)
+- [Risk Matrix](#risk-matrix)
+- [File Change Manifest](#file-change-manifest)
+
+---
+
 ## Step-by-Step Implementation Task List
 
 ### Phase 0: `comm_module` Extraction
@@ -11,14 +30,15 @@
 - [ ] **Step 2:** Migrate `usb_defs.h` to `comm_defs.h` (rename types and add protocol sizing constants).
 - [ ] **Step 3:** Migrate `usb_crc.c/h` to `comm_crc.c/h` (update for dynamic length parameter).
 - [ ] **Step 4:** Create `comm_transport.h` and `comm_transport.c` for the abstraction interface.
-- [ ] **Step 5:** Migrate `usb_send.c/h` to `comm_send.c/h` (remove USB hard dependency).
-- [ ] **Step 6:** Migrate `usb_callbacks.c/h` to `comm_dispatch.c/h` (routing, queue, task creation).
-- [ ] **Step 7:** Migrate `usb_callbacks_rx/tx.c` to `comm_rx/tx.c` and update includes.
-- [ ] **Step 8:** Create public API header `comm_module.h`.
-- [ ] **Step 9:** Update `usb_module` (`usbmod.c`, `CMakeLists.txt`, `usb_descriptors.h`) to strip old comm logic and register as a transport.
-- [ ] **Step 10:** Update all consumers (`cfgmod.c`, `statusmod.c`, `splitmod.c`, `kb_manager.c`, etc.) to use `comm_module.h`.
-- [ ] **Step 11:** Update `main.c` init order to call `comm_init()` before `usb_init()`.
-- [ ] **Phase 0 Verification:** Clean build, test USB COMM, Blast mode, and split commands.
+- [ ] **Step 5:** Create `comm_pool.h` and `comm_pool.c` to implement the shared memory pool and dynamic buffer lifecycle management.
+- [ ] **Step 6:** Migrate `usb_send.c/h` to `comm_send.c/h` (remove USB hard dependency).
+- [ ] **Step 7:** Migrate `usb_callbacks.c/h` to `comm_dispatch.c/h` (routing, queue, task creation, transport disconnect cleanup hooks).
+- [ ] **Step 8:** Migrate `usb_callbacks_rx/tx.c` to `comm_rx/tx.c`, replacing static 21.5 KB buffers with dynamic session allocations from `comm_pool`.
+- [ ] **Step 9:** Create public API header `comm_module.h`.
+- [ ] **Step 10:** Update `usb_module` (`usbmod.c`, `CMakeLists.txt`, `usb_descriptors.h`) to strip old comm logic and register as a transport.
+- [ ] **Step 11:** Update all consumers (`cfgmod.c`, `statusmod.c`, `splitmod.c`, `kb_manager.c`, etc.) to use `comm_module.h`.
+- [ ] **Step 12:** Update `main.c` init order to call `comm_init()` before `usb_init()`.
+- [ ] **Phase 0 Verification:** Clean build, test USB COMM, dynamic buffer allocation/freeing, Blast mode, and split commands without memory leaks.
 
 ### Phase 1: BLE COMM GATT Service
 - [ ] **Step 1:** Create `components/ble_module/ble_comm_service.c` and `.h` with custom UUIDs.
@@ -40,25 +60,6 @@
 - [ ] **Step 2:** Perform role swap and ensure new master's BLE COMM is functional.
 - [ ] **Step 3:** Update `universe/` documentation, `COMM_PROTOCOL.md`, and local module `.md` files.
 
----
-
-## Table of Contents
-
-- [Situation Analysis](#situation-analysis)
-- [Architectural Strategy](#architectural-strategy)
-- [Terminology](#terminology)
-- [Key Design Decisions](#key-design-decisions)
-- [Phased Rollout Summary](#phased-rollout-summary)
-- [Phase 0 — `comm_module` Extraction](#phase-0--comm_module-extraction)
-- [Phase 1 — BLE COMM GATT Service](#phase-1--ble-comm-gatt-service)
-- [Phase 2 — Configurator Dual-Transport Support](#phase-2--configurator-dual-transport-support)
-- [Phase 3 — Split Keyboard BLE COMM Verification](#phase-3--split-keyboard-ble-comm-verification)
-- [Cross-Cutting Concerns](#cross-cutting-concerns)
-- [Platform Compatibility Matrix](#platform-compatibility-matrix)
-- [Risk Matrix](#risk-matrix)
-- [File Change Manifest](#file-change-manifest)
-
----
 
 ## Situation Analysis
 
@@ -270,6 +271,33 @@ The BLE COMM service **requires encryption** (same as the existing HID service).
 
 **No proxy logic needed for BLE COMM.** This is simpler than USB, where the slave must proxy BLE commands. The BLE COMM is inherently on the master, which is the BLE authority.
 
+### Decision 8: Variable Buffers & Shared Memory Pool Architecture (`comm_pool`)
+
+**Challenge:**
+In the legacy USB-only implementation, `usb_callbacks_rx.c` and `usb_callbacks_tx.c` each allocated a static 21,500-byte BSS array (`rx_buf` and `tx_buf`). This locked up **43 KB of continuous SRAM permanently**, even when the keyboard was idle and disconnected from any configurator. Furthermore, having a single static buffer prevented concurrent communication across multiple transports (e.g., simultaneous USB and BLE configuration sessions or concurrent blast transfers).
+
+**Solution:**
+Replace static buffers with an **Exhaustive Shared Memory Pool (`comm_pool`) and Dynamic Per-Session Buffer Allocation**, governed by the following architectural specifications:
+
+1. **Heap-Backed Budget Tracker Strategy (`comm_pool.c/.h`):**
+   - **Why Heap-Backed over Static Arena:** When any communication transfer is initiated (whether a layout blast or single-packet exchange), the protocol header of the initial (`FIRST`) packet explicitly specifies `msg.remaining_packets`. Consequently, the exact total buffer requirement is known instantaneously upon session initiation: $\text{total\_required\_size} = (\text{remaining\_packets} + 1) \times \text{max\_payload\_per\_packet}$.
+   - Leveraging this deterministic sizing, `comm_pool_alloc(size)` dynamically allocates session buffers from internal RAM via `heap_caps_malloc(size, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL)` while atomically tracking total active allocations in `s_pool_used_bytes`.
+   - **Zero Idle Overhead:** When no configurator is connected or actively transferring data, `s_pool_used_bytes == 0` and **0 bytes of RAM are consumed**, releasing up to 32 KB of internal SRAM for general keyboard operations, complex macro processing, and NimBLE stack buffers.
+
+2. **Memory Pool Ceiling (`CONFIG_COMM_POOL_SIZE`):**
+   - The shared budget ceiling is defined by `CONFIG_COMM_POOL_SIZE` in `menuconfig` (defaulting to **32,768 bytes / 32 KB**). This direct Kconfig integration allows custom firmware builds to easily tune pool capacity based on available hardware RAM without adding unnecessary Kconfig boilerplate.
+   - This 32 KB ceiling provides an immediate **~11 KB net savings of continuous internal RAM** compared to the legacy 43 KB static arrays, while allowing any combination of dynamic buffer allocations lower than or equal to 32 KB (e.g., two concurrent 16 KB sessions across USB and BLE, or one massive 24 KB full-layout transfer on a single transport).
+
+3. **Non-Preemptive Concurrent Blasts & Out-of-Memory (OOM) Protection:**
+   - When multiple communication channels operate concurrently, each transport channel maintains its own independent session struct and dynamically allocated buffer pointer.
+   - **First-Come, First-Served Resolution:** If Channel A (e.g., USB) initiates a transfer requiring 24 KB, and Channel B (e.g., BLE) subsequently attempts to initiate a transfer requiring 12 KB (exceeding the remaining 8 KB capacity of the 32 KB pool), `comm_pool_alloc(12288)` returns `NULL`.
+   - To preserve ongoing operations without preemption, Channel B's incoming `FIRST` packet is immediately cleanly rejected with an explicit error response (`PAYLOAD_FLAG_ERR` with an OOM reason code), leaving Channel A's active transfer completely undisturbed. The configurator client on Channel B detects the busy/OOM response and automatically retries after a brief delay.
+
+4. **Guaranteed Buffer Release & Unified Watchdog Timeout:**
+   - As soon as communication concludes—whether the `LAST` packet is received and executed, an error occurs, or an outgoing transfer completes—the buffer is immediately returned to the pool (`comm_pool_free()`) and the session pointer is nulled out.
+   - **Unified Inactivity Timeout Constant (`COMM_TIMEOUT_MS`):** To eliminate timing discrepancies and simplify configuration across all channels, the legacy individual timeouts (`RX_TIMEOUT_MS` in `usb_callbacks_rx.h` and `TX_TIMEOUT_MS` in `usb_callbacks_tx.h`) are unified into a single global protocol constant: `#define COMM_TIMEOUT_MS 1000` (1,000 ms / 1 second) defined in `comm_defs.h`.
+   - **Watchdog Inactivity Safeguard (`comm_timeouts_task`):** Every active session buffer records an atomic timestamp on packet arrival. If an over-the-air BLE link drops, a configurator client crashes, or a transfer stalls mid-stream for $> \text{COMM\_TIMEOUT\_MS}$ (1000 ms), the watchdog task automatically aborts the stale session, resets the transport state machine, and calls `comm_pool_free()`, guaranteeing 100% immunity against memory leaks.
+
 ---
 
 ## Phased Rollout Summary
@@ -327,6 +355,7 @@ The guiding principle is: **anything that doesn't need TinyUSB or NimBLE moves t
 | `usb_callbacks_rx.c` / `usb_callbacks_rx.h` | `comm_rx.c` / `comm_rx.h` | RX buffer, blast mode RX state machine, `process_rx_request()`, `erase_rx_buffer()`. Zero USB dependency |
 | `usb_callbacks_tx.c` / `usb_callbacks_tx.h` | `comm_tx.c` / `comm_tx.h` | TX buffer, blast mode TX state machine, `send_payload()`, TX queue, TX task. Zero USB dependency |
 | `usb_send.c` / `usb_send.h` | `comm_send.c` / `comm_send.h` | `build_send_single_msg_packet()` and `send_single_packet()`. Currently, `send_single_packet()` calls `tud_hid_n_report()` directly — this **hard USB dependency must be replaced** with the transport abstraction (see below) |
+| *(New Component File)* | `comm_pool.c` / `comm_pool.h` | Shared memory pool (`comm_pool`) for dynamic RX/TX session buffer allocation, replacing static 21.5 KB BSS arrays |
 
 #### Files That STAY in `usb_module`
 
@@ -353,20 +382,22 @@ components/comm_module/
 │   ├── comm_rx.h            ← RX state machine API
 │   ├── comm_tx.h            ← TX state machine API
 │   ├── comm_send.h          ← packet send abstraction
-│   └── comm_transport.h     ← transport interface (register/receive)
+│   ├── comm_transport.h     ← transport interface (register/receive)
+│   └── comm_pool.h          ← shared memory pool + dynamic buffer allocation
 ├── comm_crc.c
 ├── comm_dispatch.c
 ├── comm_rx.c
 ├── comm_tx.c
 ├── comm_send.c
-└── comm_transport.c
+├── comm_transport.c
+└── comm_pool.c
 ```
 
 **`CMakeLists.txt`:**
 ```cmake
 idf_component_register(
     SRCS "comm_crc.c" "comm_dispatch.c" "comm_rx.c" "comm_tx.c"
-         "comm_send.c" "comm_transport.c"
+         "comm_send.c" "comm_transport.c" "comm_pool.c"
     INCLUDE_DIRS "." "include" "../../components/utils"
     REQUIRES freertos esp_timer
 )
@@ -481,7 +512,47 @@ void comm_transport_receive_packet(comm_transport_t source,
 
 ---
 
-#### Step 5 — Migrate `comm_send.c` (from `usb_send.c`)
+#### Step 5 — Create `comm_pool.h/.c` (Shared Memory Pool & Dynamic Buffer Allocation)
+
+To eliminate the 43 KB static BSS RAM footprint of the legacy implementation and enable concurrent multi-channel operations, implement an exhaustive shared memory pool:
+
+**`comm_pool.h`:**
+```c
+#pragma once
+
+#include <stdbool.h>
+#include <stdint.h>
+#include <stddef.h>
+
+#ifndef CONFIG_COMM_POOL_SIZE
+#define CONFIG_COMM_POOL_SIZE 32768 // 32 KB shared memory pool ceiling (configurable via menuconfig)
+#endif
+
+/** Initialize the memory pool manager. */
+void comm_pool_init(void);
+
+/** Dynamically allocate a buffer from the shared pool. 
+ *  Returns NULL if requested size exceeds remaining available pool capacity. */
+uint8_t *comm_pool_alloc(size_t size);
+
+/** Dynamically reallocate an existing buffer in the pool to a new size. */
+uint8_t *comm_pool_realloc(uint8_t *ptr, size_t new_size);
+
+/** Free a dynamically allocated buffer back to the shared pool. */
+void comm_pool_free(uint8_t *ptr);
+
+/** Get current allocated pool usage in bytes. */
+size_t comm_pool_get_used_bytes(void);
+```
+
+**`comm_pool.c`:**
+- Implements a budget-tracked heap allocator over internal SRAM (`heap_caps_malloc(size, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL)`), maintaining an atomic counter `s_pool_used_bytes`.
+- Rejects allocation if `s_pool_used_bytes + size > CONFIG_COMM_POOL_SIZE`, preventing OOM crashes in the general system heap or starvation of Wi-Fi/BLE mbufs.
+- When all channels are idle, `s_pool_used_bytes == 0`, making the entire 32 KB available for general keyboard use.
+
+---
+
+#### Step 6 — Migrate `comm_send.c` (from `usb_send.c`)
 
 This is where the **hard USB coupling is broken.**
 
@@ -517,7 +588,7 @@ bool comm_send_single_packet(comm_transport_t target, uint8_t *packet, uint16_t 
 
 ---
 
-#### Step 6 — Migrate `comm_dispatch.c` (from `usb_callbacks.c`)
+#### Step 7 — Migrate `comm_dispatch.c` (from `usb_callbacks.c`)
 
 **What moves:**
 - `usb_processing_queue` → `s_comm_processing_queue` (Now holds `comm_queue_item_t` instead of raw packets)
@@ -552,24 +623,27 @@ void usbmod_tud_hid_set_report_cb(...);
 
 ---
 
-#### Step 7 — Migrate `comm_rx.c` and `comm_tx.c`
+#### Step 8 — Migrate `comm_rx.c` and `comm_tx.c` with Dynamic Buffer Management
 
-These move virtually unchanged — they have zero hardware dependencies.
+In addition to updating internal includes (`comm_defs.h`, `comm_send.h`, `comm_crc.h`, `comm_pool.h`), **static BSS buffers are completely replaced with dynamic per-session pool allocations**:
 
 **`comm_rx.c`** (from `usb_callbacks_rx.c`):
-- All internal includes change: `usb_defs.h` → `comm_defs.h`, `usb_send.h` → `comm_send.h`, `usb_crc.h` → `comm_crc.h`
-- Function names stay the same (they're already internal; the headers just re-export them)
-- The call to `execute_callback()` at the bottom of `process_rx_buffer()` now calls `comm_dispatch`'s version
+- **Remove static buffer:** Delete `static uint8_t rx_buf[21500];`.
+- **Session state structure:** Create `comm_rx_session_t` per transport channel containing a dynamic pointer `uint8_t *buf` (allocated via `comm_pool_alloc`), `buf_len`, `buf_capacity`, `last_activity_us`, and blast mode bitmap state.
+- **Dynamic buffer lifecycle:**
+  - When an RX transaction starts (`FIRST` packet or single packet), calculate required capacity (`(msg.remaining_packets + 1) * msg.payload_len`) and allocate `session->buf = comm_pool_alloc(required_cap)`. If `comm_pool_alloc` returns NULL (pool exhausted), respond immediately with `PAYLOAD_FLAG_ERR` (OOM) and abort without touching other active channels.
+  - When `LAST` packet arrives, assemble payload and execute callback.
+  - **Zero-leak guaranteed cleanup:** In `process_rx_buffer()` (and on any abort, CRC error, or watchdog timeout), execute `comm_pool_free(session->buf); session->buf = NULL; session->buf_len = 0;` in a guaranteed cleanup path.
 
 **`comm_tx.c`** (from `usb_callbacks_tx.c`):
-- Same include changes
-- `send_single_packet()` now comes from `comm_send.h` (which uses the transport abstraction)
-- `send_payload()` stays here — it enqueues to the TX queue. The TX task calls `send_single_packet()` which routes through the transport layer
-- `usb_tx_init()` → `comm_tx_init()`
+- **Remove static buffer:** Delete `static uint8_t tx_buf[21500];`.
+- **Dynamic TX staging:** In `comm_send_payload(target, payload, len)`, dynamically allocate `uint8_t *tx_data = comm_pool_alloc(len)` and copy the payload into it. Attach `tx_data` to `tx_queue_item_t` and push to the FreeRTOS TX queue.
+- **Queue ownership & cleanup:** Once the TX task completes transmission of the item (or upon transmission timeout/disconnect), it calls `comm_pool_free(item.data)`. If queue push fails (`xQueueSend` error), `comm_send_payload()` immediately frees the buffer to prevent memory leaks.
+- **Unified inactivity timeout:** Both `comm_rx.c` and `comm_tx.c` replace their legacy 1000 ms timeout constants with `COMM_TIMEOUT_MS` (defined in `comm_defs.h`).
 
 ---
 
-#### Step 8 — Public API Header (`comm_module.h`)
+#### Step 9 — Public API Header (`comm_module.h`)
 
 A clean, single-entry-point header that consumers include:
 
@@ -594,7 +668,7 @@ bool comm_send_payload(comm_transport_t target, const uint8_t *payload, uint16_t
 
 ---
 
-#### Step 9 — Update `usb_module` (Slim Down)
+#### Step 10 — Update `usb_module` (Slim Down)
 
 After extraction, `usb_module` contains only:
 
@@ -668,7 +742,7 @@ void usb_init() {
 
 ---
 
-#### Step 10 — Update All Consumers
+#### Step 11 — Update All Consumers
 
 Each consumer needs two changes:
 1. **Include:** `usbmod.h` → `comm_module.h` (for callback registration and `send_payload`)
@@ -692,7 +766,7 @@ Each consumer needs two changes:
 
 ---
 
-#### Step 11 — Update `main.c` Init Order
+#### Step 12 — Update `main.c` Init Order
 
 ```c
 // main/main.c
@@ -730,6 +804,7 @@ static void init_procedure(void) {
 | `usb_msg_module_t` | `comm_module_id_t` |
 | `usb_data_callback_t` | `comm_data_callback_t` |
 | `USB_MODULE_COUNT` | `COMM_MODULE_COUNT` |
+| `RX_TIMEOUT_MS` / `TX_TIMEOUT_MS` (`1000`) | `COMM_TIMEOUT_MS` (`1000`) |
 | `usb_crc_prepare_packet()` | `comm_crc_prepare_packet()` |
 | `usb_crc_verify_packet()` | `comm_crc_verify_packet()` |
 | `usbmod_register_callback()` | `comm_register_callback()` |
@@ -740,7 +815,9 @@ static void init_procedure(void) {
 | `usb_cb_timeouts_task` | `comm_timeouts_task` |
 | `send_payload()` | `comm_send_payload()` |
 | `send_single_packet()` | `comm_send_single_packet()` |
-| `build_send_single_msg_packet()` | `comm_build_send_single_packet()` |
+| `build_send_single_msg_packet()` | `comm_build_send_single_msg_packet()` |
+| `static uint8_t rx_buf[21500]` | `comm_pool_alloc(size)` / `comm_pool_free(ptr)` |
+| `static uint8_t tx_buf[21500]` | `comm_pool_alloc(size)` / `comm_pool_free(ptr)` |
 
 ---
 
@@ -792,6 +869,7 @@ static void init_procedure(void) {
 | `components/comm_module/comm_tx.c` | TX buffer, blast TX state machine, send_payload |
 | `components/comm_module/comm_send.c` | Transport-routed packet send |
 | `components/comm_module/comm_transport.c` | Transport registry, reply-target tracking |
+| `components/comm_module/comm_pool.c` | Shared memory pool implementation with budget tracking |
 
 #### Modified Files
 
@@ -1317,50 +1395,50 @@ Ensure the BLE COMM channel works correctly in split keyboard configurations.
 | Resource | Current Protection | Change Needed |
 |----------|-------------------|---------------|
 | `usb_processing_queue` | FreeRTOS queue (thread-safe) | None — both USB and BLE enqueue here |
-| TX buffer/queue | FreeRTOS queue + semaphore | Add per-transport TX state (see below) |
+| TX buffer/queue | FreeRTOS queue + semaphore | Dynamically allocate buffer from `comm_pool` per TX item |
 | Module callbacks array | Written once at init, read-only after | None |
 | `s_reply_transport` | N/A | Removed completely. Target is explicitly passed down the call chain |
-| Blast RX State | None (assumes one active transport) | Reject incoming `FIRST` packets from alternate transport if blast is active |
+| Blast RX State | None (assumes one active transport) | Each active transport maintains independent session state and dynamic pool buffer |
 
-**Per-transport TX state:** The current TX system uses a single set of buffers (`tx_buf`, blast state, etc.).
+**Dynamic Pool Allocation for TX/RX Sessions:** The legacy TX/RX system used a single monolithic set of static buffers (`tx_buf`, `rx_buf`, blast state, etc.).
 
-**Solution:** The TX queue already serializes sends. `comm_send_payload(target, ...)` takes the `target` parameter passed by the module and injects it into the `tx_queue_item_t`. The TX task dequeues one-at-a-time, reading the target transport directly from the item.
+**Solution:** By transitioning to `comm_pool`, each incoming or outgoing session dynamically allocates its own buffer from the shared 32 KB memory pool upon transfer initiation and releases it upon completion. The TX queue serializes sends. `comm_send_payload(target, ...)` allocates an outbound buffer from `comm_pool`, copies the payload, and injects the dynamic pointer and `target` into `tx_queue_item_t`. The TX task dequeues one-at-a-time, reading the target transport directly from the item, and calls `comm_pool_free()` once transmission finishes.
 **Note on Broadcasting:** Unsolicited broadcasting is explicitly removed. The configurator will request updates (e.g., polling) and those requests will be fulfilled. No unsolicited data will ever be sent, which vastly simplifies the queueing architecture.
 
 **Enhancement:** Extend `tx_queue_item_t` to include the target transport:
 
 ```c
 typedef struct {
-    uint8_t *data;
+    uint8_t *data;            // Dynamically allocated from comm_pool
     uint16_t len;
     comm_transport_t target;  // NEW: which transport to send on
 } tx_queue_item_t;
 ```
 
-`comm_send_payload(target, payload, len)` receives the `target` directly from the caller and assigns it to the newly minted `tx_queue_item_t.target` before pushing it to the FreeRTOS queue.
+`comm_send_payload(target, payload, len)` allocates `data = comm_pool_alloc(len)`, copies `payload` into `data`, and assigns `target` to the newly minted `tx_queue_item_t.target` before pushing it to the FreeRTOS queue. If `xQueueSend` fails, it immediately calls `comm_pool_free(data)` to prevent a leak.
 
-### Memory Budget
+### Memory Budget & Pool Savings (`comm_pool`)
 
-| Component | Internal SRAM | PSRAM | Notes |
-|-----------|:------------:|:-----:|-------|
-| COMM GATT service attributes | ~200 B | — | NimBLE attribute table |
-| Additional CCCDs | ~100 B | — | 3 extra CCCD entries |
-| MSYS mbufs (4 extra blocks) | ~1 KB | — | For COMM notifications |
-| `ble_comm_transport.c` state | ~20 B | — | conn_handle, flags |
-| `comm_channel.c` state | ~50 B | — | Transport registry |
-| **Total firmware** | **~1.4 KB** | **0** | Well within budget |
+| Component | Legacy Static SRAM | New Dynamic Pool SRAM | Net Impact | Notes |
+|-----------|:------------------:|:---------------------:|:----------:|-------|
+| RX Reassembly Buffer | 21,500 B | 0 B (idle) / up to 32 KB (shared) | -21.5 KB static | Allocated dynamically from `comm_pool` |
+| TX Staging Buffer | 21,500 B | 0 B (idle) / up to 32 KB (shared) | -21.5 KB static | Allocated dynamically from `comm_pool` |
+| COMM GATT Service & CCCDs | 0 B | ~300 B | +300 B | NimBLE attribute table |
+| MSYS mbufs (4 extra blocks) | 0 B | ~1,024 B | +1 KB | For COMM notifications |
+| `comm_pool` & Session State | 0 B | ~100 B | +100 B | Pool tracking counters & pointers |
+| **Total Firmware Footprint** | **43,000 B** | **~1,424 B static (+ dynamic pool)** | **-41.5 KB static SRAM** | **Enables 32 KB dynamic pool while saving 11 KB net RAM!** |
 
-The configurator-side changes have no memory impact on the firmware.
+By eliminating the hardcoded 43 KB static BSS footprint (`rx_buf` and `tx_buf`) and replacing it with a 32 KB shared memory pool (`comm_pool`), the firmware achieves a **net saving of ~11 KB of continuous internal SRAM**, even when the pool is at maximum capacity!
 
 ### Concurrent USB + BLE COMM Sessions
 
-**Supported.** Two configurator instances (one USB, one BLE) can connect simultaneously. Each request is processed sequentially through the shared `usb_processing_queue`. Responses are routed back to the correct transport via `s_current_reply_target` set by the queue.
+**Fully Supported via Shared Memory Pool.** Multiple configurator instances (e.g., USB and BLE) can connect and operate simultaneously. Each incoming packet is enqueuing into `s_comm_processing_queue` along with its source transport tag and processed sequentially by `comm_processing_task`.
 
-**Blast Mode Interference:**
-Since there is only one `rx_buf` (21.5 KB) and `tx_buf` for blast transfers, concurrent blasts from both transports must be managed carefully. Adding a secondary queue or secondary 21.5 KB buffer for concurrent blasts is rejected due to SRAM constraints (a second buffer would waste 21.5 KB of continuous SRAM for an incredibly rare edge-case of simultaneous multi-device configuration).
-**Solution:** 
-- **RX Blasts:** `comm_rx.c` must store the `active_rx_transport` when starting a blast transfer (`FIRST` flag). While `rx_blast_active()` is true, **ALL** packets (FIRST, MID, LAST, and single-packet) arriving from the alternate transport will be aggressively dropped/rejected. (If we only dropped `FIRST` packets, a stray single-packet with `LAST` flag could falsely trigger a commit and corrupt the blast). The alternate configurator will experience a timeout and automatically retry later.
-- **TX Blasts (No changes needed!):** The `comm_tx_queue` inherently serializes payloads. If a read request arrives from an alternate transport while a TX blast is ongoing, the module callback will push its response to the FreeRTOS queue. The TX task only dequeues a new item *after* the previous blast finishes. Thus, `tx_buf` is perfectly safe from overwrites, and concurrent read requests queue gracefully automatically.
+**Concurrent Blasts & Dynamic Buffer Allocation:**
+Because `comm_rx.c` and `comm_tx.c` allocate session buffers dynamically from `comm_pool` rather than relying on a single monolithic static buffer, **concurrent blast transfers across multiple transports are natively supported**, provided their combined buffer requirements do not exceed the 32 KB pool ceiling:
+- **RX Blasts:** Each active transport maintains its own independent `comm_rx_session_t` and dynamically allocated buffer pointer. For example, USB can conduct a 16 KB layout transfer while BLE simultaneously executes single-packet status queries or a secondary 12 KB transfer. Neither session interferes with the other's reassembly state or memory space.
+- **TX Blasts:** `comm_send_payload()` allocates an outbound buffer from `comm_pool` and pushes the pointer to the FreeRTOS TX queue. The TX task serializes packet transmission across target transports. Once a payload completes transmission (or times out), its buffer is immediately freed back to the pool.
+- **Out-of-Memory (OOM) Protection:** If concurrent sessions attempt to allocate more total memory than `CONFIG_COMM_POOL_SIZE` (defaulting to 32 KB), `comm_pool_alloc()` returns NULL. The requesting channel cleanly rejects the transfer by replying with `PAYLOAD_FLAG_ERR` (OOM reason code). Existing active transfers continue undisturbed without preemption, and the rejected client automatically retries once pool memory is released.
 
 **Caveat:** If both configurators try to SET the same config key simultaneously via single packets, the last write wins (no locking). This is acceptable because:
 1. It's an unlikely scenario (who has two configurators open at once?)
@@ -1372,7 +1450,7 @@ Since there is only one `rx_buf` (21.5 KB) and `tx_buf` for blast transfers, con
 | Error | USB Behavior (unchanged) | BLE Behavior (new) |
 |-------|-------------------------|---------------------|
 | CRC mismatch | Silently drop | Silently drop |
-| Transport disconnect mid-transfer | TX timeout → erase buffer | TX timeout → erase buffer + clear conn_handle |
+| Transport disconnect mid-transfer | `comm_transport_on_disconnect(USB)` sweeps & frees buffer via `comm_pool_free()` | `comm_transport_on_disconnect(BLE)` sweeps & frees buffer via `comm_pool_free()` + clears conn_handle |
 | Module callback failure | Send ACK\|ERR | Send ACK\|ERR (via notification) |
 | BLE MTU too small | N/A | Handled gracefully: dynamically chunks max packet size down |
 | BLE COMM not subscribed | N/A | `send_packet()` returns false, TX task retries or times out |
@@ -1454,4 +1532,5 @@ Since there is only one `rx_buf` (21.5 KB) and `tx_buf` for blast transfers, con
 | `COMM_PROTOCOL.md`                      | Add BLE transport section                       |
 | `components/ble_module/BLE_MODULE.md`   | Update local module docs                        |
 | `components/usb_module/USB_MODULE.md`   | Update local module docs                        |
-| `components/comm_module/COMM_MODULE.md` | NEW — Document the new comm_module              |
+| `components/comm_module/COMM_MODULE.md` | NEW — Document the new comm_module and comm_pool |
+| `components/comm_module/comm_pool.c/.h` | NEW — Shared memory pool for dynamic buffer allocation |
