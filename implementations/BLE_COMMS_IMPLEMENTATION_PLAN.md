@@ -631,14 +631,18 @@ In addition to updating internal includes (`comm_defs.h`, `comm_send.h`, `comm_c
 - **Remove static buffer:** Delete `static uint8_t rx_buf[21500];`.
 - **Session state structure:** Create `comm_rx_session_t` per transport channel containing a dynamic pointer `uint8_t *buf` (allocated via `comm_pool_alloc`), `buf_len`, `buf_capacity`, `last_activity_us`, and blast mode bitmap state.
 - **Dynamic buffer lifecycle:**
-  - When an RX transaction starts (`FIRST` packet or single packet), calculate required capacity (`(msg.remaining_packets + 1) * msg.payload_len`) and allocate `session->buf = comm_pool_alloc(required_cap)`. If `comm_pool_alloc` returns NULL (pool exhausted), respond immediately with `PAYLOAD_FLAG_ERR` (OOM) and abort without touching other active channels.
+  - When an RX transaction starts (`FIRST` packet or single packet):
+    - **Re-entry Leak Protection**: Check if `session->buf != NULL`. If so, free it first (handles the case where a client crashes and restarts a session before the watchdog fires).
+    - **Safe Capacity Calculation**: Calculate required capacity as `(msg.remaining_packets + 1) * (comm_transport_get(target)->get_max_packet_size() - 5)`. (Do **not** use `msg.payload_len` of the first packet, as it may under-allocate if the first packet is shorter than subsequent MTU-sized packets).
+    - Allocate `session->buf = comm_pool_alloc(required_cap)`. If `comm_pool_alloc` returns NULL (pool exhausted), respond immediately with `PAYLOAD_FLAG_ERR` (OOM) and abort without touching other active channels.
   - When `LAST` packet arrives, assemble payload and execute callback.
   - **Zero-leak guaranteed cleanup:** In `process_rx_buffer()` (and on any abort, CRC error, or watchdog timeout), execute `comm_pool_free(session->buf); session->buf = NULL; session->buf_len = 0;` in a guaranteed cleanup path.
 
 **`comm_tx.c`** (from `usb_callbacks_tx.c`):
 - **Remove static buffer:** Delete `static uint8_t tx_buf[21500];`.
-- **Dynamic TX staging:** In `comm_send_payload(target, payload, len)`, dynamically allocate `uint8_t *tx_data = comm_pool_alloc(len)` and copy the payload into it. Attach `tx_data` to `tx_queue_item_t` and push to the FreeRTOS TX queue.
-- **Queue ownership & cleanup:** Once the TX task completes transmission of the item (or upon transmission timeout/disconnect), it calls `comm_pool_free(item.data)`. If queue push fails (`xQueueSend` error), `comm_send_payload()` immediately frees the buffer to prevent memory leaks.
+- **Session state structure:** Create `comm_tx_session_t` per transport channel containing a dynamic pointer `uint8_t *buf`, `buf_len`, and blast mode TX state.
+- **Dynamic TX staging:** In `comm_send_payload(target, payload, len)`, dynamically allocate `uint8_t *tx_data = comm_pool_alloc(len)` and copy the payload into it. Store `tx_data` in the `tx_session->buf` and signal the TX task to begin blasting. If allocation fails, return `false`.
+- **Session ownership & cleanup:** **CRITICAL:** The TX task must **not** free the buffer immediately after transmitting the initial blast. The Blast+Reconcile protocol requires the buffer to remain available so the task can fulfill `STATUS_REQ` (reconcile) requests for missing chunks. The buffer is only freed via `comm_pool_free(tx_session->buf)` when the client explicitly ends the session (e.g., via a new incoming request that signals completion), a new outgoing payload replaces it, or the `COMM_TIMEOUT_MS` watchdog fires.
 - **Unified inactivity timeout:** Both `comm_rx.c` and `comm_tx.c` replace their legacy 1000 ms timeout constants with `COMM_TIMEOUT_MS` (defined in `comm_defs.h`).
 
 ---
@@ -1467,7 +1471,7 @@ Because `comm_rx.c` and `comm_tx.c` allocate session buffers dynamically from `c
 | iOS + Bluefy browser | BLE | Web Bluetooth (bridged) | 🆕 Phase 3 |
 | iOS + Safari | — | — | ❌ Not supported (Safari blocks Web Bluetooth) |
 | Firefox (any platform) | USB | — | ❌ Not supported (Firefox blocks WebHID and Web Bluetooth) |
-
+  
 > [!NOTE]
 > **iOS users** must install the free **Bluefy** browser (or similar WebBLE browser) from the App Store. This is well-documented in the BLE IoT community and is the standard approach for Web Bluetooth on iOS. The configurator URL works identically in Bluefy as in Chrome.
 
