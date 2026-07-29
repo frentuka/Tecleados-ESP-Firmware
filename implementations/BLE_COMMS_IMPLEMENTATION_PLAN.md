@@ -486,15 +486,7 @@ void comm_transport_receive_packet(comm_transport_t source,
 **`comm_transport.c`:**
 
 - Stores `comm_transport_ops_t` in a static array indexed by `comm_transport_t`
-- `comm_transport_receive_packet()` creates a `comm_queue_item_t` (defined in `comm_dispatch.h`) by value, guaranteeing safe memory boundaries across tasks:
-  ```c
-  typedef struct {
-      comm_transport_t source;
-      uint16_t len;
-      uint8_t data[COMM_MAX_PACKET_SIZE]; 
-  } comm_queue_item_t;
-  ```
-  It then enqueues this struct into `comm_dispatch`'s processing queue.
+- `comm_transport_receive_packet()` prepends a 1-byte `source` identifier to the raw packet and pushes the combined array into `comm_dispatch`'s central Message Buffer (`s_comm_message_buffer`). This allows the processing task to safely identify the transport source of each variable-length packet while sharing a single buffer.
 - No global `s_reply_transport` state is maintained. Callbacks are completely stateless.
 
 ---
@@ -554,8 +546,10 @@ Current `usb_send.c` has two functions:
 ```c
 // comm_send.c
 
-bool comm_send_single_packet(comm_transport_t target, uint8_t *packet, uint16_t packet_len) {
-    comm_crc_prepare_packet(packet, packet_len);
+bool comm_send_single_packet(comm_transport_t target, uint8_t *packet, uint16_t logical_len) {
+    // COMM universalizes the CRC. It computes and places the CRC at index `logical_len - 1`
+    // (which is sizeof(comm_packet_header_t) + payload_len). Transports simply send the buffer.
+    comm_crc_prepare_packet(packet, logical_len);
 
     const comm_transport_ops_t *ops = comm_transport_get(target);
 
@@ -564,7 +558,7 @@ bool comm_send_single_packet(comm_transport_t target, uint8_t *packet, uint16_t 
         return false;
     }
 
-    return ops->send_packet(packet, packet_len);
+    return ops->send_packet(packet, logical_len);
 }
 ```
 
@@ -578,12 +572,12 @@ bool comm_send_single_packet(comm_transport_t target, uint8_t *packet, uint16_t 
 #### Step 7 — Migrate `comm_dispatch.c` (from `usb_callbacks.c`)
 
 **What moves:**
-- `usb_processing_queue` → `s_comm_processing_queue` (Now holds `comm_queue_item_t` instead of raw packets)
+- `usb_processing_queue` → `s_comm_message_buffer` (Replaced the legacy queue with a FreeRTOS MessageBuffer via `xMessageBufferCreate(8192)` to support variable-length BLE packets without exploding the heap).
 - `process_incoming_packet()` — The flag router (RX vs TX, blast reconcile, etc.)
-- `usb_processing_task()` → `comm_processing_task()` (Extracts the `source` transport from the dequeued `comm_queue_item_t` and passes it explicitly into the callback router)
+- `usb_processing_task()` → `comm_processing_task()` (Uses `xMessageBufferReceive` to extract the variable-length packet, reads the 1-byte `source` tag prepended by the transport adapter, and passes it explicitly into the callback router).
 - `timeouts_task()` → `comm_timeouts_task()`
 - `s_module_callbacks[]` array, `register_callback()`, `execute_callback()`
-- `usb_callbacks_init()` → `comm_dispatch_init()` — creates the queue and spawns both tasks. (Also, move the misplaced `#include <freertos/...>` directives from inside the function body to the top of the file).
+- `usb_callbacks_init()` → `comm_dispatch_init()` — creates the MessageBuffer and spawns both tasks. (Also, move the misplaced `#include <freertos/...>` directives from inside the function body to the top of the file).
 
 **What does NOT move:**
 - `usbmod_tud_hid_set_report_cb()` — This is the TinyUSB entry point for receiving USB packets. It stays in `usb_module`, but instead of directly enqueuing to the processing queue, it calls `comm_transport_receive_packet(COMM_TRANSPORT_USB, packet, len)`.
@@ -594,10 +588,8 @@ bool comm_send_single_packet(comm_transport_t target, uint8_t *packet, uint16_t 
 1. Keyboard LED reports → `kb_state_update_leds()` (keyboard-specific, stays)
 2. COMM interface packets → strips report ID byte, validates length, then directly calls `comm_transport_receive_packet(COMM_TRANSPORT_USB, payload, payload_len)`.
 
-**Protocol Logic Migration & Parameter Chaining:**
-Because `comm_send_single_packet` now requires a `target` transport, synchronous error responses must be explicitly chained. When `process_incoming_packet()` handles a packet, it must pass the `target` transport down to `process_rx_request(target, msg)` in `comm_rx.c`. This ensures that if the RX buffer appends fail, `process_rx_request` can correctly call `comm_build_send_single_packet(target, PAYLOAD_FLAG_ABORT, ...)` rather than relying on a global variable. This explicit parameter chaining keeps the asynchronous timeout paths robust and bug-free.
-
-The CRC validation is moved entirely into `comm_dispatch.c` (`process_incoming_packet()`). This ensures the integrity check is centralized. To preserve Blast+Reconcile state synchronization, if `process_incoming_packet()` detects a CRC failure on a packet during blast mode, it must simply drop the packet silently (returning immediately). Because the packet is dropped, its bit will never be set in the RX bitmap (`comm_rx.c`), and the configurator will naturally resend it during reconciliation. This perfectly mimics the existing robust behavior found in `usb_callbacks.c`.
+**Protocol Logic Migration, Concurrency Gate & Parameter Chaining:**
+Because `comm_send_single_packet` now requires a `target` transport, synchronous error responses must be explicitly chained. When `process_incoming_packet()` handles a packet, it first validates the CRC at `sizeof(comm_packet_header_t) + payload_len`. If the CRC fails during blast mode, it drops the packet silently, allowing the Configurator to naturally resend it during reconciliation. If it succeeds, it passes the `target` transport down to `process_rx_request(target, msg)` in `comm_rx.c` or handles the single-packet synchronous callback directly.
 
 **Cleanup:** `usb_callbacks.h` will be stripped of everything except the TinyUSB-specific callbacks:
 
@@ -618,15 +610,17 @@ In addition to updating internal includes (`comm_defs.h`, `comm_send.h`, `comm_c
 - **Shared Static Buffer:** Create `static uint8_t s_shared_rx_buf[21500];`. Because `comm_session` guarantees only one transport is active at a time, this single buffer is safely shared among USB, BLE, and any future transports.
 - **Session State:** Maintain a single `comm_rx_session_t` struct (not per-transport) tracking `buf_len`, `last_activity_us`, and blast mode bitmap state.
 - **Signature Refactor:** The legacy internal state machine functions (`process_rx_request` and `process_tx_response`) passed the monolithic `usb_packet_msg_t` struct by value. Since this struct is being replaced by a 4-byte header, refactor their signatures to accept `comm_transport_t target, const uint8_t *packet, uint16_t len` (or a pointer to the new header).
-- **Concurrency Check:** In `process_rx_request(...)`, first call `comm_session_try_lock(target)`. If it returns false (another transport is active), immediately reply with `PAYLOAD_FLAG_ERR` (BUSY) by building a short error packet on the stack and calling `comm_send_single_packet`, then drop the packet without touching `s_shared_rx_buf`.
-- **Zero-leak guaranteed cleanup:** In `process_rx_buffer()` (and on any abort, CRC error, or watchdog timeout), reset the `comm_rx_session_t` state and call `comm_session_unlock()` to allow other transports to connect.
+- **RX Concurrency Check:** In `process_rx_request(...)`, check if the RX buffer is in use by another transport. If so, reply with `PAYLOAD_FLAG_ERR` (BUSY) and drop the packet without touching `s_shared_rx_buf`.
+- **Clean RX Release:** In `process_rx_buffer()` (and on any abort or CRC error), reset the `comm_rx_session_t` state to explicitly free the RX buffer, allowing other transports to send RX blasts.
 
 **`comm_tx.c`** (from `usb_callbacks_tx.c`):
 - **Shared Static Buffer:** Create `static uint8_t s_shared_tx_buf[21500];`.
 - **Session State:** Maintain a single `comm_tx_session_t` tracking `buf_len` and blast mode TX state.
 - **Staging:** In `comm_send_payload(target, payload, len)`, copy the payload into `s_shared_tx_buf`, update `tx_session` state, and signal the TX task. 
-- **Session ownership & cleanup:** **CRITICAL:** The TX task must **not** clear the session immediately after transmitting the initial blast. The Blast+Reconcile protocol requires the buffer to remain available so the task can fulfill `STATUS_REQ` (reconcile) requests for missing chunks. The session is only unlocked via `comm_session_unlock()` when the client explicitly ends the session, a new outgoing payload replaces it, or the `COMM_TIMEOUT_MS` watchdog fires.
-- **Unified inactivity timeout:** Both `comm_rx.c` and `comm_tx.c` replace their legacy 1000 ms timeout constants with `COMM_TIMEOUT_MS` (defined in `comm_defs.h`).
+- **Blocking TX Lock:** Introduce `s_tx_mutex`. Before `comm_send_payload` touches `s_shared_tx_buf`, it must acquire this Mutex (e.g., `xSemaphoreTake(s_tx_mutex, portMAX_DELAY)`). This blocking lock strictly prevents and holds BLE from sending data when USB is actively doing so (and vice versa).
+- **Session ownership & cleanup:** The TX task keeps `s_shared_tx_buf` populated. The `s_tx_mutex` is only released when the transaction is completely done, replacing the legacy 1000ms idle-timeout approach.
+
+- **Deadlock Prevention via TX ACK Bypass (CRITICAL):** Because `comm_send_payload` blocks on `s_tx_mutex` from within the `comm_processing_task`, a deadlock will occur if the processing task gets frozen while the TX lock holder (e.g., USB) needs `STATUS_REQ` packets processed to finish its blast. To prevent this, `comm_transport_receive_packet()` will intercept incoming `STATUS_REQ` packets (by checking `flags & PAYLOAD_FLAG_STATUS_REQ`). **Crucially, it must validate the CRC via `comm_crc_verify_packet(packet, len)` before intercepting.** If the CRC is valid, it routes them directly to a lightweight `s_tx_ack_queue` consumed by the `comm_tx_task`. This bypasses the blocked `comm_processing_task` entirely, allowing the active TX blast to receive its valid ACKs, finish its job, and release the `s_tx_mutex`, safely unblocking the waiting transport.
 
 ---
 
@@ -697,8 +691,8 @@ static bool usb_comm_send_packet(const uint8_t *packet, uint16_t len) {
         vTaskDelay(1);
     }
 
-    // USB HID requires exactly 63 bytes per report.
-    // The protocol engine guarantees len <= 63 for USB.
+    // The protocol engine has already placed the CRC at sizeof(comm_packet_header_t) + payload_len.
+    // The transport simply pads the remainder to USB's 63-byte constraint.
     if (len > 63) return false;
 
     if (len < 63) {
@@ -789,7 +783,7 @@ static void init_procedure(void) {
 
 | Old (USB-centric) | New (transport-agnostic) |
 |---|---|
-| `usb_packet_msg_t` | `comm_packet_msg_t` |
+| `usb_packet_msg_t` | `comm_packet_header_t` (Decomposed from 63-byte payload struct to 4-byte header) |
 | `usb_msg_module_t` | `comm_module_id_t` |
 | `usb_data_callback_t` | `comm_data_callback_t` |
 | `USB_MODULE_COUNT` | `COMM_MODULE_COUNT` |
@@ -804,7 +798,7 @@ static void init_procedure(void) {
 | `usb_cb_timeouts_task` | `comm_timeouts_task` |
 | `send_payload()` | `comm_send_payload()` |
 | `send_single_packet()` | `comm_send_single_packet()` |
-| `build_send_single_msg_packet()` | `comm_build_send_single_msg_packet()` |
+| `build_send_single_msg_packet()` | `comm_build_send_single_packet()` (Assembles raw byte arrays dynamically instead of fixed structs) |
 | `static uint8_t rx_buf[21500]` | `static uint8_t s_shared_rx_buf[21500]` protected by `comm_session` |
 | `static uint8_t tx_buf[21500]` | `static uint8_t s_shared_tx_buf[21500]` protected by `comm_session` |
 
@@ -1262,15 +1256,18 @@ export class CommProtocol {
 }
 
 > [!IMPORTANT]
-> **Dynamic CRC Index Refactor (CRITICAL):** The legacy `HIDTransport.ts` hardcoded the CRC generation and validation at index 62 (`computeCrc8(packet.slice(0, 62))`). Because the firmware packet framing changes (see [Decision 3](#decision-3-packet-format-reuse)), `CommProtocol.ts` MUST dynamically calculate the CRC position. The script must parse the `payload_len` from the 4-byte header and place/validate the CRC strictly at index `4 + payload_len`. Any trailing zeroes sent by USB padding must be ignored, otherwise all packets will fail CRC verification.
+> **Universal COMM-Side CRC (BREAKING CHANGE):** The legacy `HIDTransport.ts` hardcoded the CRC generation and validation at index 62 (`computeCrc8(packet.slice(0, 62))`). Because we are universalizing the CRC placement in `comm_module` (see [Decision 3](#decision-3-packet-format-reuse)), `CommProtocol.ts` MUST now dynamically calculate the CRC position. The script must parse the `payload_len` from the 4-byte header and strictly place/validate the CRC at index `sizeof(comm_packet_header_t) + payload_len` (which evaluates to index `4 + payload_len`). Any trailing zeroes sent by USB padding must be ignored. **This introduces a breaking change for existing USB configurations**, requiring the new `CommProtocol.ts` logic to be deployed simultaneously with Phase 0 for USB COMM to continue functioning.
 
 // HIDTransport.ts
 export class HIDTransport implements ITransport {
     private protocol: CommProtocol;
-    constructor() {
+    
+    async connect(): Promise<void> {
+        // ... requestDevice & open logic ...
+        // Protocol init must be deferred until connected to avoid null reference exceptions
         this.protocol = new CommProtocol({
-            sendRaw: (data) => this.device.sendReport(COMM_REPORT_ID, data),
-            onRawReceived: (cb) => this.device.addEventListener('inputreport', ...),
+            sendRaw: (data) => this.device!.sendReport(COMM_REPORT_ID, data),
+            onRawReceived: (cb) => this.device!.addEventListener('inputreport', (e: any) => cb(new Uint8Array(e.data.buffer))),
         });
     }
 }
@@ -1278,10 +1275,13 @@ export class HIDTransport implements ITransport {
 // BLETransport.ts
 export class BLETransport implements ITransport {
     private protocol: CommProtocol;
-    constructor() {
+    
+    async connect(): Promise<void> {
+        // ... requestDevice & connect logic (from Step 1) ...
+        // Protocol init must be deferred until connected to avoid null reference exceptions
         this.protocol = new CommProtocol({
-            sendRaw: (data) => this.rxChar.writeValueWithoutResponse(data),
-            onRawReceived: (cb) => this.txChar.addEventListener('characteristicvaluechanged', ...),
+            sendRaw: (data) => this.rxChar!.writeValueWithoutResponse(data),
+            onRawReceived: (cb) => this.txChar!.addEventListener('characteristicvaluechanged', (e: any) => cb(new Uint8Array(e.target.value.buffer))),
         });
     }
 }
@@ -1394,7 +1394,7 @@ Ensure the BLE COMM channel works correctly in split keyboard configurations.
 
 | Resource | Current Protection | Change Needed |
 |----------|-------------------|---------------|
-| `usb_processing_queue` | FreeRTOS queue (thread-safe) | None — both USB and BLE enqueue here |
+| `s_comm_message_buffer` | FreeRTOS MessageBuffer (thread-safe) | None — both USB and BLE push data here via transport adapter |
 | TX buffer/queue | FreeRTOS queue + semaphore | Shared static buffer protected by Mutex |
 | Module callbacks array | Written once at init, read-only after | None |
 | `s_reply_transport` | N/A | Removed completely. Target is explicitly passed down the call chain |
@@ -1402,7 +1402,11 @@ Ensure the BLE COMM channel works correctly in split keyboard configurations.
 
 **Mutex Protection for TX/RX Sessions:** The legacy TX/RX system used a single monolithic set of static buffers (`tx_buf`, `rx_buf`, blast state, etc.) that was hardcoded to USB.
 
-**Solution:** By transitioning to `comm_session`, the firmwares single shared set of static buffers is protected by a global mutex. When a session initiates, it locks the channel. `comm_send_payload(target, ...)` copies the payload into the global `s_shared_tx_buf`, and injects the `target` into `tx_queue_item_t`. The TX task dequeues one-at-a-time, reading the target transport directly from the item. The session is unlocked upon completion or timeout.
+**Solution:** By transitioning to `comm_session`, the firmware's single shared set of static buffers is protected. Note that there are TWO distinct locks at play here to ensure safety:
+1. **The Logical Session Lock (`comm_session`):** A global mutex held for the entire duration of a multi-packet blast transaction (spanning both RX and TX) to strictly lock out other transports.
+2. **The Synchronization Mutex (`s_tx_mutex`):** A short-lived primitive used strictly to block `comm_send_payload` while the asynchronous TX task drains the staging buffer into the hardware. 
+
+When a session initiates, it acquires the `comm_session` lock. Then, during execution, `comm_send_payload(target, ...)` acquires `s_tx_mutex`, copies the payload into the global `s_shared_tx_buf`, and injects the `target` into `tx_queue_item_t`. The TX task dequeues one-at-a-time, reading the target transport directly from the item, and releases `s_tx_mutex` when finished. The overall `comm_session` is unlocked upon full completion or timeout.
 
 **Note on Broadcasting:** Unsolicited broadcasting is explicitly removed. The configurator will request updates (e.g., polling) and those requests will be fulfilled. No unsolicited data will ever be sent, which vastly simplifies the queueing architecture.
 
