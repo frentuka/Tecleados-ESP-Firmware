@@ -449,10 +449,16 @@ This is the new abstraction that doesn't exist today. It enables plugging in USB
 #include <stdint.h>
 
 typedef enum {
+    COMM_TRANSPORT_NONE = -1,
     COMM_TRANSPORT_USB = 0,
     COMM_TRANSPORT_BLE,
     COMM_TRANSPORT_COUNT
 } comm_transport_t;
+
+/** Sentinel: broadcast to ALL connected transports.
+ *  Used by event-driven callers (e.g., unsolicited status pushes) that need
+ *  to reach every active configurator, regardless of transport. */
+#define COMM_TRANSPORT_BROADCAST ((comm_transport_t)0x7F)
 
 typedef struct {
     /** Send a single packet up to max_packet_size.
@@ -479,21 +485,31 @@ const comm_transport_ops_t *comm_transport_get(comm_transport_t id);
 void comm_transport_receive_packet(comm_transport_t source,
                                    const uint8_t *packet, uint16_t len);
 
-// Note: comm_transport_get_reply_target is completely removed.
-// comm_send_payload now requires explicit targeting to eliminate global state.
+/** Mark a transport as having an active configurator connection.
+ *  For USB: call when the first COMM packet is received (confirming a configurator is on the other end).
+ *  For BLE: call when the client subscribes to COMM TX notifications (CCCD enabled). */
+void comm_transport_set_connected(comm_transport_t id, bool connected);
+
+/** Check if a specific transport has an active configurator connection. */
+bool comm_transport_is_connected(comm_transport_t id);
+
+/** Check if ANY transport has an active configurator connection.
+ *  Used by event handlers to decide whether to bother building status pushes. */
+bool comm_transport_any_connected(void);
 ```
 
 **`comm_transport.c`:**
 
-- Stores `comm_transport_ops_t` in a static array indexed by `comm_transport_t`
+- Stores `comm_transport_ops_t` in a static array indexed by `comm_transport_t`.
+- Maintains a `static bool s_connected[COMM_TRANSPORT_COUNT]` bitmap tracking which transports have an active configurator.
 - `comm_transport_receive_packet()` prepends a 1-byte `source` identifier to the raw packet and pushes the combined array into `comm_dispatch`'s central Message Buffer (`s_comm_message_buffer`). This allows the processing task to safely identify the transport source of each variable-length packet while sharing a single buffer.
-- No global `s_reply_transport` state is maintained. Callbacks are completely stateless.
+- When `comm_send_payload()` receives `COMM_TRANSPORT_BROADCAST`, `comm_transport.c` iterates all connected transports and enqueues a separate TX item for each, allowing all active configurators to receive the update.
 
 ---
 
-#### Step 5 — Create `comm_session.h/.c` (Exclusive Transport Mutex)
+#### Step 5 — Create `comm_session.h/.c` (Blast-Only Exclusive Session Lock)
 
-To safely support multiple configurable transports without memory leaks, heap fragmentation, or concurrent data corruption, we implement a strict exclusive session manager.
+The session lock protects the shared 21.5 KB RX and TX static buffers during multi-packet blast transfers. **Single-packet operations do not acquire the session lock** — they execute synchronously within the processing task context and never touch the shared buffers.
 
 **`comm_session.h`:**
 ```c
@@ -506,21 +522,22 @@ To safely support multiple configurable transports without memory leaks, heap fr
 void comm_session_init(void);
 
 /** 
- * Attempt to acquire the COMM channel lock for a specific transport.
+ * Attempt to acquire the blast session lock for a specific transport.
+ * Called when a FIRST packet with remaining > 0 arrives (multi-packet transfer).
  * Returns true if the lock was acquired or already held by this transport.
- * Returns false if another transport currently holds the lock.
+ * Returns false if another transport currently holds the lock (blast in progress).
  */
 bool comm_session_try_lock(comm_transport_t transport);
 
 /** 
- * Release the COMM channel lock, allowing other transports to connect.
- * Usually called on timeout, disconnect, or successful completion.
+ * Release the blast session lock.
+ * Called on blast completion, timeout, disconnect, or abort.
  */
 void comm_session_unlock(void);
 
 /** 
- * Get the currently active transport holding the lock.
- * Returns COMM_TRANSPORT_NONE if idle.
+ * Get the transport currently holding the blast lock.
+ * Returns COMM_TRANSPORT_NONE if no blast is active.
  */
 comm_transport_t comm_session_get_active(void);
 ```
@@ -528,6 +545,7 @@ comm_transport_t comm_session_get_active(void);
 **`comm_session.c`:**
 - Implements a simple state manager tracking `s_active_transport` protected by a FreeRTOS Mutex.
 - When idle, `s_active_transport` is `COMM_TRANSPORT_NONE`.
+- **Blast-only scope**: The lock is only acquired when `process_rx_request()` detects a `FIRST` packet with `remaining_packets > 0` (indicating a multi-packet blast). Single-packet operations (`FIRST|LAST`) bypass the lock entirely.
 
 ---
 
@@ -602,25 +620,24 @@ void usbmod_tud_hid_set_report_cb(...);
 
 ---
 
-#### Step 8 — Migrate `comm_rx.c` and `comm_tx.c` with Mutex-Protected Shared Static Buffers
+#### Step 8 — Migrate `comm_rx.c` and `comm_tx.c` with Shared Static Buffers
 
 In addition to updating internal includes (`comm_defs.h`, `comm_send.h`, `comm_crc.h`, `comm_session.h`), **transport-specific arrays are replaced by a single global set of shared static arrays**:
 
 **`comm_rx.c`** (from `usb_callbacks_rx.c`):
-- **Shared Static Buffer:** Create `static uint8_t s_shared_rx_buf[21500];`. Because `comm_session` guarantees only one transport is active at a time, this single buffer is safely shared among USB, BLE, and any future transports.
+- **Shared Static Buffer:** Create `static uint8_t s_shared_rx_buf[21500];`. Because the blast-only `comm_session` lock guarantees only one transport runs a blast at a time, this single buffer is safely shared.
 - **Session State:** Maintain a single `comm_rx_session_t` struct (not per-transport) tracking `buf_len`, `last_activity_us`, and blast mode bitmap state.
 - **Signature Refactor:** The legacy internal state machine functions (`process_rx_request` and `process_tx_response`) passed the monolithic `usb_packet_msg_t` struct by value. Since this struct is being replaced by a 4-byte header, refactor their signatures to accept `comm_transport_t target, const uint8_t *packet, uint16_t len` (or a pointer to the new header).
-- **RX Concurrency Check:** In `process_rx_request(...)`, check if the RX buffer is in use by another transport. If so, reply with `PAYLOAD_FLAG_ERR` (BUSY) and drop the packet without touching `s_shared_rx_buf`.
-- **Clean RX Release:** In `process_rx_buffer()` (and on any abort or CRC error), reset the `comm_rx_session_t` state to explicitly free the RX buffer, allowing other transports to send RX blasts.
+- **RX Concurrency Check:** In `process_rx_request(...)`, when a `FIRST` packet with `remaining_packets > 0` arrives, attempt `comm_session_try_lock(source)`. If the lock fails (another transport is blasting), reply with `PAYLOAD_FLAG_ERR` (BUSY) and drop the packet. Single-packet operations (`FIRST|LAST`) skip the lock entirely.
+- **Clean RX Release:** In `process_rx_buffer()` (and on any abort or CRC error), reset the `comm_rx_session_t` state and call `comm_session_unlock()` to free the blast lock.
 
 **`comm_tx.c`** (from `usb_callbacks_tx.c`):
 - **Shared Static Buffer:** Create `static uint8_t s_shared_tx_buf[21500];`.
 - **Session State:** Maintain a single `comm_tx_session_t` tracking `buf_len` and blast mode TX state.
-- **Staging:** In `comm_send_payload(target, payload, len)`, copy the payload into `s_shared_tx_buf`, update `tx_session` state, and signal the TX task. 
-- **Blocking TX Lock:** Introduce `s_tx_mutex`. Before `comm_send_payload` touches `s_shared_tx_buf`, it must acquire this Mutex (e.g., `xSemaphoreTake(s_tx_mutex, portMAX_DELAY)`). This blocking lock strictly prevents and holds BLE from sending data when USB is actively doing so (and vice versa).
-- **Session ownership & cleanup:** The TX task keeps `s_shared_tx_buf` populated. The `s_tx_mutex` is only released when the transaction is completely done, replacing the legacy 1000ms idle-timeout approach.
-
-- **Deadlock Prevention via TX ACK Bypass (CRITICAL):** Because `comm_send_payload` blocks on `s_tx_mutex` from within the `comm_processing_task`, a deadlock will occur if the processing task gets frozen while the TX lock holder (e.g., USB) needs `STATUS_REQ` packets processed to finish its blast. To prevent this, `comm_transport_receive_packet()` will intercept incoming `STATUS_REQ` packets (by checking `flags & PAYLOAD_FLAG_STATUS_REQ`). **Crucially, it must validate the CRC via `comm_crc_verify_packet(packet, len)` before intercepting.** If the CRC is valid, it routes them directly to a lightweight `s_tx_ack_queue` consumed by the `comm_tx_task`. This bypasses the blocked `comm_processing_task` entirely, allowing the active TX blast to receive its valid ACKs, finish its job, and release the `s_tx_mutex`, safely unblocking the waiting transport.
+- **Non-Blocking TX (Preserving Current Pattern):** `comm_send_payload(target, payload, len)` heap-allocates a copy of the payload, packages it into a `tx_queue_item_t` with the `target` transport, and pushes it to the TX FreeRTOS queue. Returns immediately. The TX task dequeues one item at a time, copies the payload into `s_shared_tx_buf`, runs the blast/single-packet state machine, and frees the heap copy on completion. This is the same proven pattern from the legacy `send_payload()`, extended with a `target` field.
+- **No Blocking Mutex. No Deadlock.** Because `comm_send_payload` is non-blocking (enqueue + return), the `comm_processing_task` never blocks. There is no need for the TX ACK bypass mechanism. STATUS_REQ and BITMAP packets flow through the normal processing task → `process_tx_response()` path, exactly as they do today.
+- **Completion Semaphore:** The TX task still uses `tx_done_sem` (a binary semaphore). After dequeuing a TX item and running the state machine, the TX task waits on `xSemaphoreTake(tx_done_sem, pdMS_TO_TICKS(TX_TIMEOUT_MS))` for the transfer to complete or time out. `erase_tx_buffer()` signals `tx_done_sem` to unblock the task for the next queued item.
+- **Broadcast Support:** When `target == COMM_TRANSPORT_BROADCAST`, `comm_send_payload` enqueues one copy per connected transport (iterating `comm_transport_is_connected()`). For typical status pushes (~100 bytes), this means 1-2 small heap allocations, which is negligible.
 
 ---
 
@@ -634,6 +651,7 @@ A clean, single-entry-point header that consumers include:
 
 #include "comm_defs.h"
 #include "comm_transport.h"
+#include "comm_session.h"    // For transport disconnect cleanup
 
 /** Initialize the comm protocol engine (queues, tasks, timeouts). */
 void comm_init(void);
@@ -641,9 +659,19 @@ void comm_init(void);
 /** Register a module callback for incoming COMM data. */
 void comm_register_callback(comm_module_id_t module, comm_data_callback_t cb);
 
-/** Send a payload to the configurator via a specific transport.
- *  This is the primary API for module callbacks to respond to requests.
- *  Callbacks receive the 'source' transport and must pass it back here as the 'target'. */
+/** Get the transport that delivered the packet currently being processed.
+ *  Only valid inside a module callback context (called from comm_processing_task).
+ *  Returns COMM_TRANSPORT_NONE if called outside a callback. */
+comm_transport_t comm_get_current_source(void);
+
+/** Send a payload to a specific transport or broadcast to all connected transports.
+ *  
+ *  @param target  One of:
+ *    - A specific transport (e.g., COMM_TRANSPORT_USB, COMM_TRANSPORT_BLE)
+ *    - comm_get_current_source() when inside a callback (request-response pattern)
+ *    - COMM_TRANSPORT_BROADCAST for unsolicited pushes (sends to ALL connected transports)
+ *  @returns true if the payload was enqueued for at least one transport.
+ *           false if no transport was available or the queue was full. */
 bool comm_send_payload(comm_transport_t target, const uint8_t *payload, uint16_t payload_len);
 ```
 
@@ -708,9 +736,14 @@ static bool usb_comm_is_ready(void) {
     return tud_mounted() && tud_hid_n_ready(ITF_NUM_HID_COMM);
 }
 
+static uint16_t usb_comm_get_max_packet_size(void) {
+    return 63; // USB COMM is always exactly 63 bytes
+}
+
 static const comm_transport_ops_t s_usb_transport_ops = {
-    .send_packet = usb_comm_send_packet,
-    .is_ready    = usb_comm_is_ready,
+    .send_packet        = usb_comm_send_packet,
+    .is_ready           = usb_comm_is_ready,
+    .get_max_packet_size = usb_comm_get_max_packet_size,
 };
 
 void usb_init() {
@@ -745,7 +778,9 @@ Each consumer needs two changes:
 | `split/split_dispatch.c` | Includes `usbmod.h` | Same investigation needed |
 
 > [!IMPORTANT]
-> **Clean Refactor**: As there are no backward compatibility constraints, the includes in all consumer files (`cfgmod.c`, `statusmod.c`, `splitmod.c`, `split_usb.c`, `kb_manager.c`, etc.) must be directly updated to `#include "comm_module.h"` during Phase 0. No legacy shim headers will be retained in `usb_module`. Note that unsolicited pushes (e.g., in `statusmod.c`) are being removed; the configurator will explicitly poll for status updates instead.
+> **Clean Refactor**: As there are no backward compatibility constraints, the includes in all consumer files (`cfgmod.c`, `statusmod.c`, `splitmod.c`, `split_usb.c`, `kb_manager.c`, etc.) must be directly updated to `#include "comm_module.h"` during Phase 0. No legacy shim headers will be retained in `usb_module`.
+>
+> **Unsolicited Status Pushes Are Preserved and Broadcast**: The event-driven `send_status_push()` calls in `statusmod.c` remain unchanged. These calls will use `comm_send_payload(COMM_TRANSPORT_BROADCAST, ...)`, which sends the update to ALL connected configurator transports. If no transport is connected (`comm_transport_any_connected() == false`), the push is silently dropped (no allocation, no queue traffic). This ensures both a USB and BLE configurator receive real-time state updates simultaneously.
 
 ---
 
@@ -816,7 +851,16 @@ static void init_procedure(void) {
 | 6 | BLE HID unaffected | Connect BLE keyboard, type, switch profiles |
 | 7 | Split keyboard | Full split test (pair, type, sync, swap roles) |
 | 8 | No USB regression | Hot-plug USB cable, verify mount/unmount events and buffer cleanup |
-| 9 | Shim headers work | Temporarily revert one consumer to old `#include`s — must still compile |
+
+**Unit Tests (host-side):**
+
+The following `comm_module` components are pure logic with no hardware dependencies and SHOULD be unit-tested on the host (Linux/macOS) before flashing:
+
+| Module | Test Cases |
+|--------|------------|
+| `comm_crc.c` | Known vectors: empty packet, full payload, single-byte. Round-trip: `prepare` then `verify` returns true. Tamper: flip a bit, verify returns false |
+| `comm_session.c` | Lock/unlock sequence. Double-lock same transport (idempotent). Lock A, try lock B (rejected). Unlock A, lock B (success). Lock with `COMM_TRANSPORT_NONE` (rejected) |
+| `comm_transport.c` | `set_connected` / `is_connected` / `any_connected` state transitions. `COMM_TRANSPORT_BROADCAST` iteration logic with 0, 1, and 2 connected transports |
 
 ---
 
@@ -824,8 +868,7 @@ static void init_procedure(void) {
 
 | Risk | Impact | Probability | Mitigation |
 |---|---|---|---|
-| Include path breakage after move | Build failure | Medium | Backward-compat shims ensure old includes still resolve. Run `idf.py build` after every file move |
-| Thread safety during transport switch | Race condition between reply-target and TX task | Low | `s_reply_transport` is only written by the processing task (single consumer of the queue), and only read by the TX task. The queue serializes all access |
+| Include path breakage after move | Build failure | Medium | No backward-compat shims (per clean refactor policy). Run `idf.py build` after every file move |
 | Circular dependency between `comm_module` and consumers | Build failure | Very Low | `comm_module` has zero knowledge of its consumers. It only exposes registration APIs. Consumers depend on `comm_module`, never the reverse |
 | TX task references stale transport ops | Crash | Very Low | Transport ops are registered once during init and never change. The static array is immutable after boot |
 
@@ -851,8 +894,8 @@ static void init_procedure(void) {
 | `components/comm_module/comm_rx.c` | RX buffer, blast RX state machine |
 | `components/comm_module/comm_tx.c` | TX buffer, blast TX state machine, send_payload |
 | `components/comm_module/comm_send.c` | Transport-routed packet send |
-| `components/comm_module/comm_transport.c` | Transport registry, reply-target tracking |
-| `components/comm_module/comm_session.c` | Exclusive session lock manager protecting static buffers |
+| `components/comm_module/comm_transport.c` | Transport registry, connectivity tracking, broadcast iteration |
+| `components/comm_module/comm_session.c` | Blast-only exclusive session lock protecting shared static buffers |
 
 #### Modified Files
 
@@ -891,7 +934,7 @@ static void init_procedure(void) {
 
 ### Phase 0 Completion Checklist
 
-Once all steps above are completed, the USB transport adapter is wired (via `comm_transport_register()` in `usb_init()`), `main.c` calls `comm_init()` before `usb_init()`, and the old `.c` files are deleted from `usb_module/` (only shim headers remain).
+Once all steps above are completed, the USB transport adapter is wired (via `comm_transport_register()` in `usb_init()`), `main.c` calls `comm_init()` before `usb_init()`, and the old `.c` files are deleted from `usb_module/`.
 
 | # | Check | Method |
 |---|-------|--------|
@@ -903,7 +946,6 @@ Once all steps above are completed, the USB transport adapter is wired (via `com
 | 6 | BLE HID unaffected | Connect BLE keyboard, type, switch profiles |
 | 7 | Split keyboard | Full split test (pair, type, sync, swap roles) |
 | 8 | No USB regression | Hot-plug USB cable, verify mount/unmount events and buffer cleanup |
-| 9 | Shim headers work | Temporarily revert one consumer to old `#include`s — must still compile |
 
 ---
 
@@ -956,7 +998,7 @@ static const ble_uuid128_t comm_mtu_uuid = BLE_UUID128_INIT(
 | COMM TX | Device → Client | READ, NOTIFY | Encrypted |
 | COMM MTU | Device → Client | READ, NOTIFY | Encrypted |
 
-The RX access callback receives written data and passes it to `comm_channel_receive_packet(COMM_TRANSPORT_BLE, ...)`.
+The RX access callback receives written data and passes it to `comm_transport_receive_packet(COMM_TRANSPORT_BLE, ...)`.
 
 The MTU read access callback returns `ble_comm_get_max_packet_size()`. When `blemod.c` processes a `BLE_GAP_EVENT_MTU` event, it must trigger the transport adapter to notify subscribed clients of the new MTU value via this characteristic.
 
@@ -976,19 +1018,20 @@ When the configurator writes to the COMM RX characteristic:
        │  comm_rx_access_cb()
        ▼
 [comm_transport_receive_packet(COMM_TRANSPORT_BLE, packet, N)]
-       │  enqueues item with source=COMM_TRANSPORT_BLE to comm_processing_queue
+       │  enqueues item with source=COMM_TRANSPORT_BLE to s_comm_message_buffer
        ▼
 [comm_processing_task]
-       │  dequeues item, sets s_current_reply_target = item.source
+       │  dequeues item, sets s_current_source = item.source
        │  process_incoming_packet() — same as USB
        ▼
 [Callback Router]
        │  execute_callback(module, data, len)
+       │  (callbacks can call comm_get_current_source() to obtain the source transport)
        ▼
 [Module callback — cfg_usb_callback / status_module_callback / etc.]
 ```
 
-**Critical:** The NimBLE GATT access callback runs in the NimBLE host task context. We must **not** do heavy processing there. The callback copies the 63-byte packet and enqueues it to the existing `usb_processing_queue` (which, despite its name, is transport-agnostic — it processes `usb_packet_msg_t` structs that are identical for both transports).
+**Critical:** The NimBLE GATT access callback runs in the NimBLE host task context. We must **not** do heavy processing there. The callback copies the variable-length packet and enqueues it to the `s_comm_message_buffer` (FreeRTOS MessageBuffer) which the `comm_processing_task` consumes.
 
 ---
 
@@ -1081,7 +1124,65 @@ static uint16_t ble_comm_get_max_packet_size(void) {
 }
 ```
 
-**Connection handle tracking:** When a BLE central connects, `s_comm_conn_handle` is stored. When the client subscribes to COMM TX notifications, `s_comm_subscribed` is set to true. If multiple BLE connections exist (the keyboard supports up to 3 simultaneous), only the one that subscribed to COMM TX notifications is the "configurator connection". This naturally prevents conflicts.
+**Connection handle tracking:** When a BLE central connects, `s_comm_conn_handle` is stored. When the client subscribes to COMM TX notifications, `s_comm_subscribed` is set to true. Only ONE connection at a time may act as the COMM configurator. If multiple BLE connections exist (the keyboard supports up to 3 simultaneous), the **first subscriber** wins:
+
+```c
+void ble_comm_set_conn_handle(uint16_t conn_handle) {
+    // Only accept if no other connection already owns COMM
+    if (s_comm_conn_handle == BLE_HS_CONN_HANDLE_NONE) {
+        s_comm_conn_handle = conn_handle;
+    }
+}
+
+void ble_comm_set_subscribed(uint16_t conn_handle, bool subscribed) {
+    if (subscribed) {
+        // Reject if another connection already owns COMM
+        if (s_comm_conn_handle != BLE_HS_CONN_HANDLE_NONE
+            && s_comm_conn_handle != conn_handle) {
+            ESP_LOGW("BLE_COMM", "Rejecting duplicate COMM subscriber (handle=%d, existing=%d)",
+                     conn_handle, s_comm_conn_handle);
+            return;
+        }
+        s_comm_conn_handle = conn_handle;
+        s_comm_subscribed = true;
+        comm_transport_set_connected(COMM_TRANSPORT_BLE, true);
+    } else {
+        if (s_comm_conn_handle == conn_handle) {
+            s_comm_subscribed = false;
+            comm_transport_set_connected(COMM_TRANSPORT_BLE, false);
+        }
+    }
+}
+```
+
+**Transport disconnect handler:** When a BLE connection drops, the COMM adapter must clean up session state:
+
+```c
+/** Called from blemod.c on BLE_GAP_EVENT_DISCONNECT when the COMM
+ *  connection handle matches the disconnected conn_handle. */
+void ble_comm_on_disconnect(uint16_t conn_handle) {
+    if (s_comm_conn_handle != conn_handle) return;
+
+    // Clear COMM adapter state
+    s_comm_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+    s_comm_subscribed = false;
+
+    // Mark BLE transport as disconnected (stops broadcasting to it)
+    comm_transport_set_connected(COMM_TRANSPORT_BLE, false);
+
+    // If BLE held the blast session lock, release it
+    if (comm_session_get_active() == COMM_TRANSPORT_BLE) {
+        comm_session_unlock();
+    }
+
+    // Reset any in-progress RX/TX state tied to this transport
+    // (the processing task will pick up the unlock on next iteration)
+    ESP_LOGI("BLE_COMM", "COMM transport disconnected (handle=%d)", conn_handle);
+}
+```
+
+> [!NOTE]
+> The USB equivalent (`usb_comm_on_disconnect()`) follows the same pattern but is triggered from the `TINYUSB_EVENT_DETACHED` callback in `usbmod.c`. It clears `comm_transport_set_connected(COMM_TRANSPORT_USB, false)` and unlocks the session if USB held it.
 
 ---
 
@@ -1091,13 +1192,48 @@ static uint16_t ble_comm_get_max_packet_size(void) {
 
 1. **In `ble_hid_init()`:** Call `ble_comm_svc_register()` alongside `ble_hid_svc_register()`. The new COMM service is registered in the same GATT server — NimBLE handles multiple services cleanly.
 
-2. **In `ble_hid_gap_event()` → `BLE_GAP_EVENT_CONNECT`:** Notify the COMM transport adapter of the new connection handle.
+2. **In `ble_hid_gap_event()` → `BLE_GAP_EVENT_CONNECT`:** Notify the COMM transport adapter of the new connection handle via `ble_comm_set_conn_handle(event->connect.conn_handle)`. Note: the adapter won't actually mark BLE as "connected" yet — that happens on SUBSCRIBE.
 
-3. **In `ble_hid_gap_event()` → `BLE_GAP_EVENT_DISCONNECT`:** Notify the COMM transport adapter to clear its connection state.
+3. **In `ble_hid_gap_event()` → `BLE_GAP_EVENT_DISCONNECT`:** Call `ble_comm_on_disconnect(event->disconnect.conn.conn_handle)`. This clears the adapter's conn_handle, marks BLE transport as disconnected, and releases any blast session lock held by BLE.
 
-4. **In `ble_hid_gap_event()` → `BLE_GAP_EVENT_SUBSCRIBE`:** When a client subscribes to the TX characteristic notifications, notify the COMM transport adapter. Check `if (event->subscribe.attr_handle == s_comm_tx_handle)`, then call `ble_comm_set_subscribed(true)`. Without this hook, `s_comm_subscribed` will forever remain false and the adapter will permanently reject all outgoing config data.
+4. **In `ble_hid_gap_event()` → `BLE_GAP_EVENT_SUBSCRIBE`:** This is the critical hook that activates the COMM channel. Without it, `s_comm_subscribed` remains false and the adapter permanently rejects all outgoing data. The implementation:
 
-5. **In `ble_hid_gap_event()` → `BLE_GAP_EVENT_MTU`:** Pass the event to the COMM transport adapter so it can evaluate the new negotiated MTU and immediately push a GATT notification on the `COMM MTU` characteristic to the configurator.
+```c
+case BLE_GAP_EVENT_SUBSCRIBE:
+    ESP_LOGD(TAG, "Subscribe: conn=%d, attr=%d, notify=%d, indicate=%d",
+             event->subscribe.conn_handle, event->subscribe.attr_handle,
+             event->subscribe.cur_notify, event->subscribe.cur_indicate);
+
+    // COMM TX notification subscription
+    if (event->subscribe.attr_handle == ble_comm_get_tx_handle()) {
+        ble_comm_set_subscribed(event->subscribe.conn_handle,
+                               event->subscribe.cur_notify == 1);
+        ESP_LOGI(TAG, "COMM TX %s (conn=%d)",
+                 event->subscribe.cur_notify ? "SUBSCRIBED" : "UNSUBSCRIBED",
+                 event->subscribe.conn_handle);
+    }
+
+    // Existing: battery notification on subscribe
+    if (event->subscribe.cur_notify == 1) {
+        int bat_rc = ble_hid_notify_battery_level(
+            event->subscribe.conn_handle, battery_get_level_pct());
+        ESP_LOGD(TAG, "Sent battery notification on subscribe, rc=%d", bat_rc);
+    }
+    break;
+```
+
+> [!IMPORTANT]
+> `ble_comm_get_tx_handle()` returns the attribute handle assigned by NimBLE during GATT registration. This handle is stored by `ble_comm_service.c` in a static variable, set during the `BLE_GATT_REGISTER_OP_CHR` registration callback. The handle is constant for the lifetime of the NimBLE stack.
+
+5. **In `ble_hid_gap_event()` → `BLE_GAP_EVENT_MTU`:** Pass the event to the COMM transport adapter so it can evaluate the new negotiated MTU and immediately push a GATT notification on the `COMM MTU` characteristic to the configurator:
+
+```c
+case BLE_GAP_EVENT_MTU:
+    ESP_LOGD(TAG, "MTU update: conn=%d mtu=%d",
+             event->mtu.conn_handle, event->mtu.value);
+    ble_comm_on_mtu_change(event->mtu.conn_handle, event->mtu.value);
+    break;
+```
 
 6. **In `ble_hid_set_suspended()`:** When BLE is suspended (slave role), `blemod` must explicitly call `ble_comm_reset_state()` (exposed by `ble_comm_transport.h`). This safely clears `s_comm_conn_handle` and subscription flags, ensuring the adapter correctly reports `is_ready() = false` without leaking state.
 
@@ -1115,7 +1251,7 @@ The COMM service adds GATT attributes that consume NimBLE resources:
 
 | Resource | Current | Required Change | Why |
 |----------|---------|-----------------|-----|
-| `CONFIG_BT_NIMBLE_MAX_CCCDS` | 15 | → 18 | +3 CCCDs for COMM TX notifications (1 per possible connection, as `MAX_CONNECTIONS` = 3) |
+| `CONFIG_BT_NIMBLE_MAX_CCCDS` | 15 | → 21 | +6 CCCDs: COMM TX notifications (3, one per connection) + COMM MTU notifications (3, one per connection) |
 | `CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU` | default (256) | → 256 (explicit) | Request large MTU to allow ~253-byte payloads |
 | `CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT` | 24 | → 28 | Additional mbufs for COMM traffic alongside HID |
 
@@ -1166,9 +1302,10 @@ export class BLETransport implements ITransport {
 
     async connect(): Promise<void> {
         this.device = await navigator.bluetooth.requestDevice({
-            filters: [{ services: [COMM_SERVICE_UUID] }],
-            // Also show devices advertising HID, in case the COMM service
-            // is not in the advertisement (it's discovered via GATT)
+            // Filter by the standard HID service UUID (0x1812), which the keyboard
+            // already advertises. The COMM service UUID is NOT in the advertising
+            // data (it's discovered via GATT service discovery after connection).
+            filters: [{ services: ['00001812-0000-1000-8000-00805f9b34fb'] }],
             optionalServices: [COMM_SERVICE_UUID],
         });
         this.server = await this.device.gatt!.connect();
@@ -1257,6 +1394,29 @@ export class CommProtocol {
 
 > [!IMPORTANT]
 > **Universal COMM-Side CRC (BREAKING CHANGE):** The legacy `HIDTransport.ts` hardcoded the CRC generation and validation at index 62 (`computeCrc8(packet.slice(0, 62))`). Because we are universalizing the CRC placement in `comm_module` (see [Decision 3](#decision-3-packet-format-reuse)), `CommProtocol.ts` MUST now dynamically calculate the CRC position. The script must parse the `payload_len` from the 4-byte header and strictly place/validate the CRC at index `sizeof(comm_packet_header_t) + payload_len` (which evaluates to index `4 + payload_len`). Any trailing zeroes sent by USB padding must be ignored. **This introduces a breaking change for existing USB configurations**, requiring the new `CommProtocol.ts` logic to be deployed simultaneously with Phase 0 for USB COMM to continue functioning.
+
+> [!IMPORTANT]
+> **Variable-Length TX Chunking for BLE:** `CommProtocol.ts` must dynamically size outgoing packets based on the negotiated `maxPacketSize`. The chunking logic is:
+> ```typescript
+> // CommProtocol.ts
+> private get maxPayloadLength(): number {
+>     return this.maxPacketSize - 5; // 5-byte overhead: flags(1) + remaining(2) + payload_len(1) + crc(1)
+> }
+> 
+> buildPacket(flags: number, remaining: number, data: Uint8Array): Uint8Array {
+>     const payloadLen = Math.min(data.length, this.maxPayloadLength);
+>     const packetSize = 4 + payloadLen + 1; // header(4) + payload + crc(1)
+>     const packet = new Uint8Array(packetSize);
+>     packet[0] = flags;
+>     packet[1] = remaining & 0xff;
+>     packet[2] = (remaining >> 8) & 0xff;
+>     packet[3] = payloadLen;
+>     packet.set(data.slice(0, payloadLen), 4);
+>     packet[4 + payloadLen] = computeCrc8(packet.slice(0, 4 + payloadLen));
+>     return packet;
+> }
+> ```
+> For USB, `maxPacketSize` is always 63, yielding `maxPayloadLength = 58` (identical to current behavior). For BLE, `maxPacketSize` comes from the COMM MTU characteristic (e.g., 253 → `maxPayloadLength = 248`). The blast state machine's packet count calculations (`totalPackets = Math.ceil(payload.length / maxPayloadLength)`) must use this dynamic value, not a hardcoded 58.
 
 // HIDTransport.ts
 export class HIDTransport implements ITransport {
@@ -1395,31 +1555,31 @@ Ensure the BLE COMM channel works correctly in split keyboard configurations.
 | Resource | Current Protection | Change Needed |
 |----------|-------------------|---------------|
 | `s_comm_message_buffer` | FreeRTOS MessageBuffer (thread-safe) | None — both USB and BLE push data here via transport adapter |
-| TX buffer/queue | FreeRTOS queue + semaphore | Shared static buffer protected by Mutex |
+| TX queue | FreeRTOS queue + semaphore | Extended `tx_queue_item_t` with `target` field. Non-blocking enqueue (heap-alloc + push) |
+| `s_shared_tx_buf` / `s_shared_rx_buf` | N/A (were USB-only statics) | Protected by blast-only `comm_session` lock. Only one blast can use them at a time |
 | Module callbacks array | Written once at init, read-only after | None |
-| `s_reply_transport` | N/A | Removed completely. Target is explicitly passed down the call chain |
-| Blast RX State | None (assumes one active transport) | Maintained globally within `comm_rx.c`, protected by Mutex |
+| `s_current_source` | N/A | Owned by `comm_processing_task`. Set before each callback, read via `comm_get_current_source()` |
+| `s_connected[]` bitmap | N/A | Written by transport drivers (USB/BLE tasks), read by `comm_send_payload`. Atomic bool writes, no lock needed |
 
-**Mutex Protection for TX/RX Sessions:** The legacy TX/RX system used a single monolithic set of static buffers (`tx_buf`, `rx_buf`, blast state, etc.) that was hardcoded to USB.
+**Blast-Only Session Lock:** The `comm_session` lock protects the shared 21.5 KB RX and TX static buffers during multi-packet blast transfers only. Single-packet operations (`FIRST|LAST`) execute without acquiring the lock — they run synchronously within the processing task and never touch the shared blast buffers.
 
-**Solution:** By transitioning to `comm_session`, the firmware's single shared set of static buffers is protected. Note that there are TWO distinct locks at play here to ensure safety:
-1. **The Logical Session Lock (`comm_session`):** A global mutex held for the entire duration of a multi-packet blast transaction (spanning both RX and TX) to strictly lock out other transports.
-2. **The Synchronization Mutex (`s_tx_mutex`):** A short-lived primitive used strictly to block `comm_send_payload` while the asynchronous TX task drains the staging buffer into the hardware. 
+When a `FIRST` packet with `remaining_packets > 0` arrives, `process_rx_request()` calls `comm_session_try_lock(source)`. If locked by another transport, it replies with `PAYLOAD_FLAG_ERR` (BUSY). On blast completion, timeout, or abort, `comm_session_unlock()` frees the lock.
 
-When a session initiates, it acquires the `comm_session` lock. Then, during execution, `comm_send_payload(target, ...)` acquires `s_tx_mutex`, copies the payload into the global `s_shared_tx_buf`, and injects the `target` into `tx_queue_item_t`. The TX task dequeues one-at-a-time, reading the target transport directly from the item, and releases `s_tx_mutex` when finished. The overall `comm_session` is unlocked upon full completion or timeout.
+**Non-Blocking TX:** `comm_send_payload(target, payload, len)` follows the proven pattern from the legacy `send_payload()`: it heap-allocates a copy of the payload, packages it into a `tx_queue_item_t`, and pushes it to the TX FreeRTOS queue. It returns immediately. The TX task dequeues items one at a time, copies into `s_shared_tx_buf`, runs the blast/single state machine, and frees the heap copy on completion. No blocking mutex. No deadlock.
 
-**Note on Broadcasting:** Unsolicited broadcasting is explicitly removed. The configurator will request updates (e.g., polling) and those requests will be fulfilled. No unsolicited data will ever be sent, which vastly simplifies the queueing architecture.
+**Multi-Transport Broadcasting:** Event-driven pushes (e.g., `send_status_push()` in `statusmod.c`) use `comm_send_payload(COMM_TRANSPORT_BROADCAST, ...)`. This iterates all entries in the `s_connected[]` bitmap and enqueues a separate TX item for each connected transport, ensuring all active configurators receive the update. If no transport is connected, the push is silently dropped (no heap allocation, no queue traffic).
 
 **Enhancement:** Extend `tx_queue_item_t` to include the target transport:
 
 ```c
 typedef struct {
+    uint8_t *data;           // Heap-allocated payload copy (freed by TX task)
     uint16_t len;
-    comm_transport_t target;  // NEW: which transport to send on
+    comm_transport_t target;  // Which transport to send on
 } tx_queue_item_t;
 ```
 
-`comm_send_payload(target, payload, len)` copies `payload` into `s_shared_tx_buf`, and assigns `target` to the newly minted `tx_queue_item_t.target` before pushing it to the FreeRTOS queue. If `xQueueSend` fails, it simply returns false.
+`comm_send_payload(target, payload, len)` allocates a copy, assigns `target`, and pushes to the queue. If `xQueueSend` fails, it frees the copy and returns false.
 
 ### Memory Budget (`comm_session`)
 
@@ -1434,14 +1594,14 @@ typedef struct {
 
 By eliminating the transport-specific arrays and replacing them with a globally shared static footprint governed by `comm_session`, the firmware achieves **100% immunity to heap fragmentation** and avoids tying up double the memory for two transports.
 
-### Mutex-Locked COMM Sessions
+### Blast-Only COMM Sessions
 
-**Exclusive Support via Shared Mutex.** Multiple configurator instances (e.g., USB and BLE) cannot configure the keyboard simultaneously. This prevents race conditions and memory collisions without complex state tracking.
+**Concurrent Single-Packet Support.** Both USB and BLE configurators can send single-packet commands (GET, SET, status poll) simultaneously without any locking. These operations execute synchronously in the `comm_processing_task` and never touch the shared blast buffers.
 
-**First-Come, First-Served Session Locking:**
-Because `comm_rx.c` and `comm_tx.c` use a globally shared static buffer protected by `comm_session`, **concurrent blast transfers are strictly serialized**:
-- **Acquiring the Lock:** When a transport receives a `FIRST` packet, it attempts to acquire the `comm_session` lock. If successful, it begins utilizing the shared static buffers.
-- **Out-of-Memory (BUSY) Protection:** If Channel B attempts to configure the keyboard while Channel A holds the lock, Channel B's `FIRST` packet triggers a `PAYLOAD_FLAG_ERR` (Reason: BUSY) response. Channel B's client detects this and can prompt the user or automatically retry. existing active transfers continue undisturbed without preemption.
+**First-Come, First-Served Blast Locking:**
+Because `comm_rx.c` and `comm_tx.c` use globally shared static buffers for blast mode assembly, **concurrent multi-packet (blast) transfers are strictly serialized**:
+- **Acquiring the Lock:** When a transport receives a `FIRST` packet with `remaining_packets > 0` (indicating a multi-packet blast), it attempts `comm_session_try_lock(source)`. If successful, it begins utilizing the shared static buffers.
+- **BUSY Rejection:** If Channel B attempts a blast while Channel A holds the lock, Channel B's `FIRST` packet triggers a `PAYLOAD_FLAG_ERR` (Reason: BUSY) response. Channel B's client detects this and can prompt the user or automatically retry. Channel A's active transfer continues undisturbed.
 
 **Caveat:** If both configurators try to SET the same config key simultaneously via single packets, the last write wins (no locking). This is acceptable because:
 1. It's an unlikely scenario (who has two configurators open at once?)
@@ -1465,9 +1625,9 @@ Because `comm_rx.c` and `comm_tx.c` use a globally shared static buffer protecte
 | Platform | Transport | API | Status |
 |----------|-----------|-----|--------|
 | Windows / macOS / Linux + Chrome | USB | WebHID | ✅ Existing |
-| Windows / macOS / Linux + Chrome | BLE | Web Bluetooth | 🆕 Phase 3 |
-| Android + Chrome | BLE | Web Bluetooth | 🆕 Phase 3 |
-| iOS + Bluefy browser | BLE | Web Bluetooth (bridged) | 🆕 Phase 3 |
+| Windows / macOS / Linux + Chrome | BLE | Web Bluetooth | 🆕 Phase 2 |
+| Android + Chrome | BLE | Web Bluetooth | 🆕 Phase 2 |
+| iOS + Bluefy browser | BLE | Web Bluetooth (bridged) | 🆕 Phase 2 |
 | iOS + Safari | — | — | ❌ Not supported (Safari blocks Web Bluetooth) |
 | Firefox (any platform) | USB | — | ❌ Not supported (Firefox blocks WebHID and Web Bluetooth) |
   
