@@ -629,7 +629,7 @@ In addition to updating internal includes (`comm_defs.h`, `comm_send.h`, `comm_c
 - **Session State:** Maintain a single `comm_rx_session_t` struct (not per-transport) tracking `buf_len`, `last_activity_us`, and blast mode bitmap state.
 - **Signature Refactor:** The legacy internal state machine functions (`process_rx_request` and `process_tx_response`) passed the monolithic `usb_packet_msg_t` struct by value. Since this struct is being replaced by a 4-byte header, refactor their signatures to accept `comm_transport_t target, const uint8_t *packet, uint16_t len` (or a pointer to the new header).
 - **RX Concurrency Check:** In `process_rx_request(...)`, when a `FIRST` packet with `remaining_packets > 0` arrives, attempt `comm_session_try_lock(source)`. If the lock fails (another transport is blasting), reply with `PAYLOAD_FLAG_ERR` (BUSY) and drop the packet. Single-packet operations (`FIRST|LAST`) skip the lock entirely.
-- **Clean RX Release:** In `process_rx_buffer()` (and on any abort or CRC error), reset the `comm_rx_session_t` state and call `comm_session_unlock()` to free the blast lock.
+- **Clean RX Release:** In `process_rx_buffer()` (and on any abort), reset the `comm_rx_session_t` state and call `comm_session_unlock()` to free the blast lock.
 
 **`comm_tx.c`** (from `usb_callbacks_tx.c`):
 - **Shared Static Buffer:** Create `static uint8_t s_shared_tx_buf[21500];`.
