@@ -82,25 +82,49 @@ Over Bluetooth, the firmware only offers the **HID Keyboard** service (HOGP). Th
 
 ### What We Want
 
-```
-                         ┌─────────────────────────────────────────────────┐
-                         │           Keyboard Firmware                     │
-                         │                                                 │
-   USB Host              │  ┌────────────┐  ┌──────────────┐               │
-      │  HID KBD ───────►│  │ Interface 0│  │ Interface 1  │               │
-      │  COMM    ◄──────►│  │   (KBD)    │  │   (USB COMM) │               │
-      │                  │  └────────────┘  └──────┬───────┘               │
-      │                  │                         │                       │
-   BLE Host              │  ┌────────────┐  ┌──────┴───────┐               │
-      │  HID KBD ───────►│  │ HID Service│  │ comm_channel │ ◄── NEW!      │
-      │  COMM    ◄──────►│  │   (HOGP)   │  │ (transport   │               │
-      │                  │  └────────────┘  │  abstraction)│               │
-      │                  │                  └──────┬───────┘               │
-      │                  │                  ┌──────┴───────┐               │
-      │                  │                  │ BLE COMM Svc │ ◄── NEW!      │
-      │                  │                  │ (Custom GATT)│               │
-      │                  │                  └──────────────┘               │
-                         └─────────────────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph Hosts["External Hosts"]
+        USB["🖥️ USB Host"]
+        BLE["📱 BLE Host"]
+    end
+
+    subgraph FW["Keyboard Firmware"]
+        subgraph HID["HID Path (unchanged)"]
+            IF0["Interface 0 (KBD)"]
+            HOGP["HID Service (HOGP)"]
+        end
+
+        subgraph CM["comm_module 🆕 — Transport Abstraction Hub"]
+            CM_CORE["Protocol Engine\n(Blast+Reconcile, CRC,\nCallback Registry,\nRX/TX Queues & Tasks)"]
+        end
+
+        subgraph Transports["Registered Transports"]
+            IF1["usb_module\n(Interface 1 adapter)"]
+            BLESVC["ble_module\n(BLE COMM Service\nCustom GATT) 🆕"]
+        end
+
+        subgraph Consumers["Consumer Modules (transport-agnostic)"]
+            CFG["cfgmod"]
+            STATUS["statusmod"]
+            SPLIT["splitmod"]
+            KB["kb_manager"]
+        end
+    end
+
+    USB -- "HID KBD" --> IF0
+    USB <-- "COMM (RX/TX)" --> IF1
+
+    BLE -- "HID KBD" --> HOGP
+    BLE <-- "COMM (RX/TX)" --> BLESVC
+
+    IF1 -- "register_transport()" --> CM_CORE
+    BLESVC -- "register_transport() 🆕" --> CM_CORE
+
+    CM_CORE -- "dispatch_callback()" --> CFG
+    CM_CORE -- "dispatch_callback()" --> STATUS
+    CM_CORE -- "dispatch_callback()" --> SPLIT
+    CM_CORE -- "dispatch_callback()" --> KB
 ```
 
 Both USB and BLE COMM channels feed into the **same** callback routing system. The modules (`cfg_usb_callback`, `status_module_callback`, `split_usb_callback`, `ble_usb_callback`, `kb_system_usb_callback`) never know which transport delivered the data.
@@ -1261,16 +1285,16 @@ The COMM service adds GATT attributes that consume NimBLE resources:
 
 ### 1.7 Phase 1 Verification
 
-| Check | Method |
-|-------|--------|
-| COMM service is discoverable | Use nRF Connect app to scan and discover the TEF COMM service |
-| COMM RX write works | Write 63-byte test packet from nRF Connect, verify CRC validation and callback routing in logs |
-| COMM TX notification works | Trigger a status push, verify notification appears in nRF Connect |
-| Full config read over BLE | Connect configurator (Phase 2 preview using manual Web Bluetooth test page), read layout |
-| Blast mode over BLE | Read a full layout (multi-packet) over BLE, verify bitmap reconciliation |
-| USB COMM still works | Connect USB configurator alongside BLE, verify both paths work |
-| HID keyboard over BLE | Verify no regression in keypress delivery |
-| Split keyboard | Verify slave suspension disables COMM service correctly |
+| Check                        | Method                                                                                         |
+| ------------------------------| ------------------------------------------------------------------------------------------------|
+| COMM service is discoverable | Use nRF Connect app to scan and discover the TEF COMM service                                  |
+| COMM RX write works          | Write 63-byte test packet from nRF Connect, verify CRC validation and callback routing in logs |
+| COMM TX notification works   | Trigger a status push, verify notification appears in nRF Connect                              |
+| Full config read over BLE    | Connect configurator (Phase 2 preview using manual Web Bluetooth test page), read layout       |
+| Blast mode over BLE          | Read a full layout (multi-packet) over BLE, verify bitmap reconciliation                       |
+| USB COMM still works         | Connect USB configurator alongside BLE, verify both paths work                                 |
+| HID keyboard over BLE        | Verify no regression in keypress delivery                                                      |
+| Split keyboard               | Verify slave suspension disables COMM service correctly                                        |
 
 ---
 
