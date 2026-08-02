@@ -61,3 +61,4 @@ sdkconfig.ci
 
 managed_components/
 CLAUDE.md
+.vscode/
