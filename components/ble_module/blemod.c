@@ -739,7 +739,7 @@ static void ble_hid_advertise(void) {
       if (s_pairing_profile != -1) {
           duration_ms = 60000;
       } else if (s_directed_profile != -1) {
-          duration_ms = 1300;
+          duration_ms = 15000;
       }
 
       rc = ble_gap_adv_set_fields(&fields);
