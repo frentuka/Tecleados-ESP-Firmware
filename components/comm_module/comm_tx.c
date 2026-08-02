@@ -310,6 +310,9 @@ static void comm_tx_task(void *pvParameters) {
     while (1) {
         if (xQueueReceive(s_tx_queue, &item, portMAX_DELAY) == pdTRUE) {
             
+            // Clear any stale semaphore BEFORE starting a new transmission
+            xSemaphoreTake(s_tx_done_sem, 0);
+
             s_tx_current_target = item.target;
             uint16_t current_mtu = tx_get_max_payload_len();
             uint16_t total_packets = (item.len + current_mtu - 1) / current_mtu;
@@ -349,7 +352,7 @@ static void comm_tx_task(void *pvParameters) {
             s_tx_awaiting_response = true;
 
             if (xSemaphoreTake(s_tx_done_sem, pdMS_TO_TICKS(TX_TIMEOUT_MS)) != pdTRUE) {
-                ESP_LOGE(TAG, "TX timeout waiting for response. Clearing buffer.");
+                ESP_LOGW(TAG, "TX timeout waiting for response. (No configurator connected?)");
                 comm_erase_tx_buffer();
             }
         }

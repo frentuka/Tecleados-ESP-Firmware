@@ -20,7 +20,6 @@ bool comm_session_try_lock(comm_transport_t transport) {
     if (xSemaphoreTake(s_session_mutex, portMAX_DELAY) == pdTRUE) {
         if (s_active_transport == COMM_TRANSPORT_NONE) {
             s_active_transport = transport;
-            ESP_LOGI(TAG, "Lock acquired by transport %d", transport);
             xSemaphoreGive(s_session_mutex);
             return true;
         } else if (s_active_transport == transport) {
@@ -42,7 +41,6 @@ void comm_session_unlock(void) {
 
     if (xSemaphoreTake(s_session_mutex, portMAX_DELAY) == pdTRUE) {
         if (s_active_transport != COMM_TRANSPORT_NONE) {
-            ESP_LOGI(TAG, "Lock released by transport %d", s_active_transport);
             s_active_transport = COMM_TRANSPORT_NONE;
         }
         xSemaphoreGive(s_session_mutex);

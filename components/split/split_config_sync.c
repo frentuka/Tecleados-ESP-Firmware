@@ -9,6 +9,7 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_err.h"
+#include "nvs.h"
 #include "cfg_storage_keys.h"
 #include "cfg_layouts.h"
 #include "cfg_ble.h"
@@ -126,22 +127,25 @@ esp_err_t split_config_sync_push(const uint8_t *peer_mac, split_seq_alloc_fn_t g
     uint8_t probe_byte;
     esp_err_t ret = cfgmod_read_storage(kind, key, &probe_byte, &blob_len);
 
-    if (ret == ESP_ERR_NOT_FOUND) {
-        ESP_LOGD(TAG, "read_storage(%u, %s): not found — skipping", kind, key);
+    if (ret == ESP_ERR_NOT_FOUND || ret == ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGD(TAG, "read_storage(%u, %s): not found - skipping", kind, key);
         return ESP_OK;
     }
+    
     // When the provided buffer is too small, nvs_get_blob sets *inout_len to the
-    // real blob size and returns a non-zero error (platform-specific "invalid length").
-    // We treat any non-ESP_OK, non-ESP_ERR_NOT_FOUND result as "size updated in blob_len".
-    // blob_len now holds the actual required size regardless of which error was returned.
-    if (ret != ESP_OK && ret != ESP_ERR_NOT_FOUND) {
+    // real blob size and returns ESP_ERR_NVS_INVALID_LENGTH.
+    // cfg_ble_bond_read_all returns ESP_ERR_INVALID_SIZE in the same scenario.
+    if (ret == ESP_ERR_NVS_INVALID_LENGTH || ret == ESP_ERR_INVALID_SIZE) {
         // blob_len was updated by cfgmod_read_storage / nvs_get_blob to the true size.
         // Proceed with allocation.
         if (blob_len <= 1) {
-            // Unexpected: NVS reported an error but didn't update blob_len.
-            ESP_LOGW(TAG, "read_storage probe(%u, %s): unexpected error %s with blob_len=0", kind, key, esp_err_to_name(ret));
+            // Unexpected: NVS reported invalid length but didn't update blob_len.
+            ESP_LOGW(TAG, "read_storage probe(%u, %s): unexpected invalid length with blob_len=%u", kind, key, blob_len);
             return ESP_OK;
         }
+    } else if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "read_storage probe(%u, %s): unexpected error %s", kind, key, esp_err_to_name(ret));
+        return ESP_OK;
     }
 
     if (blob_len == 0) return ESP_OK;
@@ -151,10 +155,10 @@ esp_err_t split_config_sync_push(const uint8_t *peer_mac, split_seq_alloc_fn_t g
 
     ret = cfgmod_read_storage(kind, key, blob, &blob_len);
     if (ret != ESP_OK) {
-        if (ret != ESP_ERR_NOT_FOUND) {
-            ESP_LOGW(TAG, "read_storage(%u, %s): %s — skipping", kind, key, esp_err_to_name(ret));
+        if (ret != ESP_ERR_NOT_FOUND && ret != ESP_ERR_NVS_NOT_FOUND) {
+            ESP_LOGW(TAG, "read_storage(%u, %s): %s - skipping", kind, key, esp_err_to_name(ret));
         } else {
-            ESP_LOGD(TAG, "read_storage(%u, %s): not found — skipping", kind, key);
+            ESP_LOGD(TAG, "read_storage(%u, %s): not found - skipping", kind, key);
         }
         free(blob);
         return ESP_OK;

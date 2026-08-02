@@ -134,8 +134,18 @@ static bool usbmod_send_packet(const uint8_t *packet, uint16_t len) {
     if (!tud_mounted() || !tud_hid_n_ready(ITF_NUM_HID_COMM)) {
         return false;
     }
-    // Convert generic packet pointer to standard void pointer for tud_hid_n_report
-    return tud_hid_n_report(ITF_NUM_HID_COMM, REPORT_ID_COMM, packet, len);
+    
+    // USB HID requires reports to strictly match the descriptor size.
+    // The COMM report descriptor specifies 63 bytes payload (plus 1 byte report ID = 64 bytes total).
+    uint16_t required_len = COMM_REPORT_SIZE; // 63
+    uint8_t padded_buf[63] = {0};
+    
+    if (len > required_len) {
+        len = required_len;
+    }
+    memcpy(padded_buf, packet, len);
+    
+    return tud_hid_n_report(ITF_NUM_HID_COMM, REPORT_ID_COMM, padded_buf, required_len);
 }
 
 static bool usbmod_is_ready(void) {

@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "comm_send.h"
 #include "comm_crc.h"
 #include "comm_defs.h"
@@ -34,9 +36,19 @@ bool comm_send_single_packet(comm_transport_t target, uint8_t *packet, uint16_t 
     comm_crc_prepare_packet(packet, logical_len);
     
     const comm_transport_ops_t *ops = comm_transport_get(target);
-    if (!ops || !ops->is_ready || !ops->is_ready()) {
-        ESP_LOGW(TAG, "Transport %d not ready", target);
+    if (!ops || !ops->is_ready || !ops->send_packet) {
         return false;
+    }
+    
+    uint32_t wait_timeout_ticks = pdMS_TO_TICKS(100);
+    uint32_t start_tick = xTaskGetTickCount();
+    
+    while (!ops->is_ready()) {
+        if ((xTaskGetTickCount() - start_tick) >= wait_timeout_ticks) {
+            ESP_LOGW(TAG, "Transport %d not ready (timeout)", target);
+            return false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(1));
     }
     
     return ops->send_packet(packet, logical_len);

@@ -38,7 +38,7 @@
 - [x] **Step 10:** Update `usb_module` (`usbmod.c`, `CMakeLists.txt`, `usb_descriptors.h`) to strip old comm logic and register as a transport.
 - [x] **Step 11:** Update all consumers (`cfgmod.c`, `statusmod.c`, `splitmod.c`, `kb_manager.c`, etc.) to use `comm_module.h`.
 - [x] **Step 12:** Update `main.c` init order to call `comm_init()` before `usb_init()`.
-- [ ] **Phase 0 Verification:**
+- [x] **Phase 0 Verification:**
   - **Step 1:** Flash both ESP32S3 units with the latest firmware via USB.
   - **Step 2:** Connect Unit A to PC via USB (Master unit).
   - **Step 3:** Open the Configurator App (WebHID) on the PC and connect to the device.
@@ -53,7 +53,7 @@
 - [x] **Step 2:** Create `components/ble_module/ble_comm_transport.c` and `.h` to implement `comm_transport_ops_t`.
 - [x] **Step 3:** Update `blemod.c` to initialize the COMM service and manage connection state.
 - [x] **Step 4:** Update `ble_module/CMakeLists.txt` and `sdkconfig.defaults` (NimBLE resource tuning).
-- [ ] **Phase 1 Verification:**
+- [x] **Phase 1 Verification:**
   - **Step 1:** Keep the Master ESP32S3 (Unit A) powered on.
   - **Step 2:** Open a BLE testing app on your phone or PC (e.g., **nRF Connect** or **LightBlue**).
   - **Step 3 (Discovery):** Scan for Bluetooth devices and connect to the keyboard.

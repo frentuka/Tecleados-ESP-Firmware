@@ -70,12 +70,6 @@ static void process_incoming_packet(comm_transport_t source, const uint8_t *raw_
     
     uint8_t flags = header->flags;
     
-    if (!comm_rx_blast_active() || (flags & PAYLOAD_FLAG_FIRST)) {
-        if (flags != PAYLOAD_FLAG_STATUS_REQ && flags != PAYLOAD_FLAG_BITMAP) {
-            comm_build_send_single_packet(source, PAYLOAD_FLAG_ACK, header->remaining_packets, 0, NULL);
-        }
-    }
-    
     if (flags == PAYLOAD_FLAG_STATUS_REQ) {
         comm_rx_blast_update_activity();
         if (comm_rx_blast_active()) {
@@ -104,6 +98,12 @@ static void process_incoming_packet(comm_transport_t source, const uint8_t *raw_
     if (is_rx && header->payload_len == 0) {
         ESP_LOGE(TAG, "Received RX payload_len == 0");
         return;
+    }
+
+    if (is_rx) {
+        if (!comm_rx_blast_active() || (flags & PAYLOAD_FLAG_FIRST)) {
+            comm_build_send_single_packet(source, PAYLOAD_FLAG_ACK, header->remaining_packets, 0, NULL);
+        }
     }
     
     if (is_rx) {

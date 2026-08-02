@@ -392,8 +392,9 @@ export class HIDTransport {
         packet[3] = payloadLen;
         packet.set(data.slice(0, payloadLen), 4);
 
-        const crcValue = computeCrc8(packet.slice(0, 62));
-        packet[62] = crcValue;
+        const logicalLen = 4 + payloadLen + 1; // header + payload + crc
+        const crcValue = computeCrc8(packet.slice(0, logicalLen - 1));
+        packet[logicalLen - 1] = crcValue;
 
         return packet;
     }

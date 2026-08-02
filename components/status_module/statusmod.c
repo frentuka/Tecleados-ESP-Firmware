@@ -45,7 +45,23 @@ static bool send_status_push(void) {
              s_cache.split_state,
              s_cache.split_role);
 
-    return comm_send_message(COMM_TRANSPORT_BROADCAST, MODULE_STATUS, (const uint8_t*)json_buf, strlen(json_buf));
+    // The Configurator expects a 7-byte header for all COMM messages:
+    // [0] Module ID (added by comm_send_message)
+    // [1] Command
+    // [2] Key ID
+    // [3..6] Status (4 bytes)
+    // [7..] JSON text
+    size_t json_len = strlen(json_buf);
+    size_t payload_len = 6 + json_len;
+    uint8_t *payload = malloc(payload_len);
+    if (!payload) return false;
+    
+    memset(payload, 0, 6);
+    memcpy(payload + 6, json_buf, json_len);
+
+    bool res = comm_send_message(COMM_TRANSPORT_BROADCAST, MODULE_STATUS, payload, payload_len);
+    free(payload);
+    return res;
 }
 
 /* =========================================================================
