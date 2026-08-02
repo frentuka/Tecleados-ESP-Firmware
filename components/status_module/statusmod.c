@@ -1,9 +1,7 @@
 #include "statusmod.h"
 #include "cfg_ble.h"
 #include "cfgmod.h"
-#include "usbmod.h"
-#include "usb_send.h"
-#include "usb_callbacks_tx.h"
+#include "comm_module.h"
 #include "event_bus.h"
 #include "splitmod.h"
 #include "esp_log.h"
@@ -47,14 +45,7 @@ static bool send_status_push(void) {
              s_cache.split_state,
              s_cache.split_role);
 
-
-    uint8_t header[7] = {MODULE_STATUS, 0, 0, 0, 0, 0, 0};
-    size_t json_len = strlen(json_buf);
-    uint8_t full_resp[7 + 160]; /* 7-byte header + max JSON */
-    memcpy(full_resp, header, 7);
-    memcpy(full_resp + 7, json_buf, json_len);
-
-    return send_payload(full_resp, (uint16_t)(7 + json_len));
+    return comm_send_message(COMM_TRANSPORT_BROADCAST, MODULE_STATUS, (const uint8_t*)json_buf, strlen(json_buf));
 }
 
 /* =========================================================================
@@ -179,7 +170,7 @@ static void status_on_split_event(void *arg, esp_event_base_t base,
 #include "blemod.h"
 
 /* Manual status request from configurator (USB callback) */
-static bool status_module_callback(uint8_t *data, uint16_t data_len) {
+static bool status_module_callback(comm_transport_t source, uint8_t *data, uint16_t data_len) {
 
     // If we are the Master (or Standalone), refresh the live data from the stack
     // before responding. This allows the heartbeat poll to self-correct if
@@ -219,8 +210,8 @@ void status_module_init(void) {
     esp_event_handler_register(SPLIT_EVENTS, ESP_EVENT_ANY_ID,
                                status_on_split_event, NULL);
 
-    // Register manual-poll USB callback.
-    usbmod_register_callback(MODULE_STATUS, status_module_callback);
+    // Register manual-poll comms callback.
+    comm_register_module(MODULE_STATUS, status_module_callback);
 
     ESP_LOGI(TAG, "Status module initialized (event-driven)");
 }

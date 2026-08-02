@@ -3,17 +3,23 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "comm_transport.h" // For comm_transport_t
+
+// Protocol sizing constants
+#define COMM_MAX_PACKET_SIZE 260
+#define COMM_REPORT_SIZE 63
+
 // ======== types ========
 
-typedef enum usb_msg_module: uint8_t {
+typedef enum comm_module_id: uint8_t {
 	MODULE_CONFIG = 0,
 	MODULE_SYSTEM,
     MODULE_ACTION,
     MODULE_STATUS,
     MODULE_SPLIT,
     MODULE_BLE,        // BLE profile / routing control
-    USB_MODULE_COUNT
-} usb_msg_module_t;
+    COMM_MODULE_COUNT
+} comm_module_id_t;
 
 // ======== flags ========
 
@@ -37,16 +43,13 @@ typedef enum usb_msg_module: uint8_t {
 
 // ======== single packet struct ========
 
-#define MAX_PAYLOAD_LENGTH 58
-
+// Packet header (4 bytes)
 typedef struct __attribute__ ((packed)) {
     uint8_t flags;
-	uint16_t remaining_packets;
+    uint16_t remaining_packets;
     uint8_t payload_len;
-    uint8_t payload[MAX_PAYLOAD_LENGTH];
-    uint8_t crt;
-} usb_packet_msg_t;
+} comm_packet_header_t;
 
 // ======== callback type ========
 
-typedef bool (*usb_data_callback_t)(uint8_t *data, uint16_t data_len);
+typedef bool (*comm_data_callback_t)(comm_transport_t source, uint8_t *data, uint16_t data_len);

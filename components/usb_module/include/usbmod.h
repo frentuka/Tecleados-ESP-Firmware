@@ -4,9 +4,6 @@
 #include <stdint.h>
 #include <stdio.h>
 
-
-#include "usb_defs.h"
-
 #include "tinyusb.h"
 
 // test stuff
@@ -20,18 +17,10 @@ bool usb_send_keyboard_nkro(uint8_t modifier, const uint8_t *bitmap,
                             uint16_t len);
 bool usb_send_consumer_report(uint16_t keycode);
 
-void usbmod_register_callback(usb_msg_module_t callback_module,
-                              usb_data_callback_t callback);
-bool usbmod_execute_callback(usb_msg_module_t callback_module, uint8_t const *data,
-                             uint16_t data_len);
-
 void usb_task(void *arg);
 void usb_init();
 
 // callback stuff (to be managed inside usb_callbacks)
-// TinyUSB HID callbacks are required when HID is enabled in the
-// descriptor/config. Provide minimal stubs to satisfy the linker (and
-// optionally extend later).
 uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
                                hid_report_type_t report_type, uint8_t *buffer,
                                uint16_t reqlen);

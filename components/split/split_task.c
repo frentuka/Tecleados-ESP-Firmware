@@ -31,7 +31,7 @@
 #include "split_bridge.h"
 #include "split_bench.h"
 #include "cfg_ble.h"
-#include "usbmod.h"
+
 
 #define TAG "SPLIT_TK"
 

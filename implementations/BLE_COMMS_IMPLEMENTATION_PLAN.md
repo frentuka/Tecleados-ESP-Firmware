@@ -26,26 +26,49 @@
 ## Step-by-Step Implementation Task List
 
 ### Phase 0: `comm_module` Extraction
-- [ ] **Step 1:** Create `components/comm_module/` directory structure and `CMakeLists.txt`.
-- [ ] **Step 2:** Migrate `usb_defs.h` to `comm_defs.h` (rename types and add protocol sizing constants).
-- [ ] **Step 3:** Migrate `usb_crc.c/h` to `comm_crc.c/h` (update for dynamic length parameter).
-- [ ] **Step 4:** Create `comm_transport.h` and `comm_transport.c` for the abstraction interface.
-- [ ] **Step 5:** Create `comm_session.h` and `comm_session.c` to implement the exclusive transport mutex and session lock.
-- [ ] **Step 6:** Migrate `usb_send.c/h` to `comm_send.c/h` (remove USB hard dependency).
-- [ ] **Step 7:** Migrate `usb_callbacks.c/h` to `comm_dispatch.c/h` (routing, queue, task creation, transport disconnect cleanup hooks).
-- [ ] **Step 8:** Migrate `usb_callbacks_rx/tx.c` to `comm_rx/tx.c`, replacing transport-specific static buffers with a globally shared static buffer protected by `comm_session`.
-- [ ] **Step 9:** Create public API header `comm_module.h`.
-- [ ] **Step 10:** Update `usb_module` (`usbmod.c`, `CMakeLists.txt`, `usb_descriptors.h`) to strip old comm logic and register as a transport.
-- [ ] **Step 11:** Update all consumers (`cfgmod.c`, `statusmod.c`, `splitmod.c`, `kb_manager.c`, etc.) to use `comm_module.h`.
-- [ ] **Step 12:** Update `main.c` init order to call `comm_init()` before `usb_init()`.
-- [ ] **Phase 0 Verification:** Clean build, test USB COMM, single-transport session locking, Blast mode, and split commands.
+- [x] **Step 1:** Create `components/comm_module/` directory structure and `CMakeLists.txt`.
+- [x] **Step 2:** Migrate `usb_defs.h` to `comm_defs.h` (rename types and add protocol sizing constants).
+- [x] **Step 3:** Migrate `usb_crc.c/h` to `comm_crc.c/h` (update for dynamic length parameter).
+- [x] **Step 4:** Create `comm_transport.h` and `comm_transport.c` for the abstraction interface.
+- [x] **Step 5:** Create `comm_session.h` and `comm_session.c` to implement the exclusive transport mutex and session lock.
+- [x] **Step 6:** Migrate `usb_send.c/h` to `comm_send.c/h` (remove USB hard dependency).
+- [x] **Step 7:** Migrate `usb_callbacks.c/h` to `comm_dispatch.c/h` (routing, queue, task creation, transport disconnect cleanup hooks).
+- [x] **Step 8:** Migrate `usb_callbacks_rx/tx.c` to `comm_rx/tx.c`, replacing transport-specific static buffers with a globally shared static buffer protected by `comm_session`.
+- [x] **Step 9:** Create public API header `comm_module.h`.
+- [x] **Step 10:** Update `usb_module` (`usbmod.c`, `CMakeLists.txt`, `usb_descriptors.h`) to strip old comm logic and register as a transport.
+- [x] **Step 11:** Update all consumers (`cfgmod.c`, `statusmod.c`, `splitmod.c`, `kb_manager.c`, etc.) to use `comm_module.h`.
+- [x] **Step 12:** Update `main.c` init order to call `comm_init()` before `usb_init()`.
+- [ ] **Phase 0 Verification:**
+  - **Step 1:** Flash both ESP32S3 units with the latest firmware via USB.
+  - **Step 2:** Connect Unit A to PC via USB (Master unit).
+  - **Step 3:** Open the Configurator App (WebHID) on the PC and connect to the device.
+    - *Expected:* Connection succeeds and device configuration is read successfully via USB.
+  - **Step 4 (Blast Mode & Session Lock):** Make a change to the keymap in the app and click "Save".
+    - *Expected:* The config transfers successfully. The ESP-IDF terminal should log `Blast mode: expecting X packets` followed by `Payload RX Complete!` and speed metrics. The USB connection should not drop.
+  - **Step 5 (Split Integration):** Power on Unit B (Slave unit) and press keys on it.
+    - *Expected:* Keystrokes from Unit B are sent to the PC through Unit A. This verifies `splitmod` correctly uses the new `comm_module` for ESP-NOW bridging.
 
 ### Phase 1: BLE COMM GATT Service
-- [ ] **Step 1:** Create `components/ble_module/ble_comm_service.c` and `.h` with custom UUIDs.
-- [ ] **Step 2:** Create `components/ble_module/ble_comm_transport.c` and `.h` to implement `comm_transport_ops_t`.
-- [ ] **Step 3:** Update `blemod.c` to initialize the COMM service and manage connection state.
-- [ ] **Step 4:** Update `ble_module/CMakeLists.txt` and `sdkconfig.defaults` (NimBLE resource tuning).
-- [ ] **Phase 1 Verification:** Ensure COMM service is discoverable and handles RX writes/TX notifications.
+- [x] **Step 1:** Create `components/ble_module/ble_comm_service.c` and `.h` with custom UUIDs.
+- [x] **Step 2:** Create `components/ble_module/ble_comm_transport.c` and `.h` to implement `comm_transport_ops_t`.
+- [x] **Step 3:** Update `blemod.c` to initialize the COMM service and manage connection state.
+- [x] **Step 4:** Update `ble_module/CMakeLists.txt` and `sdkconfig.defaults` (NimBLE resource tuning).
+- [ ] **Phase 1 Verification:**
+  - **Step 1:** Keep the Master ESP32S3 (Unit A) powered on.
+  - **Step 2:** Open a BLE testing app on your phone or PC (e.g., **nRF Connect** or **LightBlue**).
+  - **Step 3 (Discovery):** Scan for Bluetooth devices and connect to the keyboard.
+    - *Expected:* Connection succeeds.
+  - **Step 4 (Service Check):** Browse the listed GATT services.
+    - *Expected:* A Custom Service with UUID `4D544546-0001-4B42-4254-455F434F4D4D` (COMM Service) is present.
+  - **Step 5 (Characteristics Check):** Expand the COMM Service.
+    - *Expected:* You see three characteristics:
+      - `...0002...` (RX) with properties **Write, Write Without Response**.
+      - `...0003...` (TX) with properties **Read, Notify**.
+      - `...0004...` (MTU) with properties **Read, Notify**.
+  - **Step 6 (MTU Read):** Tap "Read" on the MTU characteristic (`0004`).
+    - *Expected:* It returns a 2-byte hex value (e.g., `0xFF 0x00` or `0x00 0x01` etc.) representing the maximum negotiated payload size.
+  - **Step 7 (Subscription):** Enable notifications (Subscribe) on the TX (`0003`) and MTU (`0004`) characteristics.
+    - *Expected:* The ESP-IDF terminal logs `COMM TX SUBSCRIBED (conn=X)`.
 
 ### Phase 2: Configurator Dual-Transport Support
 - [ ] **Step 1:** Create `configurator/src/services/ITransport.ts` abstraction.

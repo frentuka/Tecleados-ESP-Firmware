@@ -27,6 +27,7 @@
 #include "class/hid/hid.h"
 #include "tusb.h"
 #include "usb_descriptors.h"
+#include "comm_module.h"
 #include "usbmod.h"
 
 static const char *TAG = "kb_manager";
@@ -157,7 +158,7 @@ static void debounce_update(const uint8_t *raw, uint8_t *stable) {
 }
 
 /* ---- USB system callback (test key injection) ---- */
-static bool kb_system_usb_callback(uint8_t *data, uint16_t len) {
+static bool kb_system_usb_callback(comm_transport_t source, uint8_t *data, uint16_t len) {
     if (len < 1) return false;
 
     uint8_t cmd = data[0];
@@ -481,7 +482,7 @@ void kb_manager_start(void) {
 
     memset(s_injected_matrix, 0, sizeof(s_injected_matrix));
     memset(s_remote_matrix,   0, sizeof(s_remote_matrix));
-    usbmod_register_callback(MODULE_SYSTEM, kb_system_usb_callback);
+    comm_register_module(MODULE_SYSTEM, kb_system_usb_callback);
     kb_matrix_gpio_init();
 
     vTaskDelay(pdMS_TO_TICKS(500)); // Allow USB/GPIO to settle before scanning

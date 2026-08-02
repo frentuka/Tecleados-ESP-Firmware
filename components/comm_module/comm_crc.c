@@ -1,8 +1,9 @@
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 
-#include "usb_crc.h"
-#include "usb_descriptors.h"
+#include "comm_crc.h"
+#include "comm_defs.h"
 
 // Precomputed CRC-8 table for polynomial 0x07 (reflected)
 static const uint8_t crc8_table[256] = {
@@ -33,15 +34,17 @@ static uint8_t compute_crc8(const uint8_t *data, size_t len) {
     return crc;
 }
 
-// will fix packet size to COMM_REPORT_SIZE and last byte will be CRC
-void usb_crc_prepare_packet(uint8_t *packet) {
-    uint8_t payload_size = COMM_REPORT_SIZE - 1;
+// compute CRC and place it at logical_len - 1
+void comm_crc_prepare_packet(uint8_t *packet, uint16_t logical_len) {
+    if (logical_len == 0) return;
+    uint16_t payload_size = logical_len - 1;
     uint8_t crc = compute_crc8(packet, payload_size);  // Over payload
     packet[payload_size] = crc;
 }
 
 // verify packet
-bool usb_crc_verify_packet(const uint8_t *packet) {
-    uint8_t crc = compute_crc8(packet, COMM_REPORT_SIZE);  // Over payload + received CRC
-    return (crc == 0);  // 1 if valid, 0 if error
+bool comm_crc_verify_packet(const uint8_t *packet, uint16_t logical_len) {
+    if (logical_len == 0) return false;
+    uint8_t crc = compute_crc8(packet, logical_len);  // Over payload + received CRC
+    return (crc == 0);  // true if valid, false if error
 }

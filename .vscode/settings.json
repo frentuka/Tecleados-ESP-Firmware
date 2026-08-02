@@ -30,6 +30,6 @@
   "[cpp]": {
     "editor.formatOnSave": false
   },
-  "idf.currentSetup": "/home/srleg/.espressif/v6.0.1/esp-idf",
+  "idf.currentSetup": "C:\\appcrap\\Espressif\\v6.0.2\\esp-idf",
   "idf.port": "/dev/ttyACM1"
 }

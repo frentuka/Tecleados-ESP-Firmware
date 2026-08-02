@@ -27,6 +27,7 @@
 #include "button.h"
 #include "cfgmod.h"
 #include "rgb.h"
+#include "comm_module.h"
 #include "usbmod.h"
 #include "statusmod.h"
 
@@ -61,6 +62,7 @@ static void init_procedure(void) {
   // Initialize RGB. GPIO 48 is standard on many ESP32-S3 boards.
   rgb_init(GPIO_NUM_48);
 
+  comm_init();
   usb_init();
   ble_hid_init();
 

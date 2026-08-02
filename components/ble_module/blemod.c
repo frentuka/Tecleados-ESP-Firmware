@@ -22,6 +22,8 @@
 #include "store/config/ble_store_config.h"
 
 #include "ble_hid_service.h"
+#include "ble_comm_service.h"
+#include "ble_comm_transport.h"
 #include "cfg_ble.h"
 #include "cfg_system.h"
 #include "event_bus.h"
@@ -175,6 +177,8 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
         } else {
             ESP_LOGW(TAG, "Could not map connection to profile!");
         }
+        
+        ble_comm_set_conn_handle(event->connect.conn_handle);
 
         // Identity resolution is deferred until encryption/pairing is complete.
         s_directed_profile = -1;
@@ -205,6 +209,7 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
 
   case BLE_GAP_EVENT_DISCONNECT:
     ESP_LOGI(TAG, "Device disconnected, reason=%d. Handle=%d", event->disconnect.reason, event->disconnect.conn.conn_handle);
+    ble_comm_on_disconnect(event->disconnect.conn.conn_handle);
     for (int i = 0; i < CFG_BLE_MAX_PROFILES; i++) {
         if (s_conn_handles[i] == event->disconnect.conn.conn_handle) {
             ESP_LOGI(TAG, "Connection for profile %d cleared.", i);
@@ -432,6 +437,18 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
              "cur_notify=%d, cur_indicate=%d",
              event->subscribe.conn_handle, event->subscribe.attr_handle,
              event->subscribe.cur_notify, event->subscribe.cur_indicate);
+
+    if (event->subscribe.attr_handle == ble_comm_get_tx_handle()) {
+        ble_comm_set_subscribed(event->subscribe.conn_handle,
+                                event->subscribe.cur_notify == 1);
+        ESP_LOGI(TAG, "COMM TX %s (conn=%d)",
+                 event->subscribe.cur_notify ? "SUBSCRIBED" : "UNSUBSCRIBED",
+                 event->subscribe.conn_handle);
+    } else if (event->subscribe.attr_handle == ble_comm_get_mtu_handle()) {
+        ble_comm_set_mtu_subscribed(event->subscribe.conn_handle,
+                                    event->subscribe.cur_notify == 1);
+    }
+
     // When Android subscribes to notifications, push the battery level
     if (event->subscribe.cur_notify == 1) {
       int bat_rc =
@@ -453,6 +470,7 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
   case BLE_GAP_EVENT_MTU:
     ESP_LOGD(TAG, "MTU update event; conn_handle=%d mtu=%d",
              event->mtu.conn_handle, event->mtu.value);
+    ble_comm_on_mtu_change(event->mtu.conn_handle, event->mtu.value);
     break;
 
   case BLE_GAP_EVENT_CONN_UPDATE:
@@ -819,6 +837,8 @@ void ble_hid_init(void) {
   ble_svc_gap_init();
   ble_svc_gatt_init();
   ble_hid_svc_register();
+  ble_comm_svc_register();
+  ble_comm_transport_init();
 
   // 6. Set device name and appearance (GAP)
   // Priority: ble_shared_name (split identity) > device_name > compile-time fallback.
@@ -1170,6 +1190,7 @@ void ble_hid_set_suspended(bool suspended) {
 
     if (suspended) {
         ESP_LOGI(TAG, "BLE operations suspended. Terminating connections and stopping advertising.");
+        ble_comm_reset_state();
         for (int i = 0; i < CFG_BLE_MAX_PROFILES; i++) {
             if (s_conn_handles[i] != BLE_HS_CONN_HANDLE_NONE) {
                 // 0x15 = "Remote Device Terminated Due to Power Off" (valid per BLE spec).

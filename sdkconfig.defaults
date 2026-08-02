@@ -38,7 +38,7 @@ CONFIG_BT_NIMBLE_WHITELIST_SIZE=9
 # MSYS2 (large): initial descriptor exchange and connection setup bursts.
 # After connection is established the keyboard only ever sends tiny reports,
 # so the pool drains quickly and blocks are recycled.
-CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT=24
+CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT=28
 CONFIG_BT_NIMBLE_MSYS_2_BLOCK_COUNT=8
 
 # ACL buffers between LL controller and host.  One or two in-flight per
@@ -51,9 +51,10 @@ CONFIG_BT_NIMBLE_TRANSPORT_EVT_COUNT=16
 CONFIG_BT_NIMBLE_TRANSPORT_EVT_DISCARD_COUNT=4
 
 # CCCDs (client characteristic config descriptors).  A keyboard HID profile
-# needs ~4–5 per connection (keyboard report, boot report, battery, consumer).
-# 15 = 5 × 3 connections with a small buffer.
-CONFIG_BT_NIMBLE_MAX_CCCDS=15
+# needs ~4–5 per connection. The custom COMM service requires 2 more.
+# 21 = 7 × 3 connections.
+CONFIG_BT_NIMBLE_MAX_CCCDS=21
+CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=256
 
 # ATT prepared-write queue.  Long writes are never used by HID.  Minimum = 1.
 CONFIG_BT_NIMBLE_ATT_MAX_PREP_ENTRIES=4

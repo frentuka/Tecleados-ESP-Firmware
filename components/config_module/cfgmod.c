@@ -8,8 +8,8 @@
 #include "esp_log.h"
 #include "nvs.h"
 #include "nvs_flash.h"
-#include "usbmod.h"
-#include "usb_send.h"
+#include "comm_module.h"
+#include "comm_transport.h"
 
 #include "cfg_custom_keys.h"
 #include "cfg_macros.h"
@@ -635,7 +635,7 @@ bool cfg_is_init(void) { return s_init; }
 
 #define CFG_USB_RESP_BUF_SIZE 32000
 
-bool cfg_usb_callback(uint8_t *data, uint16_t data_len) {
+bool cfg_usb_callback(comm_transport_t source, uint8_t *data, uint16_t data_len) {
     size_t buf_size = CFG_USB_RESP_BUF_SIZE;
     uint8_t *out_buf = heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!out_buf) out_buf = malloc(buf_size); // fallback to internal RAM
@@ -646,13 +646,10 @@ bool cfg_usb_callback(uint8_t *data, uint16_t data_len) {
     
     size_t out_len = 0;
     
-    // Add module ID back as the first byte of response so the web UI knows it's from Config
-    out_buf[0] = MODULE_CONFIG;
-    
-    esp_err_t err = cfgmod_handle_usb_comm(data, data_len, out_buf + 1, &out_len, buf_size - 1);
+    esp_err_t err = cfgmod_handle_usb_comm(data, data_len, out_buf, &out_len, buf_size);
     
     if (err == ESP_OK && out_len > 0) {
-        send_payload(out_buf, out_len + 1);
+        comm_send_message(source, MODULE_CONFIG, out_buf, out_len);
     }
     
     free(out_buf);
@@ -698,8 +695,8 @@ esp_err_t cfg_init(void) {
     cfg_physical_register();
     cfg_ble_init();
 
-    // Register USB callback for the CONFIG MODULE
-    usbmod_register_callback(MODULE_CONFIG, cfg_usb_callback);
+    // Register comm callback for the CONFIG MODULE
+    comm_register_module(MODULE_CONFIG, cfg_usb_callback);
   }
 
   return err;
