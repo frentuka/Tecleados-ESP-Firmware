@@ -123,7 +123,7 @@ function SortableLayoutTab({ id, meta, isActive, hasChanges, onDelete, onSelect 
             {...attributes}
             {...listeners}
             className={`layout-tab-pill ${isActive ? 'layout-tab-pill-active' : ''} ${hasChanges ? 'layout-tab-pill-changed' : ''}`}
-            onClick={(e) => {
+            onClick={() => {
                 if (isDragging) return;
                 onSelect();
             }}

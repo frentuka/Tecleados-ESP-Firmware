@@ -10,6 +10,7 @@
  */
 
 import { HIDTransport } from './HIDTransport';
+import type { ITransport } from './ITransport';
 import {
     MODULE_CONFIG,
     MODULE_SYSTEM,
@@ -67,10 +68,32 @@ export interface DeviceIdentity {
 export { HIDTransport };
 
 export class DeviceController {
-    public readonly transport: HIDTransport;
+    public transport: ITransport;
 
-    constructor(transport?: HIDTransport) {
+    private connectionCallbacks: Set<(connected: boolean) => void> = new Set();
+    private statusUpdateCallbacks: Set<(status: DeviceStatus) => void> = new Set();
+    private logCallbacks: Set<(data: Uint8Array) => void> = new Set();
+    private rawPacketCallbacks: Set<(data: Uint8Array, dir: 'rx' | 'tx') => void> = new Set();
+
+    constructor(transport?: ITransport) {
         this.transport = transport || new HIDTransport();
+    }
+
+    public setTransport(newTransport: ITransport) {
+        // Remove callbacks from old transport
+        this.connectionCallbacks.forEach(cb => this.transport.offConnectionChange(cb));
+        this.statusUpdateCallbacks.forEach(cb => this.transport.offStatusUpdate(cb));
+        this.logCallbacks.forEach(cb => this.transport.offLogReceived(cb));
+        this.rawPacketCallbacks.forEach(cb => this.transport.offRawPacket(cb));
+
+        // Set new transport
+        this.transport = newTransport;
+
+        // Apply callbacks to new transport
+        this.connectionCallbacks.forEach(cb => this.transport.onConnectionChange(cb));
+        this.statusUpdateCallbacks.forEach(cb => this.transport.onStatusUpdate(cb));
+        this.logCallbacks.forEach(cb => this.transport.onLogReceived(cb));
+        this.rawPacketCallbacks.forEach(cb => this.transport.onRawPacket(cb));
     }
 
     // ── Delegate connection methods ─────────────────────────────────────
@@ -81,14 +104,41 @@ export class DeviceController {
     public getDeviceName() { return this.transport.getDeviceName(); }
 
     // Connection observers
-    public onConnectionChange(cb: (connected: boolean) => void) { this.transport.onConnectionChange(cb); }
-    public offConnectionChange(cb: (connected: boolean) => void) { this.transport.offConnectionChange(cb); }
-    public onStatusUpdate(cb: (status: DeviceStatus) => void) { this.transport.onStatusUpdate(cb); }
-    public offStatusUpdate(cb: (status: DeviceStatus) => void) { this.transport.offStatusUpdate(cb); }
-    public onLogReceived(cb: (data: Uint8Array) => void) { this.transport.onLogReceived(cb); }
-    public offLogReceived(cb: (data: Uint8Array) => void) { this.transport.offLogReceived(cb); }
-    public onRawPacket(cb: (data: Uint8Array, dir: 'rx' | 'tx') => void) { this.transport.onRawPacket(cb); }
-    public offRawPacket(cb: (data: Uint8Array, dir: 'rx' | 'tx') => void) { this.transport.offRawPacket(cb); }
+    public onConnectionChange(cb: (connected: boolean) => void) { 
+        this.connectionCallbacks.add(cb);
+        this.transport.onConnectionChange(cb); 
+    }
+    public offConnectionChange(cb: (connected: boolean) => void) { 
+        this.connectionCallbacks.delete(cb);
+        this.transport.offConnectionChange(cb); 
+    }
+    
+    public onStatusUpdate(cb: (status: DeviceStatus) => void) { 
+        this.statusUpdateCallbacks.add(cb);
+        this.transport.onStatusUpdate(cb); 
+    }
+    public offStatusUpdate(cb: (status: DeviceStatus) => void) { 
+        this.statusUpdateCallbacks.delete(cb);
+        this.transport.offStatusUpdate(cb); 
+    }
+    
+    public onLogReceived(cb: (data: Uint8Array) => void) { 
+        this.logCallbacks.add(cb);
+        this.transport.onLogReceived(cb); 
+    }
+    public offLogReceived(cb: (data: Uint8Array) => void) { 
+        this.logCallbacks.delete(cb);
+        this.transport.offLogReceived(cb); 
+    }
+    
+    public onRawPacket(cb: (data: Uint8Array, dir: 'rx' | 'tx') => void) { 
+        this.rawPacketCallbacks.add(cb);
+        this.transport.onRawPacket(cb); 
+    }
+    public offRawPacket(cb: (data: Uint8Array, dir: 'rx' | 'tx') => void) { 
+        this.rawPacketCallbacks.delete(cb);
+        this.transport.offRawPacket(cb); 
+    }
 
     // ── Low-level command ───────────────────────────────────────────────
 

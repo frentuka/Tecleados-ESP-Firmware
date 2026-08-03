@@ -71,11 +71,11 @@
     - *Expected:* The ESP-IDF terminal logs `COMM TX SUBSCRIBED (conn=X)`.
 
 ### Phase 2: Configurator Dual-Transport Support
-- [ ] **Step 1:** Create `configurator/src/services/ITransport.ts` abstraction.
-- [ ] **Step 2:** Create `CommProtocol.ts` to share blast+reconcile protocol engine logic.
-- [ ] **Step 3:** Create `BLETransport.ts` implementing Web Bluetooth.
-- [ ] **Step 4:** Refactor `HIDTransport.ts` and `DeviceController.ts` to use `ITransport`.
-- [ ] **Step 5:** Update `App.tsx` with a transport selector UI (USB vs Bluetooth).
+- [x] **Step 1:** Create `configurator/src/services/ITransport.ts` abstraction.
+- [x] **Step 2:** Create `CommProtocol.ts` to share blast+reconcile protocol engine logic.
+- [x] **Step 3:** Create `BLETransport.ts` implementing Web Bluetooth.
+- [x] **Step 4:** Refactor `HIDTransport.ts` and `DeviceController.ts` to use `ITransport`.
+- [x] **Step 5:** Update `App.tsx` with a transport selector UI (USB vs Bluetooth).
 - [ ] **Phase 2 Verification:** Test full configurator functionality via Web Bluetooth on desktop and Android.
 
 ### Phase 3: Split Keyboard Verification & Documentation

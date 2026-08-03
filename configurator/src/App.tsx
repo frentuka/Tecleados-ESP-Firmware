@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { hidService, HIDTransport } from './HIDService';
+import { hidService, HIDTransport, BLETransport } from './HIDService';
+import ConnectModal from './ConnectModal';
 import KeyboardLayoutEditor from './KeyboardLayoutEditor';
 import MacrosDashboard from './MacrosDashboard';
 import CustomKeysDashboard from './CustomKeysDashboard';
@@ -48,6 +49,7 @@ function App() {
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
+  const [isConnectModalOpen, setIsConnectModalOpen] = useState(false);
   const [highlightMacroId] = useState<number | null>(null);
   const [highlightCkeyId] = useState<number | null>(null);
   
@@ -162,6 +164,10 @@ function App() {
         }
         if (isSettingsOpen) {
           setIsSettingsOpen(false);
+          handled = true;
+        }
+        if (isConnectModalOpen) {
+          setIsConnectModalOpen(false);
           handled = true;
         }
         if (handled) return;
@@ -433,8 +439,20 @@ function App() {
 
 
   const handleConnect = async () => {
-    setNotification(null);
+    setIsConnectModalOpen(true);
+  };
+
+  const handleSelectTransport = async (transportType: 'usb' | 'ble') => {
+    const transport = transportType === 'usb' ? new HIDTransport() : new BLETransport();
+    hidService.setTransport(transport);
+    
+    // CRITICAL: requestDevice must be called before ANY state updates 
+    // to preserve the transient user activation in Chrome.
     const result = await hidService.requestDevice();
+    
+    setNotification(null);
+    setIsConnectModalOpen(false);
+    
     if (!result.ok && result.notification) {
       setNotification(result.notification);
     }
@@ -639,6 +657,12 @@ function App() {
             logEntries={logs.map(l => l.text)}
             onClearLog={() => setLogs([])}
           />
+          
+          <ConnectModal 
+            isOpen={isConnectModalOpen} 
+            onClose={() => setIsConnectModalOpen(false)} 
+            onSelectTransport={handleSelectTransport} 
+          />
         </div>
       ) : hasCompletedOnboarding ? (
         <div className="disconnected-overlay">
@@ -664,6 +688,14 @@ function App() {
           </div>
         </div>
       ) : null}
+
+      {!isConnected && (
+        <ConnectModal 
+          isOpen={isConnectModalOpen} 
+          onClose={() => setIsConnectModalOpen(false)} 
+          onSelectTransport={handleSelectTransport} 
+        />
+      )}
 
       {/* Global Floating Notifications */}
       {((typeof displayedNotification?.message === 'string' && displayedNotification.message === 'PERMISSION_DENIED') || (typeof displayedNotification?.message === 'string' && displayedNotification.message.includes('System lock'))) && HIDTransport.isLinux() && (

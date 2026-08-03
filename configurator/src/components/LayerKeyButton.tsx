@@ -11,7 +11,7 @@ interface LayerKeyButtonProps {
 }
 
 export default function LayerKeyButton({ layoutId, layoutName, currentValue, onSelect, animationDelay }: LayerKeyButtonProps) {
-    const [isHovered, setIsHovered] = useState(false);
+    // const [isHovered, setIsHovered] = useState(false);
     const [showMenu, setShowMenu] = useState(false);
     const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
     const [tooltipPosition, setTooltipPosition] = useState({ top: 0, left: 0, show: false });
