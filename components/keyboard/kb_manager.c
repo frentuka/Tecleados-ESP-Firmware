@@ -274,9 +274,9 @@ static void kb_manager_task(void *arg) {
         /* --- Scan hardware matrix --- */
         kb_matrix_scan(s_raw_matrix, s_mirror_cols);
 
-        /* Merge injected test keys (or clear them if USB is gone) */
+        /* Merge injected test keys (or clear them if no transport method is present) */
         portENTER_CRITICAL(&s_injected_matrix_lock);
-        if (tud_suspended() || !tud_ready()) {
+        if (!comm_transport_any_connected()) {
             memset(s_injected_matrix, 0, sizeof(s_injected_matrix));
         } else {
             for (size_t i = 0; i < sizeof(s_raw_matrix); i++) {
