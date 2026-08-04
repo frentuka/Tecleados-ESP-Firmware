@@ -546,28 +546,23 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
             setActiveLayerId(metas[0].id);
         }
 
-        const newCache: Record<number, any> = {};
-        const newStatus: Record<number, 'idle' | 'loading' | 'loaded' | 'error'> = {};
         const newChanges: Record<number, boolean> = {};
 
         for (const meta of metas) {
-            newStatus[meta.id] = 'loading';
             setLayerStatus(prev => ({ ...prev, [meta.id]: 'loading' }));
             
             const layoutData = await hidService.fetchLayoutSingle(meta.id);
             if (layoutData) {
-                newCache[meta.id] = layoutData.keys;
-                newStatus[meta.id] = 'loaded';
+                setLayerDataCache(prev => ({ ...prev, [meta.id]: layoutData.keys }));
+                setLayerStatus(prev => ({ ...prev, [meta.id]: 'loaded' }));
                 onLogRef.current(`Layout ${meta.id} loaded (${meta.name})`);
             } else {
-                newStatus[meta.id] = 'error';
+                setLayerStatus(prev => ({ ...prev, [meta.id]: 'error' }));
                 onLogRef.current(`Failed to load layout ${meta.id} (${meta.name})`);
             }
             newChanges[meta.id] = false;
         }
 
-        setLayerDataCache(newCache);
-        setLayerStatus(prev => ({ ...prev, ...newStatus }));
         setHasChanges(prev => ({ ...prev, ...newChanges }));
 
     }, [activeLayerId, setActiveLayerId, setLayoutMetas, setLayerDataCache]);

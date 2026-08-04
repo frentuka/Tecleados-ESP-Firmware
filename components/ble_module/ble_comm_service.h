@@ -1,6 +1,9 @@
 #pragma once
 
 #include <stdint.h>
+#include "host/ble_hs.h"
+
+extern const ble_uuid128_t comm_svc_uuid;
 
 /**
  * @brief Initialize and register the COMM GATT service.

@@ -76,8 +76,13 @@
 - [x] **Step 3:** Create `BLETransport.ts` implementing Web Bluetooth.
 - [x] **Step 4:** Refactor `HIDTransport.ts` and `DeviceController.ts` to use `ITransport`.
 - [x] **Step 5:** Update `App.tsx` with a transport selector UI (USB vs Bluetooth).
-- [ ] **Phase 2 Verification:** Test full configurator functionality via Web Bluetooth on desktop and Android.
-
+- [x] **Phase 2 Verification:** Test full configurator functionality via Web Bluetooth on desktop and Android.
+  - **Step 2.V1 (Desktop Basic Connection):** Connect via USB and BLE using the Configurator UI. Ensure both transports can fetch all configuration data correctly.
+  - **Step 2.V2 (Reconnection Stability):** Connect via BLE, then disconnect using the UI button. Reconnect again without refreshing the site. Verify that no zombie listeners cause duplicate packets and that the `unexpected transport 1` error does not appear in the ESP-IDF monitor.
+  - **Step 2.V3 (Hard Refresh Stability):** Press F5 while connected via BLE. Then click connect. Verify it reconnects properly.
+  - **Step 2.V4 (State Reset):** Connect via BLE and navigate through the Configurator. Disconnect. Verify that the UI properly clears all layout, macro, combo, and custom key caches from the store, and that the loading screen behaves progressively.
+  - **Step 2.V5 (Write Operations):** With BLE connected, create a new Macro, assign it to a key, and save it. Disconnect, F5, reconnect, and verify the macro is preserved accurately.
+  - **Step 2.V6 (Android Web Bluetooth):** Repeat Step 2.V1 to 2.V5 on an Android device using a Chromium-based browser to ensure cross-platform Web Bluetooth compliance.
 ### Phase 3: Split Keyboard Verification & Documentation
 - [ ] **Step 1:** Verify slave suspension logic correctly disables COMM service.
 - [ ] **Step 2:** Perform role swap and ensure new master's BLE COMM is functional.
@@ -1744,3 +1749,14 @@ Because `comm_rx.c` and `comm_tx.c` use globally shared static buffers for blast
 | `components/usb_module/USB_MODULE.md`   | Update local module docs                        |
 | `components/comm_module/COMM_MODULE.md` | NEW — Document the new comm_module and comm_session |
 | `components/comm_module/comm_session.c/.h` | NEW — Shared Mutex for exclusive session lock |
+
+### Phase 3 — Key Test Mode over BLE (Fixing Web Bluetooth HID Starvation)
+
+**The Problem:** Web Bluetooth on desktop browsers actively blocks or takes exclusive control of the BLE GATT connection, preventing the OS from receiving standard HID reports. This starves the Configurator of `KeyboardEvent`s, breaking Key Test Mode.
+
+**The Fix:**
+1. **Firmware:** Expose a new command `SYS_CMD_GET_MATRIX (0x03)` in `components/keyboard/kb_manager.c` that returns the debounced `s_matrix` array.
+2. **Configurator Protocol:** Update `types/protocol.ts` and `HIDService.ts` to implement `getLocalMatrix()`.
+3. **Configurator UI:** Refactor `KeyboardLayoutEditor.tsx` to poll the local matrix via the COMM protocol when in Key Test Mode over BLE, falling back to standard `KeyboardEvent`s when connected over USB (to preserve system battery).
+4. **BLE System Actions:** Document that pressing "BLE Profile Switch" keys while connected via Web Bluetooth will deliberately sever the connection.
+

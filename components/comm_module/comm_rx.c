@@ -150,8 +150,8 @@ bool comm_rx_blast_commit(comm_transport_t source, const uint8_t *last_packet, u
     float process_time_ms = (rx_process_end - rx_process_start) / 1000.0f;
     float transfer_speed_kbps = receive_time_ms > 0 ? size_kb / (receive_time_ms / 1000.0f) : 0;
 
-    ESP_LOGI(TAG, "Payload RX Complete! Packets: %u | Size: %.2f KB | Speed: %.2f KB/s", 
-             s_rx_blast_total_packets, size_kb, transfer_speed_kbps);
+    ESP_LOGI(TAG, "[Blast RX] Complete. %u packets, %u bytes total in %.1f ms. Speed: %.2f KB/s", 
+             s_rx_blast_total_packets, s_rx_buf_len, receive_time_ms, transfer_speed_kbps);
 
     rx_blast_reset();
     comm_erase_rx_buffer();
@@ -220,6 +220,7 @@ void comm_process_rx_request(comm_transport_t source, const uint8_t *packet, uin
     }
 
     if ((header->flags & PAYLOAD_FLAG_LAST) && result) {
+        ESP_LOGI(TAG, "[Single RX] Transaction complete: 1 packet, %d bytes", header->payload_len);
         result = process_rx_buffer(source);
         if (!result) {
             ESP_LOGE(TAG, "Error when processing rx buffer. Responding with ERR.");
@@ -261,6 +262,10 @@ static bool process_rx_buffer(comm_transport_t source) {
         return false;
     }
     comm_module_id_t module = (comm_module_id_t)s_rx_buf[0];
+    uint8_t cmd = (s_rx_buf_len >= 2) ? s_rx_buf[1] : 0;
+    uint8_t key_id = (s_rx_buf_len >= 3) ? s_rx_buf[2] : 0;
+    ESP_LOGI(TAG, "COMMAND RECEIVED: module=%d, cmd=%d, keyId=%d, payload_len=%d bytes", module, cmd, key_id, s_rx_buf_len);
+    
     bool success = comm_execute_callback(source, module, &s_rx_buf[1], s_rx_buf_len - 1);
     if (!success) {
         ESP_LOGE(TAG, "Module %d callback failed to execute", module);

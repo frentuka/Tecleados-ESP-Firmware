@@ -244,15 +244,18 @@ export class CommProtocol {
     public async sendCustomCommReport(data: Uint8Array): Promise<boolean> {
         try {
             const totalPackets = Math.ceil(data.length / this.maxPayloadLength) || 1;
+            const startTime = performance.now();
+            console.log(`[Blast TX] Starting transaction: ${totalPackets} packets, total ${data.length} bytes, max payload ${this.maxPayloadLength} bytes/pkt`);
 
             // Single packet path
             if (totalPackets === 1) {
                 const flags = PAYLOAD_FLAG_FIRST | PAYLOAD_FLAG_LAST;
                 const reportData = this.buildCommPacket(flags, 0, data);
-                return await this.safeSendReport(reportData);
+                const success = await this.safeSendReport(reportData);
+                const elapsed = performance.now() - startTime;
+                console.log(`[Blast TX] Transaction complete (single packet) in ${elapsed.toFixed(1)}ms. Packet size: ${reportData.length} bytes.`);
+                return success;
             }
-
-            console.log(`[Blast TX] Starting: ${totalPackets} packets for ${data.length} bytes`);
 
             // Phase 1: Handshake
             const ackPromise = this.waitForFlag(PAYLOAD_FLAG_ACK, 3000);
@@ -321,7 +324,8 @@ export class CommProtocol {
                 return false;
             }
 
-            console.log('[Blast TX] Complete');
+            const elapsed = performance.now() - startTime;
+            console.log(`[Blast TX] Transaction complete (multi-packet) in ${elapsed.toFixed(1)}ms.`);
             return true;
         } catch (error) {
             console.error('Error in blast send:', error);
@@ -366,17 +370,20 @@ export class CommProtocol {
 
     public sendCommand(payload: Uint8Array, timeoutMs?: number): Promise<CommandResponse | null> {
         const effectiveTimeout = timeoutMs ?? Math.max(5000, 5000 + payload.length * 5);
-        const cmdHex = Array.from(payload.slice(0, Math.min(4, payload.length)))
-            .map(b => b.toString(16).padStart(2, '0')).join(' ');
+        const module = payload.length > 0 ? payload[0] : -1;
+        const cmd = payload.length > 1 ? payload[1] : -1;
+        const keyId = payload.length > 2 ? payload[2] : -1;
 
         return this.enqueueTask(async () => {
-            console.log(`[CommProtocol Queue] Sending command: ${cmdHex} (${payload.length} bytes)`);
+            const startTime = performance.now();
+            console.log(`[CommProtocol] -> SEND COMMAND: module=${module}, cmd=${cmd}, keyId=${keyId} (${payload.length} bytes)`);
 
             let timer: any;
             const promise = new Promise<CommandResponse | null>((resolve) => {
                 timer = setTimeout(() => {
                     if (this.pendingResolve) {
-                        console.warn(`[CommProtocol Queue] Command timed out after ${effectiveTimeout}ms: ${cmdHex}`);
+                        const elapsed = performance.now() - startTime;
+                        console.warn(`[CommProtocol] <- COMMAND TIMED OUT after ${elapsed.toFixed(1)}ms: module=${module}, cmd=${cmd}, keyId=${keyId}`);
                         this.pendingResolve = null;
                         this.pendingResponse = null;
                         this.blastRxReset();
@@ -387,6 +394,8 @@ export class CommProtocol {
                 this.pendingResolve = (resp) => {
                     clearTimeout(timer);
                     this.pendingResolve = null;
+                    const elapsed = performance.now() - startTime;
+                    console.log(`[CommProtocol] <- RESPONSE RECEIVED in ${elapsed.toFixed(1)}ms for module=${module}, cmd=${cmd}, keyId=${keyId}. Status=${resp?.status}`);
                     resolve(resp);
                 };
             });
@@ -426,6 +435,13 @@ export class CommProtocol {
         // Ensure there is enough data for the payload and CRC
         if (data.length < 4 + safeLen + 1) return;
         
+        // Verify CRC
+        const expectedCrc = computeCrc8(data.slice(0, 4 + safeLen));
+        if (data[4 + safeLen] !== expectedCrc) {
+            console.warn(`[CommProtocol] CRC mismatch. Expected 0x${expectedCrc.toString(16)}, got 0x${data[4 + safeLen].toString(16)}`);
+            return;
+        }
+
         const payloadBytes = data.slice(4, 4 + safeLen);
 
         const isBlastPacket = (flags & PAYLOAD_FLAG_MID) || (flags & PAYLOAD_FLAG_LAST);
@@ -462,6 +478,7 @@ export class CommProtocol {
         // Blast RX: FIRST with remaining > 0 → handshake
         if ((flags & PAYLOAD_FLAG_FIRST) && remaining > 0) {
             const totalPackets = remaining + 1;
+            console.log(`[Blast RX] Starting transaction: ${totalPackets} packets expected, payload size roughly ${safeLen} bytes/pkt`);
             if (totalPackets > BLAST_RX_MAX_PACKETS) {
                 console.error(`[Blast RX] ABORTING: Ridiculous packet count (${totalPackets})`);
                 this.sendResponse(PAYLOAD_FLAG_ABORT);
@@ -472,7 +489,7 @@ export class CommProtocol {
             this.blastRx.buffer = new Uint8Array(totalPackets * this.maxPayloadLength);
             this.blastRx.bitmap = new Uint8Array(Math.ceil(totalPackets / 8));
             this.blastRx.payloadLens = new Uint8Array(totalPackets);
-            this.blastRx.startTime = Date.now();
+            this.blastRx.startTime = performance.now();
             this.blastRxReceivePacket(0, payloadBytes, safeLen);
             this.sendResponse(PAYLOAD_FLAG_ACK);
             return;
@@ -495,11 +512,12 @@ export class CommProtocol {
             const lastIndex = this.blastRx.totalPackets - 1;
             this.blastRxReceivePacket(lastIndex, payloadBytes, safeLen);
 
-            const duration = Date.now() - this.blastRx.startTime;
+            const duration = performance.now() - this.blastRx.startTime;
             const count = this.blastRx.totalPackets;
+            console.log(`[Blast RX] Transaction complete: ${count} packets received in ${duration.toFixed(1)}ms`);
 
             // Log aggregated summary
-            const summaryData = new TextEncoder().encode(`Comms: ${count} packets received in ${duration}ms`);
+            const summaryData = new TextEncoder().encode(`Comms: ${count} packets received in ${Math.round(duration)}ms`);
             // We use a dummy packet structure (Flags: 0xFF) to signal a summary log
             const virtualPacket = new Uint8Array(64);
             virtualPacket[0] = 0xFF;

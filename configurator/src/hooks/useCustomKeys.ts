@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { hidService } from '../HIDService';
 import type { CustomKey } from '../types/customKeys';
 import { withTimeout } from '../utils/withTimeout';
@@ -18,6 +18,12 @@ export function useCustomKeys(
     confirm: ConfirmFn,
 ) {
     const [customKeys, setCustomKeys] = useState<CustomKey[]>([]);
+
+    useEffect(() => {
+        if (!isConnected) {
+            setCustomKeys([]);
+        }
+    }, [isConnected]);
 
     const fetchSingleCustomKey = useCallback(async (id: number): Promise<CustomKey | null> => {
         if (!isConnected) return null;

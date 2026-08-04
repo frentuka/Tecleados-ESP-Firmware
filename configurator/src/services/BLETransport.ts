@@ -20,6 +20,25 @@ export class BLETransport implements ITransport {
     private server: BluetoothRemoteGATTServer | null = null;
     private rxChar: BluetoothRemoteGATTCharacteristic | null = null;
     private txChar: BluetoothRemoteGATTCharacteristic | null = null;
+    private mtuChar: BluetoothRemoteGATTCharacteristic | null = null;
+    private onRawReceivedCallback: ((data: Uint8Array) => void) | null = null;
+
+    private handleTxCharValue = (event: any) => {
+        if (!this.txChar) return; // Prevent zombie listeners from processing events
+        if (this.onRawReceivedCallback && event.target && event.target.value) {
+            this.onRawReceivedCallback(new Uint8Array(event.target.value.buffer));
+        }
+    };
+
+    private handleMtuCharValue = (event: any) => {
+        if (!this.mtuChar) return;
+        if (event.target && event.target.value) {
+            const mtuVal = event.target.value.getUint16(0, true);
+            if (this.protocol) {
+                this.protocol.setMaxPacketSize(mtuVal);
+            }
+        }
+    };
     
     private protocol: CommProtocol | null = null;
     private connectionCallbacks: Set<ConnectionCallback> = new Set();
@@ -45,10 +64,7 @@ export class BLETransport implements ITransport {
             }
 
             this.device = await nav.bluetooth.requestDevice({
-                filters: [
-                    { services: [COMM_SERVICE_UUID] },
-                    { namePrefix: 'Tecleados' }
-                ],
+                filters: [{ services: [COMM_SERVICE_UUID] }],
                 optionalServices: [COMM_SERVICE_UUID],
             });
 
@@ -91,11 +107,11 @@ export class BLETransport implements ITransport {
                     }
                 },
                 onRawReceived: (cb) => {
-                    this.txChar!.addEventListener('characteristicvaluechanged', (e: any) => {
-                        cb(new Uint8Array(e.target.value.buffer));
-                    });
+                    this.onRawReceivedCallback = cb;
                 },
             });
+
+            this.txChar.addEventListener('characteristicvaluechanged', this.handleTxCharValue);
 
             // Register existing observers
             this.statusUpdateCallbacks.forEach(cb => this.protocol!.onStatusUpdate(cb));
@@ -106,27 +122,25 @@ export class BLETransport implements ITransport {
             await this.txChar.startNotifications();
 
             // Subscribe to MTU updates (Handle async BLE_GAP_EVENT_MTU race condition)
-            const mtuChar = await service.getCharacteristic(COMM_MTU_CHAR_UUID);
-            await mtuChar.startNotifications();
-            mtuChar.addEventListener('characteristicvaluechanged', (event: any) => {
-                const val = event.target.value;
-                if (this.protocol && val) {
-                    this.protocol.setMaxPacketSize(val.getUint16(0, true)); // little-endian
-                }
-            });
+            this.mtuChar = await service.getCharacteristic(COMM_MTU_CHAR_UUID);
+            await this.mtuChar.startNotifications();
+            this.mtuChar.addEventListener('characteristicvaluechanged', this.handleMtuCharValue);
             
             // Read the initial MTU *after* subscribing to guarantee no updates are missed
-            const mtuVal = await mtuChar.readValue();
+            const mtuVal = await this.mtuChar.readValue();
             this.protocol.setMaxPacketSize(mtuVal.getUint16(0, true)); // little-endian
 
             this.notifyConnectionChange(true);
         } catch (error) {
             console.error('BLE connection failed:', error);
-            this.device.removeEventListener('gattserverdisconnected', this.handleDisconnect);
+            if (this.device) {
+                this.device.removeEventListener('gattserverdisconnected', this.handleDisconnect);
+            }
             this.device = null;
             this.server = null;
             this.rxChar = null;
             this.txChar = null;
+            this.mtuChar = null;
             throw error;
         }
     }
@@ -176,6 +190,14 @@ export class BLETransport implements ITransport {
     public async disconnect(forceReset: boolean = false): Promise<void> {
         if (forceReset) {
             this.wantConnection = false;
+        }
+        if (this.txChar) {
+            this.txChar.removeEventListener('characteristicvaluechanged', this.handleTxCharValue);
+            try { await this.txChar.stopNotifications(); } catch (e) { console.warn('Failed to stop txChar notifications', e); }
+        }
+        if (this.mtuChar) {
+            this.mtuChar.removeEventListener('characteristicvaluechanged', this.handleMtuCharValue);
+            try { await this.mtuChar.stopNotifications(); } catch (e) { console.warn('Failed to stop mtuChar notifications', e); }
         }
         if (this.device && this.device.gatt) {
             this.device.removeEventListener('gattserverdisconnected', this.handleDisconnect);

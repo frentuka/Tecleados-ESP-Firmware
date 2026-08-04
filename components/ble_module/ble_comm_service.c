@@ -16,7 +16,7 @@ static const char *TAG = "ble_comm_svc";
  * TX Char UUID:  4D544546-0003-4B42-4254-455F434F4D4D  (READ | NOTIFY)
  */
 
-static const ble_uuid128_t comm_svc_uuid = BLE_UUID128_INIT(
+const ble_uuid128_t comm_svc_uuid = BLE_UUID128_INIT(
     0x4D, 0x4D, 0x4F, 0x43, 0x5F, 0x45, 0x54, 0x42,
     0x42, 0x4B, 0x01, 0x00, 0x46, 0x45, 0x54, 0x4D);
 

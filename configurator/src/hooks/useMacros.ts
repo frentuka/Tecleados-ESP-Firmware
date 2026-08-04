@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import {
     hidService,
     MODULE_CONFIG,
@@ -38,6 +38,15 @@ export function useMacros(
         macrosRef.current = list;
         setMacros(list);
     };
+
+    // Reset state when disconnected
+    useEffect(() => {
+        if (!isConnected) {
+            syncMacros([]);
+            setMacroLimits(null);
+            macroCache.current = {};
+        }
+    }, [isConnected]);
 
     const fetchMacroLimits = useCallback(async () => {
         if (!isConnected) return;

@@ -222,6 +222,10 @@ function App() {
       if (!connected) {
         setDeviceStatus(null);
         setDeviceName('');
+        useLayoutStore.getState().setPhysicalLayout(null);
+        useLayoutStore.getState().setLayoutMetas([]);
+        useLayoutStore.getState().setLayerDataCache({});
+        useLayoutStore.getState().setActiveLayerId(0);
       } else {
         setDeviceName(hidService.getDeviceName() || 'Unknown Device');
       }

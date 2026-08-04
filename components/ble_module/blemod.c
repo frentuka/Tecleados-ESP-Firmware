@@ -748,6 +748,17 @@ static void ble_hid_advertise(void) {
           return;
       }
 
+      struct ble_hs_adv_fields rsp_fields = {0};
+      rsp_fields.uuids128 = &comm_svc_uuid;
+      rsp_fields.num_uuids128 = 1;
+      rsp_fields.uuids128_is_complete = 1;
+      
+      rc = ble_gap_adv_rsp_set_fields(&rsp_fields);
+      if (rc != 0) {
+          ESP_LOGE(TAG, "ble_gap_adv_rsp_set_fields failed: %d", rc);
+          // don't abort, just log
+      }
+
       ESP_LOGI(TAG, "Starting undirected adv: mode=%s duration=%ld ms profile=%d state=%s",
                adv_params.disc_mode == BLE_GAP_DISC_MODE_GEN ? "GEN_DISC" : "NON_DISC",
                (long)duration_ms, active_profile,

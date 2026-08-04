@@ -172,12 +172,12 @@ static bool tx_blast_send_all_mid_packets(void) {
 
 void comm_process_tx_response(comm_transport_t source, const uint8_t *packet, uint16_t len) {
     if (source != s_tx_current_target) {
-        ESP_LOGE(TAG, "Received TX response from unexpected transport %d", source);
+        ESP_LOGE(TAG, "Received TX response from unexpected transport %d (flags=0x%02X)", source, packet[0]);
         return;
     }
 
     if (!s_tx_awaiting_response) {
-        ESP_LOGE(TAG, "Received unexpected TX response.");
+        ESP_LOGE(TAG, "Received unexpected TX response. (flags=0x%02X)", packet[0]);
         return;
     }
 
@@ -205,6 +205,8 @@ void comm_process_tx_response(comm_transport_t source, const uint8_t *packet, ui
         }
 
         if (s_tx_blast_mode_flag && (header->flags & PAYLOAD_FLAG_OK)) {
+            float time_ms = (esp_timer_get_time() - s_tx_blast_start_time_us) / 1000.0f;
+            ESP_LOGI(TAG, "[Blast TX] Transaction complete: %u packets, %u bytes in %.1f ms", s_tx_blast_total_packets, s_tx_buf_len, time_ms);
             comm_erase_tx_buffer();
             return;
         }
@@ -219,6 +221,7 @@ void comm_process_tx_response(comm_transport_t source, const uint8_t *packet, ui
                 s_tx_awaiting_response = true;
             } else {
                 if (header->flags & PAYLOAD_FLAG_OK) {
+                    ESP_LOGI(TAG, "[Single TX] Transaction complete: 1 packet, %u bytes", s_tx_buf_len);
                     comm_erase_tx_buffer();
                 } else {
                     s_tx_awaiting_response = true;

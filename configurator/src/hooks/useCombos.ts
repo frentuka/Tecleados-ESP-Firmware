@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { hidService } from '../HIDService';
 import type { Combo, ComboLimits } from '../types/combos';
 import { withTimeout } from '../utils/withTimeout';
@@ -12,6 +12,13 @@ export function useCombos(
 ) {
     const [combos, setCombos] = useState<Combo[]>([]);
     const [comboLimits, setComboLimits] = useState<ComboLimits | null>(null);
+
+    useEffect(() => {
+        if (!isConnected) {
+            setCombos([]);
+            setComboLimits(null);
+        }
+    }, [isConnected]);
 
     const fetchComboLimits = useCallback(async () => {
         if (!isConnected) return;
