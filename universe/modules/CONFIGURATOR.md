@@ -4,7 +4,7 @@
 > **Entry point:** `configurator/src/main.tsx` → `App.tsx`
 > **Tech stack:** React 19 + TypeScript + Vite — runs entirely in the browser, no backend server.
 
-The **Configurator** is the browser-based GUI for the keyboard firmware. It communicates with the device over [the USB COMM channel](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/USB_MODULE.md) using the **WebHID API**, implementing the exact same Blast+Reconcile transport protocol as the firmware. The user never installs a driver or companion app — they open a URL, click Connect, and the browser talks directly to the keyboard. 
+The **Configurator** is the browser-based GUI for the keyboard firmware. It communicates with the device over either the **USB COMM channel (WebHID API)** or the **BLE COMM channel (Web Bluetooth API)**, implementing the exact same Blast+Reconcile transport protocol as the firmware. The user never installs a driver or companion app — they open a URL, click Connect, and the browser talks directly to the keyboard.
 
 > [!NOTE]
 > Because WebHID is a high-privilege device API, browsers strictly require a **Secure Context (HTTPS)** to enable it. Consequently, for local testing and development purposes only, the server runs over HTTPS using `@vitejs/plugin-basic-ssl` (`https://localhost:5173`) with a self-signed certificate. Any production/public hosting must be configured with a standard trusted SSL/TLS certificate (such as Let's Encrypt).
@@ -36,11 +36,13 @@ The application is divided into three layers that mirror the firmware's own laye
 └────────────────────────────────────────────────────────────────────┘
 ```
 
-### 1. Transport Layer (`HIDTransport.ts`)
+### 1. Transport Layer (`HIDTransport.ts` / `BLETransport.ts`)
 
-This is the TypeScript mirror of the firmware's `usb_callbacks_tx.c` / `usb_callbacks_rx.c`. It implements:
+This is the TypeScript mirror of the firmware's protocol engine (`comm_module`). It implements:
 
-- **WebHID discovery**: Filters for `VID=0x303A / PID=0x1324`. Polls every 2 seconds for reconnection after disconnect.
+- **WebHID discovery**: Filters for `VID=0x303A / PID=0x1324`.
+- **Web Bluetooth discovery**: Filters for the Custom GATT COMM Service UUID (`4D544546-0001-4B42-4254-455F434F4D4D`).
+- **Auto-reconnect**: Polls every 2 seconds for reconnection after disconnect.
 - **CRC-8**: Same polynomial (`0x07`) and lookup table as `usb_crc.c` in the firmware. Every outgoing packet is CRC-stamped; incoming packets are verified.
 - **Packet structure** (63 bytes, mirrors `usb_packet_msg_t`):
 
@@ -99,15 +101,14 @@ The legacy `HIDService.ts` file is a thin re-export façade that maps old import
 
 ## Cross-Module Connections
 
-### [USB_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/USB_MODULE.md) — The Communication Pipe
+### [COMM_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/COMM_MODULE.md) — The Protocol Engine
 
-All configurator↔firmware traffic flows through the USB COMM channel (`ITF_NUM_HID_COMM`). The configurator mirrors the firmware's protocol constants word-for-word in `types/protocol.ts`:
-- Same `VID/PID` for device discovery
-- Same `COMM_REPORT_SIZE = 63`, `MAX_PAYLOAD_LENGTH = 58`
-- Same flag byte definitions (`FIRST`, `MID`, `LAST`, `ACK`, `NAK`, etc.)
+All configurator↔firmware traffic flows through the transport-agnostic `comm_module`. The configurator mirrors the firmware's protocol constants word-for-word in `types/protocol.ts`:
+- Same Flag byte definitions (`FIRST`, `MID`, `LAST`, `ACK`, `NAK`, etc.)
 - Same CRC-8 polynomial and table
+- Adapts dynamically to the transport's max packet size (63 bytes for USB, up to 260 bytes for BLE).
 
-Any mismatch between `types/protocol.ts` and `usb_defs.h` / `cfgmod.h` will break communication silently (packets will CRC-fail or be routed to the wrong module).
+Any mismatch between `types/protocol.ts` and `comm_defs.h` will break communication silently (packets will CRC-fail or be routed to the wrong module).
 
 ### [CONFIG_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/CONFIG_MODULE.md) — Read/Write Everything
 
@@ -166,16 +167,16 @@ graph TD
         STATUS_W["StatusWidget"]
 
         DC["DeviceController\n(Business Logic)"]
-        TRANSPORT["HIDTransport\n(WebHID + Blast Protocol)"]
+        TRANSPORT["HIDTransport / BLETransport\n(Blast Protocol)"]
     end
 
     subgraph firmware ["Firmware (ESP32)"]
-        USB_CB["USB COMM Channel\n(ITF_NUM_HID_COMM)"]
-        CFG["MODULE_CONFIG\n(cfg_usb_callback)"]
-        SYS["MODULE_SYSTEM\n(kb_system_usb_callback)"]
-        STAT["MODULE_STATUS\n(status_module_callback)"]
-        SPL["MODULE_SPLIT\n(split_usb_callback)"]
-        BLE_CB["MODULE_BLE\n(ble_usb_callback)"]
+        COMM_ENG["comm_module\n(Protocol Engine)"]
+        CFG["MODULE_CONFIG"]
+        SYS["MODULE_SYSTEM"]
+        STAT["MODULE_STATUS"]
+        SPL["MODULE_SPLIT"]
+        BLE_CB["MODULE_BLE"]
     end
 
     APP --> DC
@@ -186,13 +187,13 @@ graph TD
     DEV_UI --> DC
     DC --> TRANSPORT
 
-    TRANSPORT -- "WebHID\n63-byte reports" --> USB_CB
+    TRANSPORT -- "WebHID / Web Bluetooth\nBlast Packets" --> COMM_ENG
 
-    USB_CB --> CFG
-    USB_CB --> SYS
-    USB_CB --> STAT
-    USB_CB --> SPL
-    USB_CB --> BLE_CB
+    COMM_ENG --> CFG
+    COMM_ENG --> SYS
+    COMM_ENG --> STAT
+    COMM_ENG --> SPL
+    COMM_ENG --> BLE_CB
 
     STAT -- "unsolicited push" --> STATUS_W
 ```

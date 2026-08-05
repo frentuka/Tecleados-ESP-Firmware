@@ -14,6 +14,47 @@ It deliberately owns **nothing** outside of BLE. It never calls into the keyboar
 
 ---
 
+## COMM Service (`ble_comm_service.c`)
+
+In addition to the standard HID service, the BLE module implements a **Custom GATT COMM Service** to support the `comm_module`. This provides a wireless transport for the Web Bluetooth Configurator.
+
+### GATT Structure
+
+```
+Service:    TEF COMM Service
+            UUID: 4D544546-0001-4B42-4254-455F434F4D4D
+
+Char 1:     COMM RX (Host → Device)
+            UUID: 4D544546-0002-4B42-4254-455F434F4D4D
+            Properties: WRITE | WRITE_NO_RSP
+
+Char 2:     COMM TX (Device → Host)
+            UUID: 4D544546-0003-4B42-4254-455F434F4D4D
+            Properties: READ | NOTIFY
+
+Char 3:     COMM MTU
+            UUID: 4D544546-0004-4B42-4254-455F434F4D4D
+            Properties: READ | NOTIFY
+```
+
+### Integration with `comm_module` (`ble_comm_transport.c`)
+
+The `ble_comm_transport.c` file acts as the adapter between the NimBLE stack and the abstract `comm_module`. It implements `comm_transport_ops_t`.
+
+When the host writes to the **RX Characteristic**, the NimBLE callback receives the raw bytes and forwards them directly to the protocol engine:
+
+```c
+comm_transport_receive_packet(COMM_TRANSPORT_BLE, data, len);
+```
+
+When the `comm_module` needs to send a payload back, it calls the transport's `send_packet` function, which pushes the payload as a notification on the **TX Characteristic**.
+
+### Dynamic MTU Sizing
+
+Unlike USB, which is locked to 63 bytes, the BLE COMM channel negotiates its maximum packet size up to **260 bytes**. The configurator reads the **MTU Characteristic** upon connection. The firmware returns `min(260, ble_att_mtu - 3)`. This allows maximum throughput on modern devices while seamlessly scaling down for legacy stacks.
+
+---
+
 ## How the Stack Works (Briefly)
 
 Under the hood, `blemod` uses the **NimBLE** host, which is Espressif's open-source BLE stack. It runs on a dedicated FreeRTOS task (`ble_host_task`) started by `nimble_port_freertos_init()`. Because NimBLE is event-driven, all actual BLE work happens inside the stack callbacks; `blemod.c` is essentially a collection of those callbacks and the glue that manages state around them.

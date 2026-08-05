@@ -2,32 +2,48 @@
 
 **Source of truth** for the contract between the ESP32-S3 firmware and the React configurator.
 
-## 1. Physical Transport
+## 1. Physical Transports
+
+The protocol engine operates independently of the physical transport. It supports two active transports:
+
+### USB Transport (WebHID)
 
 | Property        | Value                                        |
 | --------------- | -------------------------------------------- |
-| Interface       | USB HID (Vendor Defined)                     |
+| Interface       | USB HID (Vendor Defined, Interface 1)        |
 | Usage Page      | `0xFFFF`                                     |
 | Report ID       | `3` (COMM_REPORT_ID)                         |
-| Report Size     | **63 bytes** (host → device & device → host) |
+| Max Packet Size | **63 bytes** (host → device & device → host) |
 | Vendor ID       | `0x303A`                                     |
 | Product ID      | `0x1324`                                     |
 
+### BLE Transport (Web Bluetooth)
+
+| Property             | Value                                                  |
+| -------------------- | ------------------------------------------------------ |
+| Service UUID         | `4D544546-0001-4B42-4254-455F434F4D4D` (TEF COMM Service)|
+| RX Characteristic    | `...0002...` (Write, Write Without Response)           |
+| TX Characteristic    | `...0003...` (Notify, Read)                            |
+| MTU Characteristic   | `...0004...` (Notify, Read)                            |
+| Max Packet Size      | **Dynamically bound by MTU, up to 260 bytes**          |
+
+> **Note:** The BLE transport negotiates its MTU. The `MTU Characteristic` returns the maximum allowed COMM packet size (MTU - 3). Both host and device must chunk packets to this negotiated size.
+
 ## 2. Packet Anatomy
 
-All communication uses a fixed 63-byte HID report:
+The protocol uses variable-length packets (up to the transport's max packet size). The minimum packet size is 5 bytes (4 bytes header + 1 byte CRC).
 
 ```
-Byte  Field                  Size   Description
-───── ────────────────────── ────── ──────────────────────────────────────
-  0   flags                  1      Bitfield (see §3)
- 1-2  remaining_packets      2      Little-endian u16. Packets remaining after this one.
-  3   payload_len            1      Bytes of valid payload in this packet (0-58)
- 4-61 payload                58     Application data (zero-padded if payload_len < 58)
- 62   crc8                   1      CRC-8 over bytes 0-61 (polynomial 0x07)
+Byte    Field                  Size   Description
+─────── ────────────────────── ────── ──────────────────────────────────────
+  0     flags                  1      Bitfield (see §3)
+ 1-2    remaining_packets      2      Little-endian u16. Packets remaining after this one.
+  3     payload_len            1      Bytes of valid payload in this packet
+4-(3+N) payload                N      Application data (where N = payload_len)
+  4+N   crc8                   1      CRC-8 over bytes 0 to (3+N) (polynomial 0x07)
 ```
 
-> The `crc8` field uses polynomial `0x07` with initial value `0x00`. Both sides MUST validate CRC before processing.
+> The `crc8` field uses polynomial `0x07` with initial value `0x00`. Both sides MUST validate CRC before processing. The CRC is located at the logical end of the packet, regardless of how much trailing zero-padding the physical transport (like USB HID) might add.
 
 ## 3. Flag Definitions
 
@@ -58,7 +74,7 @@ Byte  Field                  Size   Description
 
 ## 4. Single-Packet Transfer
 
-For payloads ≤ 58 bytes, use a combined `FIRST|LAST` packet:
+For payloads small enough to fit within a single packet (i.e., `payload_len` ≤ `max_packet_size - 5`), use a combined `FIRST|LAST` packet:
 
 ```
 Sender  ──[FIRST|LAST, remaining=0, payload]──>  Receiver
@@ -67,7 +83,7 @@ Sender  <──[ACK|OK, response_payload]──────────  Receive
 
 ## 5. Multi-Packet Transfer (Blast + Reconcile)
 
-For payloads > 58 bytes, the protocol uses a 4-phase state machine:
+For payloads larger than a single packet's capacity, the protocol uses a 4-phase state machine:
 
 ```mermaid
 stateDiagram-v2
@@ -87,7 +103,7 @@ Sender  ──[FIRST, remaining=N-1, payload[0]]──>  Receiver
 Sender  <──[ACK]───────────────────────────────  Receiver
 ```
 
-The receiver allocates a buffer of `(remaining+1) × 58` bytes.
+The receiver allocates its global buffer. **Note:** Only one multi-packet transfer can occur at a time across all transports.
 
 ### Phase 2: Blast
 
@@ -152,6 +168,8 @@ Byte  Field        Size  Description
 | `0x01` | `MODULE_SYSTEM` | System commands (key injection)  |
 | `0x02` | `MODULE_ACTION` | (Reserved)                       |
 | `0x03` | `MODULE_STATUS` | Device status push/pull          |
+| `0x04` | `MODULE_SPLIT`  | Split link pairing/commands      |
+| `0x05` | `MODULE_BLE`    | Proxied BLE commands (Slave)     |
 
 ## 8. Config Key IDs
 
@@ -195,16 +213,16 @@ Byte  Field        Size  Description
 | Scenario             | Sender behavior                    | Receiver behavior                |
 | -------------------- | ---------------------------------- | -------------------------------- |
 | CRC mismatch         | Discard packet silently            | Discard packet silently          |
-| Handshake ACK timeout| Abort transfer, return error       | Clean up allocated buffer        |
+| Handshake ACK timeout| Abort transfer, return error       | Clean up session lock            |
 | Bitmap timeout       | Retry STATUS_REQ (max 5 rounds)    | —                                |
 | Max reconcile rounds | Abort transfer, return error       | Clean up on timeout              |
-| Device disconnect    | Reject pending promise, reconnect  | —                                |
-| ABORT flag received  | —                                  | Free buffer, reset state         |
+| Device disconnect    | Reject pending promise, reconnect  | Free session lock                |
+| ABORT flag received  | —                                  | Free session lock, reset state   |
 
 ### Auto-Reconnect
 
 The configurator maintains `wantConnection = true` after a user-initiated connect. On disconnect:
 1. Fires `onConnectionChange(false)` callback
-2. Starts 2-second polling via `navigator.hid.getDevices()`
-3. Also listens for the `connect` HID event for faster recovery
-4. On reconnection, fires `onConnectionChange(true)` — UI re-fetches all data
+2. Starts 2-second polling via `navigator.hid.getDevices()` or Web Bluetooth equivalent.
+3. Also listens for the `connect` event for faster recovery.
+4. On reconnection, fires `onConnectionChange(true)` — UI re-fetches all data.

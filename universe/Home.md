@@ -9,9 +9,10 @@ The firmware is divided into highly specific modules that run in the `components
 
 - [KEYBOARD_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/KEYBOARD_MODULE.md) - The central hub: architecture of the 1000Hz scanning engine, layer logic, and macro processing.
 - [SPLIT_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/SPLIT_MODULE.md) - Explains the architecture, connections, and magic behind split keyboard Bluetooth/Esp-Now linking and roles proxy.
-- [BLE_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/BLE_MODULE.md) - Explains the NimBLE HID peripheral stack: advertising, pairing, bonding, and all its connections to the keyboard, split, config, USB, and status modules.
-- [USB_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/USB_MODULE.md) - Details the bidirectional HID communication, NKRO/Boot protocol switching, and the custom system channel for real-time configuration.
+- [BLE_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/BLE_MODULE.md) - Explains the NimBLE HID peripheral stack: advertising, pairing, bonding, and the Custom GATT COMM service.
+- [USB_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/USB_MODULE.md) - Details the physical USB HID bridging for NKRO/Boot protocols and the COMM transport adapter.
+- [COMM_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/COMM_MODULE.md) - The transport-agnostic protocol engine for wireless and wired configuration via Blast+Reconcile.
 - [STATUS_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/STATUS_MODULE.md) - The state aggregator: manages real-time synchronization of BLE, Split, and USB states for the Configurator.
-- [CONFIG_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/CONFIG_MODULE.md) - The single source of truth for persistent settings, NVS storage, and the USB wire protocol GET/SET handlers.
-- [CONFIGURATOR](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/CONFIGURATOR.md) - The browser-based WebHID configurator: layout editor, KLE import, macro editor, split management, and the Blast+Reconcile transport that talks to all of the above.
+- [CONFIG_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/CONFIG_MODULE.md) - The single source of truth for persistent settings, NVS storage, and the COMM GET/SET handlers.
+- [CONFIGURATOR](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/CONFIGURATOR.md) - The browser-based Configurator (WebHID and Web Bluetooth): layout editor, KLE import, macro editor, and split management.
 
