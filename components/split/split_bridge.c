@@ -80,6 +80,10 @@ static void apply_ble_routing_for_role(split_role_t role)
     ESP_LOGI(TAG, "BLE routing → %s (role=%u)",
              should_suspend ? "SUSPENDED" : "RESUMED", (unsigned)role);
 
+    if (should_suspend) {
+        ESP_LOGI(TAG, "Phase 3 Verif: BLE routing suspension triggered.");
+    }
+
     if (!should_suspend) {
         // Bonds are already pre-warmed by config sync.  Skip directed ADV —
         // it reduces radio congestion during the initial heavy config sync.

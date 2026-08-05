@@ -1201,6 +1201,7 @@ void ble_hid_set_suspended(bool suspended) {
 
     if (suspended) {
         ESP_LOGI(TAG, "BLE operations suspended. Terminating connections and stopping advertising.");
+        ESP_LOGI(TAG, "Phase 3 Verif: BLE COMM state reset during suspension.");
         ble_comm_reset_state();
         for (int i = 0; i < CFG_BLE_MAX_PROFILES; i++) {
             if (s_conn_handles[i] != BLE_HS_CONN_HANDLE_NONE) {

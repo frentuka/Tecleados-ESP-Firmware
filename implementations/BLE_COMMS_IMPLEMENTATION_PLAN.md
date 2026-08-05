@@ -1590,13 +1590,39 @@ Ensure the BLE COMM channel works correctly in split keyboard configurations.
 
 ### 3.2 Phase 3 Verification
 
-| Check | Method |
-|-------|--------|
-| BLE COMM on master | Connect BLE configurator to master half, full config test |
-| BLE COMM unavailable on slave | Verify slave does not advertise COMM service (BLE suspended) |
-| Role swap | Perform role swap, verify new master's BLE COMM is functional |
-| Config sync after BLE write | Write a layout via BLE COMM on master, verify slave receives sync |
-| USB on slave + BLE on master | Simultaneous configurator sessions via different transports |
+To verify that the slave correctly suspends BLE (including the COMM service) and the master assumes control properly, we have added targeted debug logs with the prefix `Phase 3 Verif:`.
+
+**Step 1: Verify Slave Suspension and COMM Unavailability**
+1. Power on Unit B (the designated slave) *before* Unit A. It will briefly boot as master and advertise BLE.
+2. Power on Unit A (the designated master) and wait for the ESP-NOW link to establish.
+3. Observe the ESP-IDF monitor for Unit B. You should see the following logs when it transitions to slave:
+   - `BLE routing → SUSPENDED (role=2)`
+   - `Phase 3 Verif: BLE routing suspension triggered.`
+   - `Phase 3 Verif: BLE COMM state reset during suspension.`
+   - `Phase 3 Verif: COMM transport state cleared.`
+4. Use a BLE scanner app (e.g., nRF Connect). Verify that Unit B is no longer advertising the BLE COMM service, while Unit A is advertising it.
+
+**Step 2: Verify Master BLE COMM Functionality**
+1. Connect the Configurator via Web Bluetooth to Unit A (the master).
+2. Perform a full configuration test (read layout, change a key, save).
+3. Observe the ESP-IDF monitor for Unit A. Ensure that `Blast mode` logs indicate successful transfers over BLE.
+
+**Step 3: Verify Role Swap Survival**
+1. Disconnect the BLE Configurator from Unit A.
+2. Connect Unit B to your PC via USB (forcing it to become the master).
+3. Observe the ESP-IDF monitor for Unit B. You should see it resume BLE operations:
+   - `BLE routing → RESUMED (role=1)`
+4. Connect the Configurator via Web Bluetooth to Unit B.
+5. Verify that the COMM service survived the NimBLE reset and that you can successfully read the configuration from the new master.
+
+**Step 4: Verify Config Sync after BLE Write**
+1. With the Configurator connected via BLE to the master, write a new layout.
+2. Verify that the master sends the `SPLIT_MSG_CONFIG_SYNC` to the slave over ESP-NOW, and the slave applies the changes without needing its own BLE COMM channel.
+
+**Step 5: Verify Concurrent USB on Slave + BLE on Master**
+1. Connect Unit B (Slave) to a PC via USB. Open the Configurator (WebHID) on PC 1.
+2. Connect Unit A (Master) to a phone via BLE. Open the Configurator (Web Bluetooth) on Phone 1.
+3. Verify both configurators can independently pull the configuration at the same time. (The slave proxies its USB COMM commands over ESP-NOW to the master, while the master services its BLE COMM commands locally. The `comm_session` lock safely serializes concurrent blast writes.)
 
 ---
 

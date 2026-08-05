@@ -120,6 +120,7 @@ void ble_comm_on_mtu_change(uint16_t conn_handle, uint16_t mtu) {
 }
 
 void ble_comm_reset_state(void) {
+    ESP_LOGI(TAG, "Phase 3 Verif: COMM transport state cleared.");
     s_comm_conn_handle = BLE_HS_CONN_HANDLE_NONE;
     s_comm_subscribed = false;
     s_mtu_subscribed = false;
