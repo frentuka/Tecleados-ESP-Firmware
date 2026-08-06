@@ -1593,14 +1593,14 @@ Ensure the BLE COMM channel works correctly in split keyboard configurations.
 To verify that the slave correctly suspends BLE (including the COMM service) and the master assumes control properly, we have added targeted debug logs with the prefix `Phase 3 Verif:`.
 
 **Step 1: Verify Slave Suspension and COMM Unavailability**
-1. Power on Unit B (the designated slave) *before* Unit A. It will briefly boot as master and advertise BLE.
-2. Power on Unit A (the designated master) and wait for the ESP-NOW link to establish.
-3. Observe the ESP-IDF monitor for Unit B. You should see the following logs when it transitions to slave:
+1. Power on Unit A (the designated master) *first* and connect it to a host via BLE.
+2. Power on Unit B (the designated slave). Because Unit A already has an active BLE connection, it wins Priority 3 during role negotiation and remains Master.
+3. Observe the ESP-IDF monitor for Unit B. When it completes negotiation and becomes the slave, you should see:
    - `BLE routing → SUSPENDED (role=2)`
    - `Phase 3 Verif: BLE routing suspension triggered.`
    - `Phase 3 Verif: BLE COMM state reset during suspension.`
    - `Phase 3 Verif: COMM transport state cleared.`
-4. Use a BLE scanner app (e.g., nRF Connect). Verify that Unit B is no longer advertising the BLE COMM service, while Unit A is advertising it.
+4. Use a BLE scanner app (e.g., nRF Connect). Verify that Unit B is no longer advertising the BLE COMM service (or anything at all), while Unit A continues advertising or remains connected.
 
 **Step 2: Verify Master BLE COMM Functionality**
 1. Connect the Configurator via Web Bluetooth to Unit A (the master).
