@@ -54,9 +54,14 @@ void double_press_test() {
   kb_macro_process_action(SYS_ACTION_MUTE, false);
 }
 
+void hold_press_test() {
+  ESP_LOGI(TAG, "test hold press: Start split pairing");
+  splitmod_start_pairing(0);
+}
+
 static void init_procedure(void) {
   event_bus_init();
-  button_init(*single_press_test, *double_press_test);
+  button_init(single_press_test, double_press_test, hold_press_test);
   cfg_init();
 
   // Initialize RGB. GPIO 48 is standard on many ESP32-S3 boards.

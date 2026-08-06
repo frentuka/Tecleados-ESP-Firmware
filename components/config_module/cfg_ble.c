@@ -283,6 +283,14 @@ static int collect_cb(int obj_type, union ble_store_value *val, void *cookie) {
             sz = sizeof(struct ble_store_value_local_irk);
             src = &val->local_irk;
             break;
+        case BLE_STORE_OBJ_TYPE_PEER_ADDR:
+            sz = sizeof(struct ble_store_value_rpa_rec);
+            src = &val->rpa_rec;
+            break;
+        case BLE_STORE_OBJ_TYPE_CSFC:
+            sz = sizeof(struct ble_store_value_csfc);
+            src = &val->csfc;
+            break;
         default: return 0;
     }
 
@@ -312,7 +320,9 @@ esp_err_t cfg_ble_bond_read_all(void *out_buf, size_t *inout_len) {
         BLE_STORE_OBJ_TYPE_OUR_SEC,
         BLE_STORE_OBJ_TYPE_PEER_SEC,
         BLE_STORE_OBJ_TYPE_CCCD,
-        BLE_STORE_OBJ_TYPE_LOCAL_IRK
+        BLE_STORE_OBJ_TYPE_LOCAL_IRK,
+        BLE_STORE_OBJ_TYPE_PEER_ADDR,
+        BLE_STORE_OBJ_TYPE_CSFC
     };
     const int num_types = sizeof(types) / sizeof(types[0]);
 
@@ -356,6 +366,10 @@ esp_err_t cfg_ble_bond_read_all(void *out_buf, size_t *inout_len) {
                 sec->record_size = sizeof(struct ble_store_value_cccd); break;
             case BLE_STORE_OBJ_TYPE_LOCAL_IRK:
                 sec->record_size = sizeof(struct ble_store_value_local_irk); break;
+            case BLE_STORE_OBJ_TYPE_PEER_ADDR:
+                sec->record_size = sizeof(struct ble_store_value_rpa_rec); break;
+            case BLE_STORE_OBJ_TYPE_CSFC:
+                sec->record_size = sizeof(struct ble_store_value_csfc); break;
             default: sec->record_size = 0; break;
         }
 
@@ -441,7 +455,23 @@ esp_err_t cfg_ble_bond_write_all(const void *data, size_t len) {
                     break;
                 case BLE_STORE_OBJ_TYPE_LOCAL_IRK:
                     memcpy(&val.local_irk, rec_data, sizeof(val.local_irk));
+                    
+                    // Inject our own Local MAC address so NimBLE adopts this IRK on startup
+                    uint8_t local_id[6];
+                    if (ble_hs_id_copy_addr(BLE_ADDR_PUBLIC, local_id, NULL) == 0) {
+                        memcpy(val.local_irk.addr.val, local_id, 6);
+                        val.local_irk.addr.type = BLE_ADDR_PUBLIC;
+                    }
+                    
                     rc = ble_store_write_local_irk(&val.local_irk);
+                    break;
+                case BLE_STORE_OBJ_TYPE_PEER_ADDR:
+                    memcpy(&val.rpa_rec, rec_data, sizeof(val.rpa_rec));
+                    rc = ble_store_write_rpa_rec(&val.rpa_rec);
+                    break;
+                case BLE_STORE_OBJ_TYPE_CSFC:
+                    memcpy(&val.csfc, rec_data, sizeof(val.csfc));
+                    rc = ble_store_write_csfc(&val.csfc);
                     break;
             }
 

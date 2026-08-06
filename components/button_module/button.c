@@ -16,10 +16,10 @@
 static const char *TAG = "BOOT_BUTTON";
 static QueueHandle_t gpio_evt_queue;
 static int64_t last_press_timestamp = 0;       // última pulsación aceptada
-static bool waiting_for_double_press = false;
 
 static button_callback_t single_press_callback;
 static button_callback_t double_press_callback;
+static button_callback_t hold_callback;
 
 // ISR: mínima, solo encola el número de GPIO
 static void IRAM_ATTR gpio_isr_handler(void *arg) {
@@ -52,8 +52,31 @@ static void button_task(void *arg) {
         if (state == IDLE) {
             if (xQueueReceive(gpio_evt_queue, &io_num, portMAX_DELAY)) {
                 if (valid_press(io_num)) {
-                    state = WAIT_SECOND;
                     first_ms = esp_timer_get_time() / 1000;
+                    bool is_hold = false;
+                    
+                    // Poll for hold
+                    while (gpio_get_level(io_num) == 0) {
+                        vTaskDelay(pdMS_TO_TICKS(10));
+                        int64_t now_ms = esp_timer_get_time() / 1000;
+                        if (now_ms - first_ms >= 1000) { // 1 second hold
+                            is_hold = true;
+                            if (hold_callback) hold_callback();
+                            break;
+                        }
+                    }
+                    
+                    if (is_hold) {
+                        // Wait for release
+                        while (gpio_get_level(io_num) == 0) {
+                            vTaskDelay(pdMS_TO_TICKS(10));
+                        }
+                        xQueueReset(gpio_evt_queue);
+                        state = IDLE;
+                    } else {
+                        // Was released early, go to WAIT_SECOND
+                        state = WAIT_SECOND;
+                    }
                 }
             }
         } else { // WAIT_SECOND
@@ -61,26 +84,26 @@ static void button_task(void *arg) {
             int64_t elapsed = now_ms - first_ms;
             int64_t remain_ms = DOUBLE_PRESS_MS - elapsed;
             if (remain_ms <= 0) {
-                single_press_callback();
+                if (single_press_callback) single_press_callback();
                 state = IDLE;
                 continue;
             }
             // Espera otro evento hasta agotar la ventana
             if (xQueueReceive(gpio_evt_queue, &io_num, pdMS_TO_TICKS(remain_ms))) {
                 if (valid_press(io_num)) {
-                    double_press_callback();
+                    if (double_press_callback) double_press_callback();
                     state = IDLE;
                 }
                 // si no fue válido, sigue esperando dentro de la misma ventana
             } else {
-                single_press_callback(); // timeout sin segundo pulso
+                if (single_press_callback) single_press_callback(); // timeout sin segundo pulso
                 state = IDLE;
             }
         }
     }
 }
 
-void button_init(button_callback_t on_single_press, button_callback_t on_double_press)
+void button_init(button_callback_t on_single_press, button_callback_t on_double_press, button_callback_t on_hold)
 {
     // Configuración de GPIO como entrada con pull-up e interrupción por flanco de bajada
     gpio_config_t io_conf = {
@@ -95,6 +118,7 @@ void button_init(button_callback_t on_single_press, button_callback_t on_double_
     // Set callbacks
     single_press_callback = on_single_press;
     double_press_callback = on_double_press;
+    hold_callback = on_hold;
 
     // Cola y tarea de manejo
     gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
