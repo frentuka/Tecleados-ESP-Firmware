@@ -1,0 +1,108 @@
+# Binary Comms Migration Implementation Plan
+
+## Goal Description
+Strip JSON serialization out of the COMM protocol completely and transition to a pure binary (C-struct) wire format. This will drastically reduce payload sizes (up to 10x), eliminate dynamic memory allocation overhead (cJSON) in the firmware, and significantly accelerate Bluetooth sync times.
+
+## How Hard Is It?
+
+- **For the Firmware (Easy):** This is actually a **reduction in complexity**. The firmware already operates on raw binary structs internally (e.g., `cfg_layer_t`, `cfg_macro_t`). We will delete thousands of lines of `cJSON` parsing/printing code and replace it with direct `memcpy()` operations between the NVS storage and the COMM buffer.
+- **For the Configurator (Medium):** This is where the work lies. The TypeScript application can no longer rely on `JSON.parse()`. It must use JavaScript's `DataView` or TypedArrays (like `Uint16Array`) to read and write bytes at precise offsets. We must carefully map the C-struct layouts (including arrays and primitives) to TypeScript parsers, explicitly enforcing Little-Endian byte order on every read/write.
+
+## Proposed Architecture
+
+1. **Natural Memory Alignment (Critical for ESP32):**
+   > [!CAUTION]
+   > Do **NOT** use `__attribute__((packed))` on complex structs like `cfg_macro_t`. The ESP32's Xtensa/RISC-V architectures strictly require natural alignment for 16-bit and 32-bit memory accesses. Packing these structs will cause `LoadStoreAlignment` exceptions (instant crash) during hot-path execution.
+   
+   Instead, enforce a strict **Decreasing Size Ordering** rule for all C-struct fields. By ordering fields from largest to smallest (e.g., `uint64_t` -> `uint32_t` -> `uint16_t` -> `uint8_t`/`bool` -> arrays), the compiler naturally packs the struct with zero implicit padding. This eliminates the need for brittle manual `_padding[X]` variables.
+
+   **Compile-Time Validation:** We must enforce this alignment during the build process to prevent future regressions. We will use `_Static_assert` to validate both the total size of the structs and the exact offsets of critical fields.
+
+2. **Repurposing Existing Command Opcodes:**
+   Since backwards compatibility with older cached configurators is not a concern, we will not introduce new hexadecimal values. We will completely convert the existing opcodes to natively handle binary payloads:
+   - `CFG_CMD_GET = 0x00` (Fetch single item or index)
+   - `CFG_CMD_SET = 0x01` (Save single item)
+   - `CFG_CMD_STATUS = 0x03` (Unsolicited binary status pushes)
+
+3. **Protocol Versioning & Handshake:**
+   > [!TIP]
+   > Adding a version byte to every wire payload throws off 32-bit alignment and adds overhead.
+   
+   Instead, we will guarantee that the first N bytes of the `SYSTEM` struct response (Key ID `0x0C`) are **immutable** across all future versions (e.g., `uint16_t magic_header; uint8_t version;`). The Configurator will query the `SYSTEM` key during the initial handshake. If the version mismatches, the UI instantly rejects the connection and prompts for a firmware update.
+
+4. **COMM Buffer Resizing (Memory Optimization):**
+   The `comm_module` currently uses massive 21.5 KB static buffers (`s_shared_rx_buf` and `s_shared_tx_buf`) for JSON strings. As part of this migration, these buffers must be explicitly resized to **10 KB each** (`10240 bytes`). This provides enough capacity for future `multiget` burst optimizations while instantly freeing up ~23 KB of continuous DRAM.
+
+## Proposed Changes
+
+### Firmware (C)
+
+1. **Remove cJSON Dependencies:**
+   - Strip all `#include "cJSON.h"` from `config_module` files.
+   - Delete all `_serialize` and `_deserialize` functions.
+   - **Crucial:** Remove the "Dual-Path Storage (Auto-Upgrade)" logic inside `cfgmod_get_config()`.
+
+2. **Update Structs for Natural Alignment, Versioning, and Arrays:**
+   - Audit `cfg_layer_t`, `cfg_macro_t`, `cfg_combo_t`, `cfg_ckey_t`.
+   - Reorder fields by **Decreasing Size Ordering** (largest to smallest) to naturally eliminate implicit compiler padding.
+   - Ensure every struct containing an array includes an explicit `uint8_t count` field (e.g., `event_count`).
+   - Add `_Static_assert()` definitions in the headers for all structs to strictly enforce their `sizeof()` and critical `offsetof()` boundaries.
+   - Add the immutable `magic_header` and `PROTOCOL_VERSION` to the start of the `SYSTEM` response payload.
+
+3. **Refactor `cfgmod.c` Handlers:**
+   - `CFG_CMD_GET`: Read the struct from NVS and `memcpy` the raw bytes into `out_payload`.
+   - `CFG_CMD_SET`: 
+     - **Memory Safety:** Never cast the incoming `data_in` network buffer directly to a struct pointer. Instantiate a stack variable (`cfg_macro_t mac;`) and `memcpy` the payload into it.
+     - **Strict Bounds Validation (Security):** This must be applied *everywhere* to ensure boundaries are always respected. Before writing to NVS or processing further, run rigorous validation on the struct contents. Ensure array lengths (e.g., `event_count`) do not exceed their maximums, string buffers are explicitly null-terminated to prevent over-reads, and enumerations (like `exec_mode`) are within valid ranges. Malformed payloads must be rejected immediately.
+
+4. **Audit `COMM_MODULE` Blast+Reconcile Binary Safety:**
+   - Ensure the `comm_rx.c` / `comm_tx.c` state machines and transport adapters (USB/BLE) rely **exclusively** on the explicit `length` headers provided by the Blast chunks.
+   - Completely purge any string-based boundary checks (like `strlen()`) from the routing and parsing logic, since binary data naturally contains `0x00` null bytes anywhere.
+   - Update `s_shared_rx_buf` and `s_shared_tx_buf` definitions to `10240` bytes.
+
+### Configurator (TypeScript)
+
+1. **Schema Definition & Explicit Endianness:**
+   > [!WARNING]
+   > TypeScript's `DataView` methods default to Big-Endian if the endianness flag is omitted.
+   
+   - **Source of Truth:** Create per-version schema definitions inside the existing `COMM_PROTOCOL.md` file, detailing exact struct layouts, offsets, and types for every existing version. The TS parsers will be built using this specification.
+   - **Endianness:** The TypeScript parsers **must explicitly pass `true`** for the little-endian parameter on every single call (e.g., `dataView.getUint32(offset, true)`). This must be strictly applied everywhere.
+   - **Array Bounds:** The Configurator must respect the `count` fields during serialization (padding the rest with zeros) and deserialization (ignoring elements beyond `count`).
+
+2. **64-Bit Integer / Bitmask Handling:**
+   > [!IMPORTANT]
+   > The Config Module uses 64-bit bitmasks (e.g., `mac_idx`, `ck_idx`). Standard JS numbers lose precision after 53 bits.
+   
+   The generated parsers MUST mandate the use of `DataView.getBigUint64()` and strictly utilize the `BigInt` type in TypeScript for these bitmasks to prevent silent truncation.
+
+3. **UTF-8 String Decoding:** For C-strings (like the 32-byte layout names), avoid feeding uninitialized memory (garbage bytes) into the `TextDecoder`. Find the first null byte and decode only the valid slice:
+   ```typescript
+   const nameBuffer = new Uint8Array(dataView.buffer, offset, 32);
+   const nullIdx = nameBuffer.indexOf(0);
+   const validLen = nullIdx === -1 ? 32 : nullIdx;
+   const name = new TextDecoder('utf-8').decode(nameBuffer.subarray(0, validLen));
+   ```
+
+4. **Device Controller Update:**
+   - Update the transport layer to stop converting data to JSON strings. `DeviceController` will serialize directly to `ArrayBuffer` and dispatch to the existing binary opcodes.
+
+## Decisions Made
+
+> [!NOTE]
+> **Decision:** We are dropping all backward compatibility with older JSON payloads. Since all devices are test devices, we will simply perform a factory reset to wipe the legacy JSON NVS data during this migration.
+
+> [!TIP]
+> **Status Push Optimizations**
+> The `MODULE_STATUS` pushes (unsolicited UI updates) fire frequently (e.g., on BLE connection changes). Migrating them to a packed 6-byte binary struct and broadcasting via `CFG_CMD_STATUS` will save significant UART/BLE bandwidth and eliminate JSON overhead.
+
+## Verification Plan
+
+1. **Unit Testing (Configurator):**
+   - Write Jest tests in TypeScript that construct a mock `ArrayBuffer` simulating the ESP32's C-struct memory dump for `cfg_layer_t` and `cfg_layout_index_t`.
+   - Verify the TS parsers correctly reconstruct the JS objects, arrays, safely decode strings without over-reading, and successfully handle 64-bit bitmasks with `BigInt`.
+2. **Hardware Integration:**
+   - Factory reset test devices to ensure old JSON blob collisions are completely avoided.
+   - Flash firmware with JSON and legacy paths completely removed.
+   - Verify that compilation successfully passes the new `_Static_assert` checks.
+   - Sync outlines and layouts via USB (WebHID) to ensure alignment panics do not occur on the ESP32.
