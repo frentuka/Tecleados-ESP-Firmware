@@ -669,6 +669,14 @@ void split_config_sync_process_deferred(void)
     
     if (ret == ESP_OK) {
         ESP_LOGI(TAG, "config sync applied kind=%u key=%s", kind, key);
+        
+        // If we just synced ble_cfg from the peer, the peer's 'unsynced=1' flag 
+        // might have been transferred to us. We must clear it silently so we don't 
+        // falsely think we have unsynced updates, which causes wrongful role swaps.
+        if (kind == CFGMOD_KIND_CONNECTION && strncmp(key, "ble_cfg", 7) == 0) {
+            cfg_ble_clear_unsynced();
+        }
+
         if (rev_sync) {
             ESP_LOGI(TAG, "triggering corrective reverse sync for kind=%u key=%s", kind, key);
             split_config_sync_push(dst_mac, split_session_next_seq, (cfgmod_kind_t)kind, key);
