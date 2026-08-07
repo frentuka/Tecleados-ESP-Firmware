@@ -154,6 +154,8 @@ static bool tx_send_packet_by_index(uint16_t index) {
 
     uint16_t rem = s_tx_blast_total_packets - 1 - index;
 
+    ESP_LOGI(TAG, "TX Packet (Blast): idx=%u, flags=0x%02X, rem=%u, payload_len=%u, current_mtu=%u, total_buf_len=%u", index, flags, rem, payload_len, s_tx_blast_max_payload_len, s_tx_buf_len);
+
     if (!comm_build_send_single_packet(s_tx_current_target, flags, rem, payload_len, s_tx_buf + offset)) {
         return false;
     }
@@ -298,6 +300,8 @@ static bool tx_send_next_packet(void) {
     uint16_t rem = (s_tx_buf_len - s_tx_buf_idx - stripped_payload_len + current_mtu - 1) / current_mtu;
     
     s_tx_buf_last_packet_sent_idx = s_tx_buf_idx;
+    
+    ESP_LOGI(TAG, "TX Packet: flags=0x%02X, rem=%u, payload_len=%u, current_mtu=%u, total_buf_len=%u", flags, rem, stripped_payload_len, current_mtu, s_tx_buf_len);
     
     if (!comm_build_send_single_packet(s_tx_current_target, flags, rem, stripped_payload_len, s_tx_buf + s_tx_buf_idx)) {
         return false;

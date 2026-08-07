@@ -26,14 +26,22 @@ export class BLETransport implements ITransport {
     private handleTxCharValue = (event: any) => {
         if (!this.txChar) return; // Prevent zombie listeners from processing events
         if (this.onRawReceivedCallback && event.target && event.target.value) {
-            this.onRawReceivedCallback(new Uint8Array(event.target.value.buffer));
+            // IMPORTANT: Use byteOffset + byteLength to avoid reading garbage from a shared
+            // ArrayBuffer. Web Bluetooth DataViews may have a non-zero byteOffset on Chrome
+            // (Linux/Android), so new Uint8Array(dv.buffer) would read from the wrong position.
+            const dv: DataView = event.target.value;
+            this.onRawReceivedCallback(new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength));
         }
     };
 
     private handleMtuCharValue = (event: any) => {
         if (!this.mtuChar) return;
         if (event.target && event.target.value) {
-            const mtuVal = event.target.value.getUint16(0, true);
+            const dv: DataView = event.target.value;
+            if (dv.byteLength < 2) return; // Must have at least 2 bytes for a uint16
+            // DataView.getUint16() already operates relative to the DataView's own byteOffset,
+            // so this is safe even if the underlying ArrayBuffer has a non-zero offset.
+            const mtuVal = dv.getUint16(0, true);
             if (this.protocol) {
                 this.protocol.setMaxPacketSize(mtuVal);
             }

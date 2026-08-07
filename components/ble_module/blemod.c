@@ -180,12 +180,48 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
         
         ble_comm_set_conn_handle(event->connect.conn_handle);
 
+        // Request a shorter connection interval from the central.
+        //
+        // The default interval Chrome/BlueZ uses for BLE keyboards is ~134ms,
+        // causing each blast TX round trip to take ~269ms (3 RTTs × 269ms = 806ms
+        // for a 6-packet STATUS response). Requesting 15-30ms interval drops this
+        // to ~90ms per 6-packet TX — a ~9× speedup on all BLE transfers.
+        //
+        // NOTE: ble_gattc_exchange_mtu() (ATT MTU exchange) was previously tried
+        // here but silently fails — only the BLE central/master can initiate the
+        // ATT_EXCHANGE_MTU_REQ procedure per the BLE spec. Chrome on Linux does not
+        // auto-negotiate MTU, so we leave MTU at the default and compensate with
+        // a shorter connection interval instead.
+        //
+        // latency=0: no slave latency — respond to every master poll to keep RTT
+        // low during COMM data transfers (keyboard is plugged in and active).
+        // supervision_timeout=3000ms: 3× the max interval, gives headroom for
+        // transient link loss without immediately disconnecting.
+        {
+            struct ble_gap_upd_params params = {
+                .itvl_min            = 6,    // 7.5ms (6 × 1.25ms, BLE spec minimum)
+                .itvl_max            = 12,   // 15ms (12 × 1.25ms)
+                .latency             = 0,
+                .supervision_timeout = 300,  // 3000ms (300 × 10ms)
+                .min_ce_len          = 0,
+                .max_ce_len          = 0,
+            };
+            int upd_rc = ble_gap_update_params(event->connect.conn_handle, &params);
+            if (upd_rc != 0) {
+                ESP_LOGW(TAG, "Connection parameter update failed: %d", upd_rc);
+            } else {
+                ESP_LOGI(TAG, "Connection parameter update requested (interval=15-30ms)");
+            }
+        }
+
         // Identity resolution is deferred until encryption/pairing is complete.
         s_directed_profile = -1;
+
       }
 
       int rc = ble_gap_security_initiate(event->connect.conn_handle);
       ESP_LOGD(TAG, "Security initiation requested: %d", rc);
+
     } else {
       ESP_LOGI(TAG, "Connection failed (status %d)", event->connect.status);
       int sel = s_directed_profile;

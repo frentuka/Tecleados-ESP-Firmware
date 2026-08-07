@@ -3,7 +3,7 @@
 #include "comm_defs.h"
 #include <stdbool.h>
 
-#define TX_TIMEOUT_MS 1000
+#define TX_TIMEOUT_MS 3000
 #define MAX_TX_BUF_SIZE 21500
 
 #define TX_BLAST_BITMAP_BYTES 48
