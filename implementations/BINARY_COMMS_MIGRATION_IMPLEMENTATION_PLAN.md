@@ -14,7 +14,11 @@ Strip JSON serialization out of the COMM protocol completely and transition to a
    > [!CAUTION]
    > Do **NOT** use `__attribute__((packed))` on complex structs like `cfg_macro_t`. The ESP32's Xtensa/RISC-V architectures strictly require natural alignment for 16-bit and 32-bit memory accesses. Packing these structs will cause `LoadStoreAlignment` exceptions (instant crash) during hot-path execution.
    
-   Instead, enforce a strict **Decreasing Size Ordering** rule for all C-struct fields. By ordering fields from largest to smallest (e.g., `uint64_t` -> `uint32_t` -> `uint16_t` -> `uint8_t`/`bool` -> arrays), the compiler naturally packs the struct with zero implicit padding. This eliminates the need for brittle manual `_padding[X]` variables.
+   Instead, enforce a strict **Decreasing Size Ordering** rule for all C-struct fields. By ordering fields from largest to smallest (e.g., `uint64_t` -> `uint32_t` -> `uint16_t` -> `uint8_t`/`bool` -> arrays), the compiler eliminates *internal* implicit padding between members.
+   
+   **Handling Trailing Padding:** Because compilers will still pad the end of the struct to match its strictest alignment requirement, we must:
+   - Ensure all structs are explicitly zero-initialized (e.g., `memset(&struct, 0, sizeof(struct))`) before being populated, to avoid leaking uninitialized memory over the wire.
+   - Explicitly define trailing `_padding[]` bytes at the end of the structs to make the total size clear and identical across both platforms.
 
    **Compile-Time Validation:** We must enforce this alignment during the build process to prevent future regressions. We will use `_Static_assert` to validate both the total size of the structs and the exact offsets of critical fields.
 
@@ -24,14 +28,20 @@ Strip JSON serialization out of the COMM protocol completely and transition to a
    - `CFG_CMD_SET = 0x01` (Save single item)
    - `CFG_CMD_STATUS = 0x03` (Unsolicited binary status pushes)
 
-3. **Protocol Versioning & Handshake:**
-   > [!TIP]
-   > Adding a version byte to every wire payload throws off 32-bit alignment and adds overhead.
+3. **No Protocol Versioning / Backwards Compatibility:**
+   > [!NOTE]
+   > This is **NOT** a production environment. There are no "prior configurator versions" out in the wild and no devices outside the lab running older software.
    
-   Instead, we will guarantee that the first N bytes of the `SYSTEM` struct response (Key ID `0x0C`) are **immutable** across all future versions (e.g., `uint16_t magic_header; uint8_t version;`). The Configurator will query the `SYSTEM` key during the initial handshake. If the version mismatches, the UI instantly rejects the connection and prompts for a firmware update.
+   We will intentionally ignore backwards compatibility. There is no need for magic headers or protocol versioning checks during handshakes. The firmware will assume the configurator sends correct data for the current schema. If a mismatched configurator omits a handshake or sends bad data, it is the configurator's fault and not a concern for the firmware to handle gracefully.
 
 4. **COMM Buffer Resizing (Memory Optimization):**
-   The `comm_module` currently uses massive 21.5 KB static buffers (`s_shared_rx_buf` and `s_shared_tx_buf`) for JSON strings. As part of this migration, these buffers must be explicitly resized to **10 KB each** (`10240 bytes`). This provides enough capacity for future `multiget` burst optimizations while instantly freeing up ~23 KB of continuous DRAM.
+   The `comm_module` currently uses massive 21.5 KB static buffers (`s_shared_rx_buf` and `s_shared_tx_buf`) for JSON strings. As part of this migration, these buffers must be resized based on the exact maximum packet size that may be sent:
+   - 16 layers: 3456 bytes
+   - Physical layout: 4096 bytes
+   - Status widget request: 6 bytes
+   - Indexes (`lay_idx` + `mac_idx` + `ck_idx` + `cmb_idx`): 429 bytes
+   **Total Max Payload:** 7987 bytes.
+   We will resize `s_shared_rx_buf` and `s_shared_tx_buf` to **8000 bytes each** (using a macro like `MAX_BINARY_PAYLOAD_SIZE + COMM_HEADER_SIZE`). This accurately covers the max packet size while freeing up ~27 KB of continuous DRAM overall.
 
 ## Proposed Changes
 
@@ -42,17 +52,17 @@ Strip JSON serialization out of the COMM protocol completely and transition to a
    - Delete all `_serialize` and `_deserialize` functions.
    - **Crucial:** Remove the "Dual-Path Storage (Auto-Upgrade)" logic inside `cfgmod_get_config()`.
 
-2. **Update Structs for Natural Alignment, Versioning, and Arrays:**
+2. **Update Structs for Natural Alignment and Arrays:**
    - Audit `cfg_layer_t`, `cfg_macro_t`, `cfg_combo_t`, `cfg_ckey_t`.
-   - Reorder fields by **Decreasing Size Ordering** (largest to smallest) to naturally eliminate implicit compiler padding.
+   - Reorder fields by **Decreasing Size Ordering** (largest to smallest) to naturally eliminate internal implicit padding, and add explicit trailing `_padding[]` bytes to enforce size boundaries.
    - Ensure every struct containing an array includes an explicit `uint8_t count` field (e.g., `event_count`).
    - Add `_Static_assert()` definitions in the headers for all structs to strictly enforce their `sizeof()` and critical `offsetof()` boundaries.
-   - Add the immutable `magic_header` and `PROTOCOL_VERSION` to the start of the `SYSTEM` response payload.
+   - Define a `comm_msg_header` struct (containing `module_id` and `opcode`) to explicitly represent the binary wire wrapper, ensuring `comm_dispatch` can properly route the payload before casting it.
 
 3. **Refactor `cfgmod.c` Handlers:**
    - `CFG_CMD_GET`: Read the struct from NVS and `memcpy` the raw bytes into `out_payload`.
    - `CFG_CMD_SET`: 
-     - **Memory Safety:** Never cast the incoming `data_in` network buffer directly to a struct pointer. Instantiate a stack variable (`cfg_macro_t mac;`) and `memcpy` the payload into it.
+     - **Memory Safety (No Stack Allocation):** FreeRTOS task stacks are small. Do **NOT** instantiate large structs on the stack (`cfg_macro_t mac;`) for `memcpy`, as this will cause an immediate stack overflow. Instead, perform bounds checking and validation *in-place* directly on the data residing in the global receive buffer (`s_shared_rx_buf`), which is already protected by an Exclusive Session Lock.
      - **Strict Bounds Validation (Security):** This must be applied *everywhere* to ensure boundaries are always respected. Before writing to NVS or processing further, run rigorous validation on the struct contents. Ensure array lengths (e.g., `event_count`) do not exceed their maximums, string buffers are explicitly null-terminated to prevent over-reads, and enumerations (like `exec_mode`) are within valid ranges. Malformed payloads must be rejected immediately.
 
 4. **Audit `COMM_MODULE` Blast+Reconcile Binary Safety:**
