@@ -530,8 +530,8 @@ export class CommProtocol {
                 const cmd = fullPayload[1];
                 const keyId = fullPayload[2];
                 const status = (fullPayload[3] | (fullPayload[4] << 8) | (fullPayload[5] << 16) | (fullPayload[6] << 24));
-                const jsonText = new TextDecoder().decode(fullPayload.slice(7)).replace(/\0/g, '');
-                this.pendingResponse = { module, cmd, keyId, status, jsonText };
+                const data = fullPayload.slice(8);
+                this.pendingResponse = { module, cmd, keyId, status, data };
 
                 // Also emit the reassembled result as a "virtual" single packet for high-level logging in App
                 const resultPacket = new Uint8Array(64);
@@ -552,8 +552,8 @@ export class CommProtocol {
             const cmd = payloadBytes[1];
             const keyId = payloadBytes[2];
             const status = (payloadBytes[3] | (payloadBytes[4] << 8) | (payloadBytes[5] << 16) | (payloadBytes[6] << 24));
-            const jsonText = new TextDecoder().decode(payloadBytes.slice(7)).replace(/\0/g, '');
-            this.pendingResponse = { module, cmd, keyId, status, jsonText };
+            const data = payloadBytes.slice(8);
+            this.pendingResponse = { module, cmd, keyId, status, data };
             await this.sendAckAndFinish(true);
         }
     }
@@ -566,23 +566,27 @@ export class CommProtocol {
 
     private finishResponse(): void {
         if (this.pendingResponse) {
-            const { module, jsonText } = this.pendingResponse;
+            const { module } = this.pendingResponse;
 
             // Handle pushed status updates
-            if (module === MODULE_STATUS && jsonText) {
+            if (module === MODULE_STATUS && this.pendingResponse.data) {
                 try {
-                    const data = JSON.parse(jsonText);
-                    const normalizedStatus: DeviceStatus = {
-                        mode: data.mode,
-                        profile: data.profile,
-                        pairing: data.pairing ?? -1,
-                        bitmap: data.bitmap,
-                        split_state: data.split_state ?? 0,
-                        split_role: data.split_role ?? 0,
-                    };
-                    this.statusUpdateCallbacks.forEach(cb => cb(normalizedStatus));
+                    const dv = new DataView(this.pendingResponse.data.buffer, this.pendingResponse.data.byteOffset, this.pendingResponse.data.byteLength);
+                    if (dv.byteLength >= 10) {
+                        const normalizedStatus: DeviceStatus = {
+                            mode: dv.getUint8(0),
+                            profile: dv.getUint8(1),
+                            pairing: dv.getUint8(2),
+                            split_state: dv.getUint8(3),
+                            split_role: dv.getUint8(4),
+                            bitmap: dv.getUint16(8, true)
+                        };
+                        // Note: pairing 0xFF means -1
+                        if (normalizedStatus.pairing === 255) normalizedStatus.pairing = -1;
+                        this.statusUpdateCallbacks.forEach(cb => cb(normalizedStatus));
+                    }
                 } catch (e) {
-                    console.error('Failed to parse push status JSON:', e);
+                    console.error('Failed to parse push status binary payload:', e);
                 }
             }
 

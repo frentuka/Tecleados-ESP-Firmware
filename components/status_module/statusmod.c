@@ -34,34 +34,15 @@ static struct {
  * ========================================================================= */
 
 static bool send_status_push(void) {
-    char json_buf[160];
-    snprintf(json_buf, sizeof(json_buf),
-             "{\"mode\":%d,\"profile\":%d,\"pairing\":%d,\"bitmap\":%u"
-             ",\"split_state\":%u,\"split_role\":%u}",
-             s_cache.transport_mode,
-             s_cache.selected_profile,
-             (int8_t)s_cache.pairing_profile,  // cast to show -1 for "none"
-             s_cache.connected_bitmap,
-             s_cache.split_state,
-             s_cache.split_role);
+    statusmod_msg_t msg = {0};
+    msg.transport_mode   = s_cache.transport_mode;
+    msg.selected_profile = s_cache.selected_profile;
+    msg.pairing_profile  = s_cache.pairing_profile;
+    msg.split_state      = s_cache.split_state;
+    msg.split_role       = s_cache.split_role;
+    msg.connected_bitmap = s_cache.connected_bitmap;
 
-    // The Configurator expects a 7-byte header for all COMM messages:
-    // [0] Module ID (added by comm_send_message)
-    // [1] Command
-    // [2] Key ID
-    // [3..6] Status (4 bytes)
-    // [7..] JSON text
-    size_t json_len = strlen(json_buf);
-    size_t payload_len = 6 + json_len;
-    uint8_t *payload = malloc(payload_len);
-    if (!payload) return false;
-    
-    memset(payload, 0, 6);
-    memcpy(payload + 6, json_buf, json_len);
-
-    bool res = comm_send_message(COMM_TRANSPORT_BROADCAST, MODULE_STATUS, payload, payload_len);
-    free(payload);
-    return res;
+    return comm_send_message(COMM_TRANSPORT_BROADCAST, MODULE_STATUS, (const uint8_t *)&msg, sizeof(msg));
 }
 
 /* =========================================================================

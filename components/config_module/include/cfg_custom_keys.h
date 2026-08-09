@@ -1,6 +1,6 @@
 #pragma once
 
-#include "cJSON.h"
+
 #include "cfgmod.h"
 #include "esp_err.h"
 #include <stdbool.h>
@@ -35,8 +35,9 @@ typedef struct {
     uint32_t release_action;
     uint32_t press_tap_release_delay_ms;
     uint32_t release_tap_release_delay_ms;
-    bool     wait_for_finish;
-    bool     press_sustain;
+    uint8_t  wait_for_finish;
+    uint8_t  press_sustain;
+    uint8_t  reserved[2];
 } cfg_ckey_pr_t;
 
 /**
@@ -57,21 +58,28 @@ typedef struct {
     uint32_t tap_release_delay_ms;
     uint32_t double_tap_release_delay_ms;
     uint32_t hold_release_delay_ms;
-    bool     hold_sustain;
+    uint8_t  hold_sustain;
+    uint8_t  reserved[3];
 } cfg_ckey_ma_t;
 
 /**
  * @brief Full Custom Key configuration struct — stored individually in NVS.
  */
 typedef struct {
-    uint16_t        id;
-    char            name[32];
-    cfg_ckey_mode_t mode;
     union {
         cfg_ckey_pr_t pr;
         cfg_ckey_ma_t ma;
     } rules;
+    uint16_t        id;
+    uint8_t         mode;
+    uint8_t         reserved[1];
+    char            name[32];
 } cfg_custom_key_t;
+
+_Static_assert(sizeof(cfg_ckey_pr_t) == 20, "cfg_ckey_pr_t size mismatch");
+_Static_assert(sizeof(cfg_ckey_ma_t) == 36, "cfg_ckey_ma_t size mismatch");
+_Static_assert(sizeof(cfg_custom_key_t) == 72, "cfg_custom_key_t size mismatch");
+_Static_assert(offsetof(cfg_custom_key_t, name) == 40, "offset mismatch");
 
 /**
  * @brief Lightweight index stored in NVS to track which Custom Key IDs exist.
@@ -83,19 +91,10 @@ typedef struct {
 
 /* ---- cfgmod handler callbacks ---- */
 void   ckeys_default(void *out_struct);
-bool   ckeys_deserialize(cJSON *root, void *out_struct);
-cJSON *ckeys_serialize(const void *in_struct);
 
 /* ---- High-level helpers ---- */
 
-/** Serialize IDs + names + mode for every active custom key. */
-cJSON *ckeys_serialize_outline(const cfg_ckey_index_t *idx);
 
-/** Serialize a full single custom key by ID. */
-cJSON *ckeys_serialize_single(uint16_t id, const cfg_ckey_index_t *idx);
-
-/** Create or update a single custom key from JSON. Updates idx in NVS. */
-esp_err_t ckeys_upsert_single(cJSON *ckey_json, cfg_ckey_index_t *idx);
 
 /** Remove a single custom key by ID. Updates idx in NVS. */
 esp_err_t ckeys_delete_single(uint16_t id, cfg_ckey_index_t *idx);

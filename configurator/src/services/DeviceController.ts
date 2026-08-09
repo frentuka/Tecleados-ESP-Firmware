@@ -50,6 +50,7 @@ import type { CommandResponse, DeviceStatus } from '../types/device';
 import type { Macro, MacroLimits } from '../types/macros';
 import type { CustomKey } from '../types/customKeys';
 import type { Combo } from '../types/combos';
+import { BinarySchema } from './BinarySchema';
 
 // ── Device Identity ─────────────────────────────────────────────────────────
 export interface DeviceIdentity {
@@ -160,13 +161,18 @@ export class DeviceController {
 
     // ── Config helpers ──────────────────────────────────────────────────
 
-    private buildConfigPayload(cmd: number, keyId: number, data?: Uint8Array): Uint8Array {
+    private buildConfigPayload(cmd: number, keyId: number, itemId: number = 0, data?: Uint8Array): Uint8Array {
         const dataLen = data ? data.length : 0;
-        const buf = new Uint8Array(3 + dataLen);
+        const buf = new Uint8Array(8 + dataLen);
         buf[0] = MODULE_CONFIG;
         buf[1] = cmd;
         buf[2] = keyId;
-        if (data) buf.set(data, 3);
+        buf[3] = itemId & 0xFF;
+        buf[4] = (itemId >> 8) & 0xFF;
+        buf[5] = 0;
+        buf[6] = 0;
+        buf[7] = 0;
+        if (data) buf.set(data, 8);
         return buf;
     }
 
@@ -176,92 +182,81 @@ export class DeviceController {
         if (!this.isConnected()) return null;
         const buf = this.buildConfigPayload(CFG_CMD_GET, CFG_KEY_LAYOUT_LIMITS);
         const resp = await this.sendCommand(buf, 5000);
-        if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
-            try {
-                return JSON.parse(resp.jsonText);
-            } catch (e) {
-                console.error('fetchLayoutLimits parse error:', e);
-            }
+        if (resp && resp.status === 0 && resp.data.length >= 1) {
+            const dv = new DataView(resp.data.buffer, resp.data.byteOffset, resp.data.byteLength);
+            return BinarySchema.parseLayoutLimits(dv);
         }
         return null;
     }
 
-    public async fetchLayouts(): Promise<{ id: number; name: string }[]> {
-        if (!this.isConnected()) return [];
+    public async fetchLayouts(): Promise<{ order: number[], count: number } | null> {
+        if (!this.isConnected()) return null;
         const buf = this.buildConfigPayload(CFG_CMD_GET, CFG_KEY_LAYOUTS);
         const resp = await this.sendCommand(buf, 5000);
-        if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
-            try {
-                const parsed = JSON.parse(resp.jsonText);
-                return parsed.layouts || [];
-            } catch (e) {
-                console.error('fetchLayouts parse error:', e);
-            }
+        if (resp && resp.status === 0 && resp.data.length >= 404) {
+            const dv = new DataView(resp.data.buffer, resp.data.byteOffset, resp.data.byteLength);
+            return BinarySchema.parseLayoutIndex(dv);
         }
-        return [];
+        return null;
     }
 
     public async reorderLayouts(order: number[]): Promise<boolean> {
         if (!this.isConnected()) return false;
-        const requestJson = JSON.stringify({ order });
-        const jsonBytes = new TextEncoder().encode(requestJson);
-        const buf = this.buildConfigPayload(CFG_CMD_SET, CFG_KEY_LAYOUTS, jsonBytes);
+        const data = new Uint8Array(16);
+        for (let i = 0; i < Math.min(16, order.length); i++) data[i] = order[i];
+        const buf = this.buildConfigPayload(CFG_CMD_SET, CFG_KEY_LAYOUTS, 0, data);
         const resp = await this.sendCommand(buf, 5000);
         return resp !== null && resp.status === 0;
     }
 
-    public async fetchLayoutSingle(id: number): Promise<{ id: number; name: string; keys: number[][] } | null> {
+    public async fetchLayoutSingle(id: number): Promise<{ id: number; keys: number[][] } | null> {
         if (!this.isConnected()) return null;
-        const requestJson = JSON.stringify({ id });
-        const jsonBytes = new TextEncoder().encode(requestJson);
-        const buf = this.buildConfigPayload(CFG_CMD_GET, CFG_KEY_LAYOUT_SINGLE, jsonBytes);
+        const buf = this.buildConfigPayload(CFG_CMD_GET, CFG_KEY_LAYOUT_SINGLE, id);
         const resp = await this.sendCommand(buf, 5000);
-        if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
-            try {
-                return JSON.parse(resp.jsonText);
-            } catch (e) {
-                console.error('fetchLayoutSingle parse error:', e);
-            }
+        if (resp && resp.status === 0 && resp.data.length >= 216) {
+            const dv = new DataView(resp.data.buffer, resp.data.byteOffset, resp.data.byteLength);
+            const keys = BinarySchema.parseLayer(dv, 6, 18);
+            return { id, keys };
         }
         return null;
     }
 
     public async createLayout(name: string): Promise<number | null> {
         if (!this.isConnected()) return null;
-        const jsonBytes = new TextEncoder().encode(JSON.stringify({ create: name }));
-        const buf = this.buildConfigPayload(CFG_CMD_SET, CFG_KEY_LAYOUT_SINGLE, jsonBytes);
+        const data = new Uint8Array(24);
+        const bytes = new TextEncoder().encode(name);
+        data.set(bytes.slice(0, 23));
+        const buf = this.buildConfigPayload(CFG_CMD_SET, CFG_KEY_LAYOUT_SINGLE, 0xFFFF, data);
         const resp = await this.sendCommand(buf, 5000);
-        if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
-            try {
-                const parsed = JSON.parse(resp.jsonText);
-                return parsed.id;
-            } catch (e) {
-                console.error('createLayout parse error:', e);
-            }
+        if (resp && resp.status === 0 && resp.data.length >= 2) {
+            return new DataView(resp.data.buffer, resp.data.byteOffset, resp.data.byteLength).getUint16(0, true);
         }
         return null;
     }
 
     public async renameLayout(id: number, newName: string): Promise<boolean> {
         if (!this.isConnected()) return false;
-        const jsonBytes = new TextEncoder().encode(JSON.stringify({ id, rename: newName }));
-        const buf = this.buildConfigPayload(CFG_CMD_SET, CFG_KEY_LAYOUT_SINGLE, jsonBytes);
+        const data = new Uint8Array(24);
+        const bytes = new TextEncoder().encode(newName);
+        data.set(bytes.slice(0, 23));
+        const buf = this.buildConfigPayload(CFG_CMD_SET, CFG_KEY_LAYOUT_SINGLE, id | 0x8000, data);
         const resp = await this.sendCommand(buf, 5000);
         return resp !== null && resp.status === 0;
     }
 
     public async deleteLayout(id: number): Promise<boolean> {
         if (!this.isConnected()) return false;
-        const jsonBytes = new TextEncoder().encode(JSON.stringify({ delete: id }));
-        const buf = this.buildConfigPayload(CFG_CMD_SET, CFG_KEY_LAYOUT_SINGLE, jsonBytes);
+        const buf = this.buildConfigPayload(CFG_CMD_SET, CFG_KEY_LAYOUT_SINGLE, id, new Uint8Array(0));
         const resp = await this.sendCommand(buf, 5000);
         return resp !== null && resp.status === 0;
     }
 
     public async saveLayout(id: number, keys: number[][]): Promise<boolean> {
         if (!this.isConnected()) return false;
-        const jsonBytes = new TextEncoder().encode(JSON.stringify({ id, keys }));
-        const buf = this.buildConfigPayload(CFG_CMD_SET, CFG_KEY_LAYOUT_SINGLE, jsonBytes);
+        const data = new Uint8Array(216);
+        const dv = new DataView(data.buffer);
+        BinarySchema.serializeLayer(keys, dv);
+        const buf = this.buildConfigPayload(CFG_CMD_SET, CFG_KEY_LAYOUT_SINGLE, id, data);
         const resp = await this.sendCommand(buf, 10000);
         return resp !== null && resp.status === 0;
     }
@@ -271,20 +266,18 @@ export class DeviceController {
     public async fetchStatus(): Promise<DeviceStatus | null> {
         if (!this.isConnected()) return null;
         const resp = await this.sendCommand(new Uint8Array([MODULE_STATUS]), 2000);
-        if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
-            try {
-                const data = JSON.parse(resp.jsonText);
-                return {
-                    mode: data.mode,
-                    profile: data.profile,
-                    pairing: data.pairing ?? -1,
-                    bitmap: data.bitmap,
-                    split_state: data.split_state ?? 0,
-                    split_role: data.split_role ?? 0,
-                };
-            } catch (e) {
-                console.error('Failed to parse status JSON:', e);
-            }
+        if (resp && resp.status === 0 && resp.data.length >= 10) {
+            const dv = new DataView(resp.data.buffer, resp.data.byteOffset, resp.data.byteLength);
+            let pairing = dv.getUint8(2);
+            if (pairing === 255) pairing = -1;
+            return {
+                mode: dv.getUint8(0),
+                profile: dv.getUint8(1),
+                pairing,
+                split_state: dv.getUint8(3),
+                split_role: dv.getUint8(4),
+                bitmap: dv.getUint16(8, true),
+            };
         }
         return null;
     }
@@ -337,11 +330,8 @@ export class DeviceController {
         const resp = await this.sendCommand(
             new Uint8Array([MODULE_SPLIT, SPLIT_CMD_GET_REMOTE_MATRIX])
         );
-        if (resp && resp.status === 0 && resp.jsonText.length > 0) {
-            try {
-                const parsed = JSON.parse(resp.jsonText) as number[];
-                return new Uint8Array(parsed);
-            } catch { /* fall through */ }
+        if (resp && resp.status === 0 && resp.data.length > 0) {
+            return resp.data;
         }
         return null;
     }
@@ -375,14 +365,11 @@ export class DeviceController {
         remote_peak_hz?: number;
     } | null> {
         if (!this.isConnected()) return null;
-        const resp = await this.sendCommand(
+        await this.sendCommand(
             new Uint8Array([MODULE_SPLIT, SPLIT_CMD_GET_BENCH]), 1000
         );
-        if (resp && resp.status === 0 && resp.jsonText.length > 0) {
-            try {
-                return JSON.parse(resp.jsonText);
-            } catch { /* fall through */ }
-        }
+        // splitGetBench is not migrated to binary yet, returning null for now
+        // or we can implement the binary decoding if it was migrated. The plan doesn't mention migrating benchmark to binary.
         return null;
     }
 
@@ -424,42 +411,19 @@ export class DeviceController {
         if (!this.isConnected()) return null;
         const buf = this.buildConfigPayload(CFG_CMD_GET, CFG_KEY_SYSTEM);
         const resp = await this.sendCommand(buf);
-        if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
-            try {
-                const d = JSON.parse(resp.jsonText);
-                return {
-                    device_name:      d.name             ?? 'Tecleados MK1',
-                    is_split:          d.is_split           ?? false,
-                    split_mirror_cols: d.split_mirror_cols ?? false,
-                    split_variant:     d.split_variant     ?? '',
-                    ble_shared_name:  d.ble_shared_name   ?? '',
-                    ble_shared_addr:  d.ble_shared_addr   ?? '',
-                    transparent_stack_fallback: d.transparent_stack_fallback ?? false,
-                };
-            } catch (e) {
-                console.error('fetchDeviceIdentity parse error:', e);
-            }
+        if (resp && resp.status === 0 && resp.data.length >= 95) {
+            const dv = new DataView(resp.data.buffer, resp.data.byteOffset, resp.data.byteLength);
+            return BinarySchema.parseDeviceIdentity(dv);
         }
         return null;
     }
 
     public async saveDeviceIdentity(identity: DeviceIdentity): Promise<boolean> {
         if (!this.isConnected()) return false;
-        const payload = {
-            name:             identity.device_name,
-            is_split:          identity.is_split,
-            split_mirror_cols: identity.split_mirror_cols,
-            split_variant:     identity.split_variant,
-            ble_shared_name:  identity.ble_shared_name,
-            ble_shared_addr:  identity.ble_shared_addr.toUpperCase(),
-            transparent_stack_fallback: identity.transparent_stack_fallback,
-        };
-        const jsonBytes = new TextEncoder().encode(JSON.stringify(payload));
-        const buf = new Uint8Array(3 + jsonBytes.length);
-        buf[0] = MODULE_CONFIG;
-        buf[1] = CFG_CMD_SET;
-        buf[2] = CFG_KEY_SYSTEM;
-        buf.set(jsonBytes, 3);
+        const data = new Uint8Array(96);
+        const dv = new DataView(data.buffer);
+        BinarySchema.serializeDeviceIdentity(identity, dv);
+        const buf = this.buildConfigPayload(CFG_CMD_SET, CFG_KEY_SYSTEM, 0, data);
         const resp = await this.sendCommand(buf);
         return resp !== null && resp.status === 0;
     }
@@ -470,154 +434,89 @@ export class DeviceController {
         if (!this.isConnected()) return null;
         const buf = this.buildConfigPayload(CFG_CMD_GET, CFG_KEY_MACRO_LIMITS);
         const resp = await this.sendCommand(buf);
-        if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
-            try {
-                const parsed = JSON.parse(resp.jsonText);
-                if (parsed.maxEvents && parsed.maxMacros) {
-                    return { maxEvents: parsed.maxEvents, maxMacros: parsed.maxMacros };
-                }
-            } catch (e) {
-                console.error('Macro limits parse error:', e);
-            }
+        if (resp && resp.status === 0 && resp.data.length >= 4) {
+            const dv = new DataView(resp.data.buffer, resp.data.byteOffset, resp.data.byteLength);
+            return { maxEvents: dv.getUint16(2, true), maxMacros: dv.getUint16(0, true) };
         }
         return null;
     }
 
-    public async fetchMacroOutline(): Promise<Macro[]> {
+    public async fetchMacroOutline(): Promise<number[]> {
         if (!this.isConnected()) return [];
         const buf = this.buildConfigPayload(CFG_CMD_GET, CFG_KEY_MACROS);
         const resp = await this.sendCommand(buf);
-        if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
-            try {
-                const parsed = JSON.parse(resp.jsonText);
-                if (Array.isArray(parsed)) return parsed;
-                if (parsed.macros && Array.isArray(parsed.macros)) return parsed.macros;
-            } catch (e) {
-                console.error('Macros parse error:', e);
-            }
+        if (resp && resp.status === 0 && resp.data.length >= 8) {
+            const dv = new DataView(resp.data.buffer, resp.data.byteOffset, resp.data.byteLength);
+            return BinarySchema.parseBitmask64(dv, 0);
         }
         return [];
     }
 
     public async fetchSingleMacro(id: number): Promise<Macro | null> {
         if (!this.isConnected()) return null;
-        const jsonStr = JSON.stringify({ id });
-        const jsonBytes = new TextEncoder().encode(jsonStr);
-        const buf = new Uint8Array(3 + jsonBytes.length);
-        buf[0] = MODULE_CONFIG;
-        buf[1] = CFG_CMD_GET;
-        buf[2] = CFG_KEY_MACRO_SINGLE;
-        buf.set(jsonBytes, 3);
-
+        const buf = this.buildConfigPayload(CFG_CMD_GET, CFG_KEY_MACRO_SINGLE, id);
         const resp = await this.sendCommand(buf);
-        if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
-            try {
-                return JSON.parse(resp.jsonText) as Macro;
-            } catch (e) {
-                console.error('Single macro parse error:', e);
-            }
+        if (resp && resp.status === 0 && resp.data.length >= 40) {
+            const dv = new DataView(resp.data.buffer, resp.data.byteOffset, resp.data.byteLength);
+            return BinarySchema.parseMacro(dv);
         }
         return null;
     }
 
     public async saveMacro(macro: Macro): Promise<boolean> {
         if (!this.isConnected()) return false;
-        const jsonBytes = new TextEncoder().encode(JSON.stringify(macro));
-        const buf = new Uint8Array(3 + jsonBytes.length);
-        buf[0] = MODULE_CONFIG;
-        buf[1] = CFG_CMD_SET;
-        buf[2] = CFG_KEY_MACRO_SINGLE;
-        buf.set(jsonBytes, 3);
-
+        const data = new Uint8Array(4136);
+        const dv = new DataView(data.buffer);
+        BinarySchema.serializeMacro(macro, dv);
+        const buf = this.buildConfigPayload(CFG_CMD_SET, CFG_KEY_MACRO_SINGLE, macro.id, data);
         const resp = await this.sendCommand(buf);
         return resp !== null && resp.status === 0;
     }
 
     public async deleteMacro(id: number): Promise<boolean> {
         if (!this.isConnected()) return false;
-        const jsonBytes = new TextEncoder().encode(JSON.stringify({ delete: id }));
-        const buf = new Uint8Array(3 + jsonBytes.length);
-        buf[0] = MODULE_CONFIG;
-        buf[1] = CFG_CMD_SET;
-        buf[2] = CFG_KEY_MACRO_SINGLE;
-        buf.set(jsonBytes, 3);
-
+        const buf = this.buildConfigPayload(CFG_CMD_SET, CFG_KEY_MACRO_SINGLE, id, new Uint8Array(0));
         const resp = await this.sendCommand(buf);
         return resp !== null && resp.status === 0;
     }
 
     // ── Custom Keys ─────────────────────────────────────────────────────
 
-    public async fetchCustomKeys(): Promise<CustomKey[]> {
+    public async fetchCustomKeys(): Promise<number[]> {
         if (!this.isConnected()) return [];
         const buf = this.buildConfigPayload(CFG_CMD_GET, CFG_KEY_CKEYS);
         const resp = await this.sendCommand(buf, 5000);
-        if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
-            try {
-                const data = JSON.parse(resp.jsonText);
-                return (data.customKeys ?? []) as CustomKey[];
-            } catch (e) {
-                console.error('fetchCustomKeys parse error:', e);
-            }
+        if (resp && resp.status === 0 && resp.data.length >= 15) {
+            const dv = new DataView(resp.data.buffer, resp.data.byteOffset, resp.data.byteLength);
+            return BinarySchema.parseBitmask120(dv, 0);
         }
         return [];
     }
 
     public async fetchCustomKeySingle(id: number): Promise<CustomKey | null> {
         if (!this.isConnected()) return null;
-        const requestJson = JSON.stringify({ id });
-        const jsonBytes = new TextEncoder().encode(requestJson);
-        const buf = new Uint8Array([MODULE_CONFIG, CFG_CMD_GET, CFG_KEY_CKEY_SINGLE, ...jsonBytes]);
+        const buf = this.buildConfigPayload(CFG_CMD_GET, CFG_KEY_CKEY_SINGLE, id);
         const resp = await this.sendCommand(buf, 5000);
-        if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
-            try {
-                return JSON.parse(resp.jsonText) as CustomKey;
-            } catch (e) {
-                console.error('fetchCustomKeySingle parse error:', e);
-            }
+        if (resp && resp.status === 0 && resp.data.length >= 72) {
+            const dv = new DataView(resp.data.buffer, resp.data.byteOffset, resp.data.byteLength);
+            return BinarySchema.parseCustomKey(dv);
         }
         return null;
     }
 
     public async saveCustomKey(ckey: CustomKey): Promise<boolean> {
         if (!this.isConnected()) return false;
-        const payload: Record<string, unknown> = {
-            id: ckey.id,
-            name: ckey.name,
-            mode: ckey.mode,
-        };
-        if (ckey.mode === 0 && ckey.pr) {
-            payload.pr = {
-                pressAction: ckey.pr.pressAction,
-                releaseAction: ckey.pr.releaseAction,
-                pressDuration: ckey.pr.pressDuration,
-                releaseDuration: ckey.pr.releaseDuration,
-                waitForFinish: ckey.pr.waitForFinish,
-                pressSustain: ckey.pr.pressSustain,
-            };
-        } else if (ckey.mode === 1 && ckey.ma) {
-            payload.ma = {
-                tapAction: ckey.ma.tapAction,
-                doubleTapAction: ckey.ma.doubleTapAction,
-                holdAction: ckey.ma.holdAction,
-                doubleTapThreshold: ckey.ma.doubleTapThreshold,
-                holdThreshold: ckey.ma.holdThreshold,
-                tapDuration: ckey.ma.tapDuration,
-                doubleTapDuration: ckey.ma.doubleTapDuration,
-                holdDuration: ckey.ma.holdDuration,
-                holdSustain: ckey.ma.holdSustain,
-            };
-        }
-        const jsonBytes = new TextEncoder().encode(JSON.stringify(payload));
-        const buf = new Uint8Array([MODULE_CONFIG, CFG_CMD_SET, CFG_KEY_CKEY_SINGLE, ...jsonBytes]);
+        const data = new Uint8Array(72);
+        const dv = new DataView(data.buffer);
+        BinarySchema.serializeCustomKey(ckey, dv);
+        const buf = this.buildConfigPayload(CFG_CMD_SET, CFG_KEY_CKEY_SINGLE, ckey.id, data);
         const resp = await this.sendCommand(buf, 10000);
         return resp !== null && resp.status === 0;
     }
 
     public async deleteCustomKey(id: number): Promise<boolean> {
         if (!this.isConnected()) return false;
-        const jsonBytes = new TextEncoder().encode(JSON.stringify({ delete: id }));
-        const buf = new Uint8Array([MODULE_CONFIG, CFG_CMD_SET, CFG_KEY_CKEY_SINGLE, ...jsonBytes]);
+        const buf = this.buildConfigPayload(CFG_CMD_SET, CFG_KEY_CKEY_SINGLE, id, new Uint8Array(0));
         const resp = await this.sendCommand(buf, 5000);
         return resp !== null && resp.status === 0;
     }
@@ -628,62 +527,48 @@ export class DeviceController {
         if (!this.isConnected()) return null;
         const buf = this.buildConfigPayload(CFG_CMD_GET, CFG_KEY_COMBO_LIMITS);
         const resp = await this.sendCommand(buf, 5000);
-        if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
-            try {
-                const parsed = JSON.parse(resp.jsonText);
-                if (parsed.maxCombos && parsed.maxKeys) {
-                    return { maxCombos: parsed.maxCombos, maxKeys: parsed.maxKeys };
-                }
-            } catch (e) {
-                console.error('fetchComboLimits parse error:', e);
-            }
+        if (resp && resp.status === 0 && resp.data.length >= 2) {
+            const dv = new DataView(resp.data.buffer, resp.data.byteOffset, resp.data.byteLength);
+            return { maxCombos: dv.getUint8(0), maxKeys: dv.getUint8(1) };
         }
         return null;
     }
 
-    public async fetchCombos(): Promise<Combo[]> {
+    public async fetchCombos(): Promise<number[]> {
         if (!this.isConnected()) return [];
         const buf = this.buildConfigPayload(CFG_CMD_GET, CFG_KEY_COMBOS);
         const resp = await this.sendCommand(buf, 5000);
-        if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
-            try {
-                const data = JSON.parse(resp.jsonText);
-                return (data.combos ?? []) as Combo[];
-            } catch (e) {
-                console.error('fetchCombos parse error:', e);
-            }
+        if (resp && resp.status === 0 && resp.data.length >= 4) {
+            const dv = new DataView(resp.data.buffer, resp.data.byteOffset, resp.data.byteLength);
+            return BinarySchema.parseBitmask32(dv, 0);
         }
         return [];
     }
 
     public async fetchSingleCombo(id: number): Promise<Combo | null> {
         if (!this.isConnected()) return null;
-        const requestJson = JSON.stringify({ id });
-        const jsonBytes = new TextEncoder().encode(requestJson);
-        const buf = new Uint8Array([MODULE_CONFIG, CFG_CMD_GET, CFG_KEY_COMBO_SINGLE, ...jsonBytes]);
+        const buf = this.buildConfigPayload(CFG_CMD_GET, CFG_KEY_COMBO_SINGLE, id);
         const resp = await this.sendCommand(buf, 5000);
-        if (resp && resp.status === 0 && resp.jsonText.trim().length > 0) {
-            try {
-                return JSON.parse(resp.jsonText) as Combo;
-            } catch (e) {
-                console.error('fetchSingleCombo parse error:', e);
-            }
+        if (resp && resp.status === 0 && resp.data.length >= 64) {
+            const dv = new DataView(resp.data.buffer, resp.data.byteOffset, resp.data.byteLength);
+            return BinarySchema.parseCombo(dv);
         }
         return null;
     }
 
     public async saveCombo(combo: Combo): Promise<boolean> {
         if (!this.isConnected()) return false;
-        const jsonBytes = new TextEncoder().encode(JSON.stringify(combo));
-        const buf = new Uint8Array([MODULE_CONFIG, CFG_CMD_SET, CFG_KEY_COMBO_SINGLE, ...jsonBytes]);
+        const data = new Uint8Array(64);
+        const dv = new DataView(data.buffer);
+        BinarySchema.serializeCombo(combo, dv);
+        const buf = this.buildConfigPayload(CFG_CMD_SET, CFG_KEY_COMBO_SINGLE, combo.id, data);
         const resp = await this.sendCommand(buf, 10000);
         return resp !== null && resp.status === 0;
     }
 
     public async deleteCombo(id: number): Promise<boolean> {
         if (!this.isConnected()) return false;
-        const jsonBytes = new TextEncoder().encode(JSON.stringify({ delete: id }));
-        const buf = new Uint8Array([MODULE_CONFIG, CFG_CMD_SET, CFG_KEY_COMBO_SINGLE, ...jsonBytes]);
+        const buf = this.buildConfigPayload(CFG_CMD_SET, CFG_KEY_COMBO_SINGLE, id, new Uint8Array(0));
         const resp = await this.sendCommand(buf, 5000);
         return resp !== null && resp.status === 0;
     }

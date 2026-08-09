@@ -3,7 +3,7 @@
 #include <string.h>
 
 #include "esp_log.h"
-#include "cJSON.h"
+
 #include "cfgmod.h"
 #include "event_bus.h"
 #include "host/ble_store.h"
@@ -39,109 +39,7 @@ static void ble_default(void *dest) {
     st->sync_version = 0;
 }
 
-static bool ble_deserialize(cJSON *json, void *dest) {
-    if (!json || !dest) return false;
-    cfg_ble_state_t *st = (cfg_ble_state_t *)dest;
-    ble_default(st); // Start clean
 
-    cJSON *j_routing = cJSON_GetObjectItemCaseSensitive(json, "routing");
-    if (cJSON_IsBool(j_routing)) {
-        st->ble_routing_enabled = cJSON_IsTrue(j_routing);
-    }
-
-    cJSON *j_selected = cJSON_GetObjectItemCaseSensitive(json, "selected");
-    if (cJSON_IsNumber(j_selected)) {
-        st->selected_profile = (uint8_t)j_selected->valueint;
-        if (st->selected_profile >= CFG_BLE_MAX_PROFILES) {
-            st->selected_profile = 0;
-        }
-    }
-
-    cJSON *j_profiles = cJSON_GetObjectItemCaseSensitive(json, "profiles");
-    if (cJSON_IsArray(j_profiles)) {
-        int count = cJSON_GetArraySize(j_profiles);
-        if (count > CFG_BLE_MAX_PROFILES) count = CFG_BLE_MAX_PROFILES;
-
-        for (int i = 0; i < count; i++) {
-            cJSON *p = cJSON_GetArrayItem(j_profiles, i);
-            if (!p) continue;
-
-            cJSON *j_valid = cJSON_GetObjectItemCaseSensitive(p, "valid");
-            if (cJSON_IsBool(j_valid) && cJSON_IsTrue(j_valid)) {
-                st->profiles[i].is_valid = true;
-
-                cJSON *j_type = cJSON_GetObjectItemCaseSensitive(p, "type");
-                if (cJSON_IsNumber(j_type)) st->profiles[i].addr_type = j_type->valueint;
-
-                cJSON *j_mac = cJSON_GetObjectItemCaseSensitive(p, "mac");
-                if (cJSON_IsArray(j_mac) && cJSON_GetArraySize(j_mac) == 6) {
-                    for (int j = 0; j < 6; j++) {
-                        st->profiles[i].val[j] = (uint8_t)cJSON_GetArrayItem(j_mac, j)->valueint;
-                    }
-                }
-
-                cJSON *j_nonce = cJSON_GetObjectItemCaseSensitive(p, "nonce");
-                if (cJSON_IsNumber(j_nonce)) st->profiles[i].addr_nonce = (uint8_t)j_nonce->valueint;
-            }
-        }
-    }
-
-    cJSON *j_unsynced = cJSON_GetObjectItemCaseSensitive(json, "unsynced");
-    if (cJSON_IsNumber(j_unsynced)) {
-        st->has_unsynced_updates = (uint8_t)j_unsynced->valueint;
-    }
-
-    cJSON *j_sync = cJSON_GetObjectItemCaseSensitive(json, "sync_version");
-    if (cJSON_IsNumber(j_sync)) {
-        st->sync_version = (uint16_t)j_sync->valueint;
-    }
-
-    return true;
-}
-
-static cJSON *ble_serialize(const void *src) {
-    if (!src) return NULL;
-    cJSON *json = cJSON_CreateObject();
-    if (!json) return NULL;
-    const cfg_ble_state_t *st = (const cfg_ble_state_t *)src;
-
-    cJSON_AddNumberToObject(json, "routing", st->ble_routing_enabled ? 1 : 0);
-    cJSON_AddNumberToObject(json, "unsynced", st->has_unsynced_updates);
-    cJSON_AddNumberToObject(json, "sync_version", st->sync_version);
-
-    cJSON *j_profiles = cJSON_CreateArray();
-    if (!j_profiles) {
-        cJSON_Delete(json);
-        return NULL;
-    }
-
-    for (int i = 0; i < CFG_BLE_MAX_PROFILES; i++) {
-        cJSON *p = cJSON_CreateObject();
-        if (!p) continue;
-
-        if (st->profiles[i].is_valid) {
-            cJSON_AddBoolToObject(p, "valid", true);
-            cJSON_AddNumberToObject(p, "type", st->profiles[i].addr_type);
-
-            cJSON *j_mac = cJSON_CreateArray();
-            for (int j = 0; j < 6; j++) {
-                cJSON_AddItemToArray(j_mac, cJSON_CreateNumber(st->profiles[i].val[j]));
-            }
-            cJSON_AddItemToObject(p, "mac", j_mac);
-
-            cJSON_AddNumberToObject(p, "nonce", st->profiles[i].addr_nonce);
-        } else {
-            cJSON_AddBoolToObject(p, "valid", false);
-        }
-
-        cJSON_AddItemToArray(j_profiles, p);
-    }
-
-    cJSON_AddItemToObject(json, "profiles", j_profiles);
-    cJSON_AddNumberToObject(json, "sync_version", st->sync_version);
-
-    return json;
-}
 
 static void on_ble_updated(const char *key) {
     esp_err_t err = cfgmod_get_config(CFGMOD_KIND_CONNECTION, key, &g_cfg_ble_state);
@@ -203,8 +101,7 @@ static void cfg_ble_on_pairing_complete(void *arg, esp_event_base_t base,
 void cfg_ble_init(void) {
     ble_default(&g_cfg_ble_state);
 
-    cfgmod_register_kind(CFGMOD_KIND_CONNECTION, ble_default, ble_deserialize,
-                         ble_serialize, on_ble_updated, sizeof(cfg_ble_state_t));
+    cfgmod_register_kind(CFGMOD_KIND_CONNECTION, ble_default, on_ble_updated, sizeof(cfg_ble_state_t));
 
     // Subscribe to pairing complete event — owns the credential save.
     esp_event_handler_register(BLE_EVENTS, BLE_EVENT_PAIRING_COMPLETE,

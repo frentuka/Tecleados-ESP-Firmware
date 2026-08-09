@@ -4,7 +4,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "cJSON.h"
 #include "esp_err.h"
 
 
@@ -48,10 +47,19 @@ typedef enum cfgmod_cmd : uint8_t {
   CFG_CMD_SET
 } cfgmod_cmd_t;
 
-typedef struct __attribute__((packed)) cfgmod_wire_header {
-  uint8_t cmd;         // cfgmod_cmd_t (GET/SET)
-  uint8_t key_id;      // cfgmod_key_id_t
-} cfgmod_wire_header_t;
+typedef struct {
+    uint8_t cmd;
+    uint8_t key_id;
+    uint16_t item_id;     // ID for *_SINGLE commands (e.g. layer ID, macro ID)
+    uint8_t reserved[3];
+} cfgmod_req_header_t;
+
+typedef struct {
+    uint8_t cmd;
+    uint8_t key_id;
+    uint8_t reserved;
+    uint32_t status;
+} cfgmod_rsp_header_t;
 
 // Handle one COMM report and optionally build a response.
 esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
@@ -66,14 +74,10 @@ esp_err_t cfg_deinit(void);
 
 // Callback signatures for typed configs
 typedef void (*cfgmod_default_fn)(void *out_struct);
-typedef bool (*cfgmod_deserialize_fn)(cJSON *root, void *out_struct);
-typedef cJSON *(*cfgmod_serialize_fn)(const void *in_struct);
 typedef void (*cfgmod_on_update_fn)(const char *key);
 
 // Register a configuration kind's handler
 esp_err_t cfgmod_register_kind(cfgmod_kind_t kind, cfgmod_default_fn def_fn,
-                               cfgmod_deserialize_fn des_fn,
-                               cfgmod_serialize_fn ser_fn,
                                cfgmod_on_update_fn update_fn,
                                size_t struct_size);
 

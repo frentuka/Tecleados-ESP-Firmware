@@ -8,7 +8,7 @@ export interface CommandResponse {
     cmd: number;
     keyId: number;
     status: number; // esp_err_t (0 = ESP_OK)
-    jsonText: string; // fully reassembled JSON payload
+    data: Uint8Array; // fully reassembled binary payload
 }
 
 /** BLE/USB device status pushed from the ESP32 */

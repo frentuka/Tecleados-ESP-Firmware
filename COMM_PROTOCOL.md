@@ -145,7 +145,9 @@ Byte  Field        Size  Description
   0   module_id    1     Target module (see §7)
   1   cmd          1     Command (GET=0x00, SET=0x01)
   2   key_id       1     Config key identifier (see §8)
-  3+  data         var   JSON payload (for SET commands)
+ 3-4  item_id      2     Little-endian ID for *_SINGLE commands (e.g., layer ID)
+ 5-7  reserved     3     Reserved to maintain 8-byte alignment for the payload
+  8+  data         var   Binary struct payload (for SET commands)
 ```
 
 ### Response (Device → Host)
@@ -156,8 +158,9 @@ Byte  Field        Size  Description
   0   module_id    1     Source module
   1   cmd          1     Echo of the command
   2   key_id       1     Echo of the key ID
- 3-6  status       4     esp_err_t, little-endian (0 = ESP_OK)
-  7+  json_data    var   JSON response payload (GET results, etc.)
+  3   reserved     1     Reserved to align status to 4-byte boundary
+ 4-7  status       4     esp_err_t, little-endian (0 = ESP_OK)
+  8+  data         var   Binary response payload (GET results, etc.)
 ```
 
 ## 7. Module IDs
@@ -226,3 +229,107 @@ The configurator maintains `wantConnection = true` after a user-initiated connec
 2. Starts 2-second polling via `navigator.hid.getDevices()` or Web Bluetooth equivalent.
 3. Also listens for the `connect` event for faster recovery.
 4. On reconnection, fires `onConnectionChange(true)` — UI re-fetches all data.
+
+## 12. Explicit Binary Struct Formats
+
+All structures use explicit Little-Endian encoding for multi-byte values (`uint16_t`, `uint32_t`, `uint64_t`). Types must be parsed strictly by their defined offsets.
+
+### Status Message (`statusmod_msg_t` - 10 bytes)
+| Offset | Size | Type | Name |
+| --- | --- | --- | --- |
+| `0` | `1` | `uint8_t` | `transport_mode` |
+| `1` | `1` | `uint8_t` | `selected_profile` |
+| `2` | `1` | `uint8_t` | `pairing_profile` |
+| `3` | `1` | `uint8_t` | `split_state` |
+| `4` | `1` | `uint8_t` | `split_role` |
+| `5` | `2` | `uint8_t[2]` | `reserved` |
+| `7` | `1` | `uint8_t` | `reserved_padding` (Compiler injects 1 byte implicitly) |
+| `8` | `2` | `uint16_t` | `connected_bitmap` |
+
+### System Config (`cfg_system_t` - 96 bytes)
+| Offset | Size | Type | Name |
+| --- | --- | --- | --- |
+| `0` | `32` | `char[32]` | `device_name` |
+| `32` | `4` | `uint32_t` | `sleep_timeout_ms` |
+| `36` | `1` | `uint8_t` | `rgb_brightness` |
+| `37` | `1` | `bool` | `bluetooth_enabled` |
+| `38` | `1` | `bool` | `is_split` |
+| `39` | `1` | `bool` | `split_mirror_cols` |
+| `40` | `16` | `char[16]` | `split_variant` |
+| `56` | `32` | `char[32]` | `ble_shared_name` |
+| `88` | `6` | `uint8_t[6]` | `ble_shared_addr` |
+| `94` | `1` | `bool` | `transparent_stack_fallback` |
+| `95` | `1` | `uint8_t` | `reserved_padding` (Compiler implicit) |
+
+### Layer Config (`cfg_layer_t` - 216 bytes)
+- **`keys`** at offset `0` (Size: 216 bytes, `uint16_t[6][18]`). Array of 108 16-bit action codes.
+
+### Macro Event (`cfg_macro_event_t` - 16 bytes)
+| Offset | Size | Type | Name |
+| --- | --- | --- | --- |
+| `0` | `4` | `uint32_t` | `value` |
+| `4` | `4` | `uint32_t` | `delay_ms` |
+| `8` | `4` | `uint32_t` | `press_duration_ms` |
+| `12` | `4` | `uint32_t` | `type` (Enum `cfg_macro_event_type_t`) |
+
+### Macro Config (`cfg_macro_t` - 4136 bytes)
+| Offset | Size | Type | Name |
+| --- | --- | --- | --- |
+| `0` | `2` | `uint16_t` | `id` |
+| `2` | `2` | `uint16_t` | `event_count` |
+| `4` | `1` | `uint8_t` | `exec_mode` |
+| `5` | `1` | `uint8_t` | `stack_max` |
+| `6` | `1` | `uint8_t` | `repeat_count` |
+| `7` | `1` | `uint8_t` | `reserved[1]` |
+| `8` | `32` | `char[32]` | `name` |
+| `40` | `4096` | `cfg_macro_event_t[256]`| `events` (Array of 256 events) |
+
+### Custom Key: Press Release Rules (`cfg_ckey_pr_t` - 20 bytes)
+| Offset | Size | Type | Name |
+| --- | --- | --- | --- |
+| `0` | `4` | `uint32_t` | `press_action` |
+| `4` | `4` | `uint32_t` | `release_action` |
+| `8` | `4` | `uint32_t` | `press_tap_release_delay_ms` |
+| `12` | `4` | `uint32_t` | `release_tap_release_delay_ms` |
+| `16` | `1` | `uint8_t` | `wait_for_finish` |
+| `17` | `1` | `uint8_t` | `press_sustain` |
+| `18` | `2` | `uint8_t[2]` | `reserved` |
+
+### Custom Key: Multi Action Rules (`cfg_ckey_ma_t` - 36 bytes)
+| Offset | Size | Type | Name |
+| --- | --- | --- | --- |
+| `0` | `4` | `uint32_t` | `tap_action` |
+| `4` | `4` | `uint32_t` | `double_tap_action` |
+| `8` | `4` | `uint32_t` | `hold_action` |
+| `12` | `4` | `uint32_t` | `double_tap_threshold_ms` |
+| `16` | `4` | `uint32_t` | `hold_threshold_ms` |
+| `20` | `4` | `uint32_t` | `tap_release_delay_ms` |
+| `24` | `4` | `uint32_t` | `double_tap_release_delay_ms` |
+| `28` | `4` | `uint32_t` | `hold_release_delay_ms` |
+| `32` | `1` | `uint8_t` | `hold_sustain` |
+| `33` | `3` | `uint8_t[3]` | `reserved` |
+
+### Custom Key Config (`cfg_custom_key_t` - 72 bytes)
+| Offset | Size | Type | Name |
+| --- | --- | --- | --- |
+| `0` | `36` | `union` | `rules` (Either `pr` or `ma` depending on `mode`. Always sized as 36 bytes max) |
+| `36` | `2` | `uint16_t` | `id` |
+| `38` | `1` | `uint8_t` | `mode` |
+| `39` | `1` | `uint8_t` | `reserved[1]` |
+| `40` | `32` | `char[32]` | `name` |
+
+### Combo Config (`cfg_combo_t` - 64 bytes)
+| Offset | Size | Type | Name |
+| --- | --- | --- | --- |
+| `0` | `2` | `uint16_t` | `action` |
+| `2` | `2` | `uint16_t` | `delay_ms` |
+| `4` | `2` | `uint16_t` | `id` |
+| `6` | `1` | `uint8_t` | `key_count` |
+| `7` | `1` | `uint8_t` | `active_layers` |
+| `8` | `1` | `uint8_t` | `strict_order` |
+| `9` | `1` | `uint8_t` | `cancel_keys` |
+| `10` | `1` | `uint8_t` | `delayed_press` |
+| `11` | `1` | `uint8_t` | `release_on_first_key` |
+| `12` | `32` | `char[32]` | `name` |
+| `44` | `16` | `cfg_combo_key_t[8]` | `keys` (Array of 8 structs, each 2 bytes: `[uint8_t row, uint8_t col]`) |
+| `60` | `4` | `uint8_t[4]` | `reserved` |

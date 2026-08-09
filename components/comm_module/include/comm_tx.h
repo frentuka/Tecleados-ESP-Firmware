@@ -4,7 +4,7 @@
 #include <stdbool.h>
 
 #define TX_TIMEOUT_MS 3000
-#define MAX_TX_BUF_SIZE 21500
+#define MAX_TX_BUF_SIZE 10240
 
 #define TX_BLAST_BITMAP_BYTES 48
 #define TX_BLAST_MAX_PACKETS (TX_BLAST_BITMAP_BYTES * 8)

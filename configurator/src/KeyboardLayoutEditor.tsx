@@ -539,10 +539,12 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
     };
 
     const fetchLayouts = useCallback(async () => {
-        const metas = await hidService.fetchLayouts();
+        const layoutData = await hidService.fetchLayouts();
+        if (!layoutData) return;
+        const metas = layoutData.order.map(id => ({ id, name: `Layer ${id}` }));
         setLayoutMetas(metas);
 
-        if (metas.length > 0 && !metas.some((m: any) => m.id === activeLayerId)) {
+        if (metas.length > 0 && !metas.some(m => m.id === activeLayerId)) {
             setActiveLayerId(metas[0].id);
         }
 
@@ -571,8 +573,9 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
     const fetchPhysicalLayout = useCallback(async () => {
         const plPayload = buildConfigPayload(CFG_CMD_GET, CFG_KEY_PHYSICAL_LAYOUT);
         const plResp = await hidService.sendCommand(plPayload);
-        if (plResp && plResp.status === 0 && plResp.jsonText.trim().length > 0) {
-            const parsed = parsePhysicalLayoutJson(plResp.jsonText);
+        if (plResp && plResp.status === 0 && plResp.data.length > 0) {
+            const jsonText = new TextDecoder().decode(plResp.data);
+            const parsed = parsePhysicalLayoutJson(jsonText);
             if (parsed) {
                 setPhysicalLayout(parsed);
                 setPhysLayoutStatus('loaded');

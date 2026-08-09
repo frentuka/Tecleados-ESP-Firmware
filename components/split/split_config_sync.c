@@ -66,7 +66,7 @@ static void ensure_tx_sem_init(void)
  * ========================================================================= */
 
 const split_sync_entry_t SPLIT_SYNC_ENTRIES[] = {
-    { CFGMOD_KIND_LAYOUT,   "lay_idx"       },
+    { CFGMOD_KIND_LAYOUT,   "ly_idx"       },
     { CFGMOD_KIND_SYSTEM,   "sys"           },
     { CFGMOD_KIND_PHYSICAL, CFG_ST_PHYSICAL_LAYOUT },
     { CFGMOD_KIND_MACRO,    "mac_idx"       },
@@ -233,7 +233,7 @@ esp_err_t split_config_sync_push_kind(const uint8_t *peer_mac, split_seq_alloc_f
         if (ret != ESP_OK) last_ret = ret;
 
         // Special handling for dynamic sub-keys (Layouts, Macros, Custom Keys)
-        if (kind == CFGMOD_KIND_LAYOUT && strcmp(key, "lay_idx") == 0) {
+        if (kind == CFGMOD_KIND_LAYOUT && strcmp(key, "ly_idx") == 0) {
             cfg_layout_index_t lidx = {0};
             size_t lidx_len = sizeof(lidx);
             if (cfgmod_read_storage(kind, key, &lidx, &lidx_len) == ESP_OK) {

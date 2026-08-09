@@ -4,7 +4,7 @@
 #include <stdbool.h>
 
 #define RX_TIMEOUT_MS 1000
-#define MAX_RX_BUF_SIZE 21500
+#define MAX_RX_BUF_SIZE 10240
 
 #define RX_BLAST_BITMAP_BYTES 48
 #define RX_BLAST_MAX_PACKETS (RX_BLAST_BITMAP_BYTES * 8)

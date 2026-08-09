@@ -158,13 +158,13 @@ Strip JSON serialization out of the COMM protocol completely and transition to a
 ## Step-by-Step Execution Plan
 
 ### Phase 1: Struct Updates & Memory Alignment (Firmware)
-- [ ] Audit data structures: `cfg_layer_t`, `cfg_macro_t`, `cfg_combo_t`, `cfg_ckey_t`.
-- [ ] Reorder struct fields using Decreasing Size Ordering to eliminate implicit padding.
-- [ ] Add explicit trailing `reserved` fields (e.g., `uint8_t reserved[n]`) for natural alignment.
-- [ ] Ensure every struct with an array has an explicit `uint8_t count` field.
-- [ ] Add `_Static_assert()` definitions in headers for `sizeof()` and critical `offsetof()` boundaries.
-- [ ] Define module-specific 7-byte headers (`cfgmod_req_header_t`, `cfgmod_rsp_header_t`).
-- [ ] Update payload structures (`statusmod_msg_t`, `sysmod_msg_t`) ensuring aligned access at 8-byte offsets from `s_shared_rx_buf`.
+- [x] Audit data structures: `cfg_layer_t`, `cfg_macro_t`, `cfg_combo_t`, `cfg_ckey_t`.
+- [x] Reorder struct fields using Decreasing Size Ordering to eliminate implicit padding.
+- [x] Add explicit trailing `reserved` fields (e.g., `uint8_t reserved[n]`) for natural alignment.
+- [x] Ensure every struct with an array has an explicit `uint8_t count` field.
+- [x] Add `_Static_assert()` definitions in headers for `sizeof()` and critical `offsetof()` boundaries.
+- [x] Define module-specific 7-byte headers (`cfgmod_req_header_t`, `cfgmod_rsp_header_t`).
+- [x] Update payload structures (`statusmod_msg_t`, `sysmod_msg_t`) ensuring aligned access at 8-byte offsets from `s_shared_rx_buf`.
 
 ### Phase 2: Refactoring Firmware Logic & Memory Reclamation
 - [ ] Remove all cJSON dependencies (`#include "cJSON.h"`) and `_serialize`/`_deserialize` logic.

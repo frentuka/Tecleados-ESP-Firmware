@@ -26,8 +26,13 @@ export const useCustomKeyStore = create<CustomKeyState>((set, get) => ({
     fetchCustomKeys: async (controller) => {
         set({ isLoading: true });
         try {
-            const keys = await controller.fetchCustomKeys();
-            set({ customKeys: keys });
+            const ids = await controller.fetchCustomKeys();
+            const keys: CustomKey[] = [];
+            for (const id of ids) {
+                const k = await controller.fetchCustomKeySingle(id);
+                if (k) keys.push(k);
+            }
+            set({ customKeys: keys.sort((a, b) => a.id - b.id) });
         } catch (e) {
             console.error('[CustomKeyStore] fetchCustomKeys error:', e);
         } finally {

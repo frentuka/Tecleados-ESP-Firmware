@@ -1,5 +1,5 @@
 #include "cfg_physical.h"
-#include "cJSON.h"
+
 #include "cfgmod.h"
 #include <string.h>
 #include "esp_log.h"
@@ -20,30 +20,9 @@ static void phys_default(void *out_struct) {
     s[CFG_PHYSICAL_JSON_BUFSIZE - 1] = '\0';
 }
 
-static bool phys_deserialize(cJSON *root, void *out_struct) {
-    char *s = (char *)out_struct;
-    char *json_str = cJSON_PrintUnformatted(root);
-    if (!json_str) return false;
-    
-    // We assume the caller allocated enough space (sizeof(DEFAULT_PHYS_JSON)*2 or similar)
-    // Actually, cfgmod_get_config for registered kinds uses a struct.
-    // For physical layout, it's a bit of a hack because it's variable length.
-    // But since we are registering it as a kind, we must provide a struct size.
-    // Let's use 4096 as a safe buffer size for the "struct".
-    
-    strncpy(s, json_str, CFG_PHYSICAL_JSON_BUFSIZE - 1);
-    s[CFG_PHYSICAL_JSON_BUFSIZE - 1] = '\0';
-    free(json_str);
-    return true;
-}
 
-static cJSON *phys_serialize(const void *in_struct) {
-    const char *s = (const char *)in_struct;
-    return cJSON_Parse(s);
-}
 
 void cfg_physical_register(void) {
     // Registering with a 4096 byte buffer size.
-    cfgmod_register_kind(CFGMOD_KIND_PHYSICAL, phys_default, phys_deserialize,
-                         phys_serialize, NULL, CFG_PHYSICAL_JSON_BUFSIZE);
+    cfgmod_register_kind(CFGMOD_KIND_PHYSICAL, phys_default, NULL, CFG_PHYSICAL_JSON_BUFSIZE);
 }
