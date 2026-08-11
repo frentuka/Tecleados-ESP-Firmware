@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "modules/SPLIT_MODULE.md",
+                "file": "modules/STATUS_MODULE.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "SPLIT_MODULE"
+              "title": "STATUS_MODULE"
             }
           }
         ]
@@ -187,15 +187,15 @@
   },
   "active": "6d5918773634e7a1",
   "lastOpenFiles": [
-    "modules/CONFIGURATOR.md",
     "modules/SPLIT_MODULE.md",
+    "modules/STATUS_MODULE.md",
+    "modules/CONFIGURATOR.md",
     "modules/SPLIT_MODULE.md.tmp.30412.1776204261838",
     "modules/USB_MODULE.md",
     "modules/KEYBOARD_MODULE.md",
     "modules/CONFIG_MODULE.md",
     "modules/BLE_MODULE.md",
     "components/split/split_role.c.md",
-    "modules/STATUS_MODULE.md",
     "components/split/split_bridge.c.md",
     "components/split",
     "components",
