@@ -39,6 +39,8 @@ void   combos_default(void *out_struct);
 
 /* High-level helpers */
 esp_err_t combos_delete_single(uint16_t id, cfg_combo_index_t *idx);
+esp_err_t combos_delete(uint16_t id);
+esp_err_t combos_set(const void *in_struct);
 esp_err_t combos_load_all(cfg_combo_t *out_arr, size_t *out_count);
 
 void cfg_combos_register(cfgmod_on_update_fn update_fn);

@@ -70,7 +70,9 @@ typedef struct {
 } cfg_macro_index_t;
 // Remove a macro by ID directly from NVS and index
 esp_err_t macros_delete_single(uint16_t id, cfg_macro_index_t *idx);
-
+// Full wrapper for deleting a macro (used by cfgmod)
+esp_err_t macros_delete(uint16_t id);
+// Full wrapper for saving a macro (used by cfgmod)
+esp_err_t macros_set(const void *in_struct);
 // Load all active macros from NVS into a list
 esp_err_t macros_load_all(cfg_macro_list_t *out_list);
-

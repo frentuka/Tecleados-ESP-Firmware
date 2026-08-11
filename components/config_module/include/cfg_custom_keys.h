@@ -99,6 +99,9 @@ void   ckeys_default(void *out_struct);
 /** Remove a single custom key by ID. Updates idx in NVS. */
 esp_err_t ckeys_delete_single(uint16_t id, cfg_ckey_index_t *idx);
 
+esp_err_t ckeys_delete(uint16_t id);
+esp_err_t ckeys_set(const void *in_struct);
+
 /**
  * Load all active custom keys from NVS into caller-supplied array.
  * @param out_arr   Array of at least CFG_CKEYS_MAX_COUNT elements.

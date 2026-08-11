@@ -600,6 +600,8 @@ void kb_macro_init(void) {
     macros_load_all(s_macros);
 
     cfgmod_register_kind(CFGMOD_KIND_MACRO, macros_default, on_macros_updated, sizeof(cfg_macro_t));
+    cfgmod_register_get_set(CFGMOD_KIND_MACRO, NULL, macros_set);
+    cfgmod_register_delete(CFGMOD_KIND_MACRO, macros_delete);
 
     xTaskCreateWithCaps(macro_task, "kb_macro", 5120, NULL, 4, NULL,
                         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);

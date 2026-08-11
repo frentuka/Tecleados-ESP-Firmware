@@ -21,7 +21,7 @@ import KeyActionPopover from './components/KeyActionPopover';
 import type { Macro } from './types/macros';
 import { parseKleJson } from './utils/kleParser';
 import { parsePhysicalLayoutJson, serializePhysicalLayout } from './utils/layoutUtils';
-import { saveJsonFile } from './utils/fileUtils';
+
 import { useNotificationStore } from './stores/notificationStore';
 import { useLayoutStore } from './stores/layoutStore';
 import { withTimeout, TimeoutError } from './utils/withTimeout';
@@ -307,61 +307,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
         }
     }, [selectedKeys, isRowColEditMode, physicalLayout]);
 
-    // ── Export/Import ──
-    const exportLayout = async () => {
-        const data: any = {
-            version: 1,
-            matrixRows: MATRIX_ROWS,
-            matrixCols: MATRIX_COLS,
-            layers: Object.values(layerDataCache),
-            timestamp: new Date().toISOString()
-        };
 
-        if (isDeveloperMode) {
-            data.physicalLayout = physicalLayout || DEFAULT_PHYSICAL_LAYOUT;
-        }
-
-        const fileName = `${hidService.getDeviceName()}_${new Date().toISOString().slice(0, 10)}.json`;
-        const jsonContent = JSON.stringify(data, null, 2);
-
-        await saveJsonFile(jsonContent, fileName);
-        onLogRef.current('Layout exported to JSON');
-        showNotification('Layout exported to JSON', 'success');
-    };
-
-    const handleImportClick = () => {
-        fileInputRef.current?.click();
-    };
-
-    const importLayout = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-
-        const reader = new FileReader();
-        reader.onload = (event) => {
-            try {
-                const data = JSON.parse(event.target?.result as string);
-                if (data.physicalLayout && isDeveloperMode) {
-                    setPhysicalLayout(data.physicalLayout);
-                    setPhysLayoutStatus('loaded');
-                    setHasPhysLayoutChanges(true); // Mark as changed so user can save to device
-                }
-                if (data.layers && Array.isArray(data.layers)) {
-                    showNotification('Importing layers is not fully supported in the new layout system yet.', 'warning');
-                }
-                const msg = 'Layout imported from JSON. Remember to save layout and layers to device.';
-                onLogRef.current(msg);
-                showNotification(msg, 'warning');
-            } catch (err) {
-                onLogRef.current('Failed to parse layout JSON');
-                showNotification('Failed to parse layout JSON', 'error');
-                console.error(err);
-            }
-        };
-        reader.readAsText(file);
-        // Reset input
-        e.target.value = '';
-    };
 
     // ── Key Test Mode Cleanup ──
     const exitKeyTestMode = useCallback(async () => {
@@ -546,7 +492,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
         const layoutData = await hidService.fetchLayouts();
         if (!layoutData) return;
         const validOrder = layoutData.order.slice(0, layoutData.count);
-        const metas = validOrder.map((id, idx) => ({ id, name: layoutData.names?.[idx] || `Layer ${id}` }));
+        const metas = validOrder.map((id, idx) => ({ id, name: (layoutData as any).names?.[idx] || `Layer ${id}` }));
         setLayoutMetas(metas);
 
         if (metas.length > 0 && !metas.some(m => m.id === activeLayerId)) {
@@ -930,18 +876,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                 </svg>
                                 Duplicate layout
                             </button>
-                            <button className="dropdown-item" onClick={() => { exportLayout(); setIsMenuOpen(false); }}>
-                                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-                                    <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
-                                </svg>
-                                Export layout
-                            </button>
-                            <button className="dropdown-item" onClick={() => { handleImportClick(); setIsMenuOpen(false); }}>
-                                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-                                    <path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z" />
-                                </svg>
-                                Import layout
-                            </button>
+
                             <div className="dropdown-divider" />
                             <button className="dropdown-item dropdown-item-danger" onClick={() => {
                                 setLayerDataCache(prev => {
@@ -1665,7 +1600,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                             ref={fileInputRef}
                             style={{ display: 'none' }}
                             accept=".json"
-                            onChange={importLayout}
+                            onChange={() => {}}
                         />
 
                         {/* Universal Apply button */}

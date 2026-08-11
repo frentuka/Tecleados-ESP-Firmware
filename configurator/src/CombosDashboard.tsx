@@ -6,9 +6,7 @@ import SearchableKeyModal from './components/SearchableKeyModal';
 import ComboKeySelector from './components/ComboKeySelector';
 import { ComboPreview } from './components/ComboPreview';
 import { getKeyName } from './KeyDefinitions';
-import { InfoIcon, AlertTriangleIcon } from './components/Icons';
-import { saveJsonFile } from './utils/fileUtils';
-import { useNotificationStore } from './stores/notificationStore';
+import { InfoIcon, AlertTriangleIcon } from './components/Icons';import { useNotificationStore } from './stores/notificationStore';
 import EmptyState from './components/EmptyState';
 import comboEmptyAnim from './assets/lottie/combo-empty.json';
 import './assets/css/custom-keys-dashboard.css'; // Reusing CSS from custom keys for general layout
@@ -425,41 +423,6 @@ export default function CombosDashboard({ combos, comboLimits, macros, isDevelop
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
-
-    const handleExport = async () => {
-        try {
-            const dataStr = JSON.stringify(combos, null, 2);
-            await saveJsonFile(dataStr, 'combos_export.json');
-            showNotification("Combos exported successfully", "success");
-        } catch (err) {
-            showNotification("Failed to export combos.", "error");
-        }
-        setIsMenuOpen(false);
-    };
-
-    const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
-        const file = event.target.files?.[0];
-        if (!file) return;
-
-        const reader = new FileReader();
-        reader.onload = async (e) => {
-            try {
-                const importedData = JSON.parse(e.target?.result as string);
-                const parsedKeys = Array.isArray(importedData) ? importedData : [importedData];
-
-                for (const c of parsedKeys) {
-                    await onSave(c);
-                }
-                showNotification("Combos imported successfully", "success");
-            } catch (error) {
-                showNotification("Failed to import combos.", "error");
-            }
-        };
-        reader.readAsText(file);
-        event.target.value = '';
-        setIsMenuOpen(false);
-    };
-
     const handleNew = () => {
         let firstAvailable = -1;
         for (let i = 0; i < maxCombos; i++) {
@@ -572,9 +535,7 @@ export default function CombosDashboard({ combos, comboLimits, macros, isDevelop
                             </svg>
                         </button>
                         {isMenuOpen && (
-                            <div className="dropdown-menu">
-                                <button className="dropdown-item" onClick={handleExport}>Export Combos</button>
-                                <button className="dropdown-item" onClick={() => { fileInputRef.current?.click(); setIsMenuOpen(false); }}>Import Combos</button>
+                            <div className="dropdown-menu">                                <button className="dropdown-item" onClick={() => { fileInputRef.current?.click(); setIsMenuOpen(false); }}>Import Combos</button>
                                 <button className="dropdown-item" onClick={() => { onReload?.(); setIsMenuOpen(false); }}>Refresh</button>
                             </div>
                         )}
@@ -634,8 +595,6 @@ export default function CombosDashboard({ combos, comboLimits, macros, isDevelop
                     onClose={() => setSelected(null)}
                     isDeveloperMode={isDeveloperMode}
                 />
-            )}
-            <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept=".json" onChange={handleImport} />
-        </div>
+            )}        </div>
     );
 }

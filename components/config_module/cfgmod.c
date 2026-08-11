@@ -60,6 +60,7 @@ typedef struct {
   bool registered;
   cfgmod_get_fn get_fn;  // optional: overrides cfgmod_get_config in USB GET handler
   cfgmod_set_fn set_fn;  // optional: overrides cfgmod_set_config in USB SET handler
+  cfgmod_delete_fn delete_fn; // optional: generic DELETE override
   cfgmod_validate_fn validate_fn; // optional: validates data before writing to NVS
 } cfgmod_registry_t;
 
@@ -69,6 +70,12 @@ void cfgmod_register_get_set(cfgmod_kind_t kind, cfgmod_get_fn get_fn, cfgmod_se
   if (kind < CFGMOD_KIND_MAX) {
     s_registry[kind].get_fn = get_fn;
     s_registry[kind].set_fn = set_fn;
+  }
+}
+
+void cfgmod_register_delete(cfgmod_kind_t kind, cfgmod_delete_fn delete_fn) {
+  if (kind < CFGMOD_KIND_MAX) {
+    s_registry[kind].delete_fn = delete_fn;
   }
 }
 
@@ -267,7 +274,11 @@ esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
 
       if (data_in_len == 0 && !base_key) {
           // 0-length payload for *_SINGLE means DELETE
-          rsp.status = cfgmod_delete_storage(kind, target_key);
+          if (s_registry[kind].delete_fn) {
+              rsp.status = s_registry[kind].delete_fn(hdr.item_id);
+          } else {
+              rsp.status = cfgmod_delete_storage(kind, target_key);
+          }
           if (rsp.status == ESP_OK) {
               update_active_mask(kind, hdr.item_id, false);
               if (s_registry[kind].update_fn) {

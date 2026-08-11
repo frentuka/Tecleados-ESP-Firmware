@@ -88,8 +88,10 @@ esp_err_t cfgmod_register_kind(cfgmod_kind_t kind, cfgmod_default_fn def_fn,
 // device identity independent of config-sync overwrites).
 typedef esp_err_t (*cfgmod_get_fn)(void *out_struct);
 typedef esp_err_t (*cfgmod_set_fn)(const void *in_struct);
+typedef esp_err_t (*cfgmod_delete_fn)(uint16_t item_id);
 typedef esp_err_t (*cfgmod_validate_fn)(void *in_struct);
 void cfgmod_register_get_set(cfgmod_kind_t kind, cfgmod_get_fn get_fn, cfgmod_set_fn set_fn);
+void cfgmod_register_delete(cfgmod_kind_t kind, cfgmod_delete_fn delete_fn);
 void cfgmod_register_validate(cfgmod_kind_t kind, cfgmod_validate_fn validate_fn);
 
 // Fetch a config struct from storage (applies defaults and parses JSON)

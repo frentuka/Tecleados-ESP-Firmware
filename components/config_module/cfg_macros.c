@@ -12,6 +12,18 @@ void macros_default(void *out_struct) {
 
 
 
+esp_err_t macros_delete(uint16_t id) {
+    cfg_macro_index_t idx = {0};
+    size_t idx_len = sizeof(idx);
+    cfgmod_read_storage(CFGMOD_KIND_MACRO, "mac_idx", &idx, &idx_len);
+    esp_err_t err = macros_delete_single(id, &idx);
+    
+    char key[16];
+    snprintf(key, sizeof(key), "mac_%u", id);
+    cfgmod_delete_storage(CFGMOD_KIND_MACRO, key);
+    return err;
+}
+
 esp_err_t macros_delete_single(uint16_t id, cfg_macro_index_t *idx) {
     if (id >= CFG_MACROS_MAX_COUNT) return ESP_ERR_INVALID_ARG;
     
@@ -34,6 +46,26 @@ esp_err_t macros_validate(void *in_struct) {
         m->exec_mode = MACRO_EXEC_ONCE_STACK_ONCE;
     }
     return ESP_OK;
+}
+
+esp_err_t macros_set(const void *in_struct) {
+    const cfg_macro_t *m = (const cfg_macro_t *)in_struct;
+    if (m->id >= CFG_MACROS_MAX_COUNT) return ESP_ERR_INVALID_ARG;
+
+    char key[16];
+    snprintf(key, sizeof(key), "mac_%u", m->id);
+
+    esp_err_t err = cfgmod_write_storage(CFGMOD_KIND_MACRO, key, m, sizeof(cfg_macro_t));
+    if (err == ESP_OK) {
+        // Update index directly without needing a manual refresh trigger,
+        // because update_fn is handled in cfgmod.c automatically.
+        cfg_macro_index_t idx = {0};
+        size_t idx_len = sizeof(idx);
+        cfgmod_read_storage(CFGMOD_KIND_MACRO, "mac_idx", &idx, &idx_len);
+        idx.active_mask |= (UINT64_C(1) << m->id);
+        cfgmod_write_storage(CFGMOD_KIND_MACRO, "mac_idx", &idx, sizeof(cfg_macro_index_t));
+    }
+    return err;
 }
 
 void cfg_macros_register(void) {

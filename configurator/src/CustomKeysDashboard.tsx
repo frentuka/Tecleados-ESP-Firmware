@@ -4,9 +4,7 @@ import type { CustomKey, CustomKeyPR, CustomKeyMA } from './types/customKeys';
 import type { Macro } from './types/macros';
 import SearchableKeyModal from './components/SearchableKeyModal';
 import { getKeyName, CKEY_BASE } from './KeyDefinitions';
-import { getCustomKeyBadge } from './components/MacroIcons';
-import { saveJsonFile } from './utils/fileUtils';
-import { useNotificationStore } from './stores/notificationStore';
+import { getCustomKeyBadge } from './components/MacroIcons';import { useNotificationStore } from './stores/notificationStore';
 import EmptyState from './components/EmptyState';
 import ckeyEmptyAnim from './assets/lottie/ckey-empty.json';
 import './assets/css/custom-keys-dashboard.css';
@@ -526,41 +524,6 @@ export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMod
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
-
-    const handleExport = async () => {
-        try {
-            const dataStr = JSON.stringify(customKeys, null, 2);
-            await saveJsonFile(dataStr, 'custom_keys_export.json');
-            showNotification("Custom keys exported successfully", "success");
-        } catch (err) {
-            showNotification("Failed to export custom keys.", "error");
-        }
-        setIsMenuOpen(false);
-    };
-
-    const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
-        const file = event.target.files?.[0];
-        if (!file) return;
-
-        const reader = new FileReader();
-        reader.onload = async (e) => {
-            try {
-                const importedData = JSON.parse(e.target?.result as string);
-                const parsedKeys = Array.isArray(importedData) ? importedData : [importedData];
-                
-                for (const ck of parsedKeys) {
-                    await onSave(ck);
-                }
-                showNotification("Custom keys imported successfully", "success");
-            } catch (error) {
-                showNotification("Failed to import custom keys.", "error");
-            }
-        };
-        reader.readAsText(file);
-        event.target.value = '';
-        setIsMenuOpen(false);
-    };
-
     const handleNew = () => {
         let firstAvailable = -1;
         for (let i = 0; i < CKEY_MAX; i++) {
@@ -645,9 +608,7 @@ export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMod
                             </svg>
                         </button>
                         {isMenuOpen && (
-                            <div className="dropdown-menu">
-                                <button className="dropdown-item" onClick={handleExport}>Export Custom Keys</button>
-                                <button className="dropdown-item" onClick={() => { fileInputRef.current?.click(); setIsMenuOpen(false); }}>Import Custom Keys</button>
+                            <div className="dropdown-menu">                                <button className="dropdown-item" onClick={() => { fileInputRef.current?.click(); setIsMenuOpen(false); }}>Import Custom Keys</button>
                                 <button className="dropdown-item" onClick={() => { onReload?.(); setIsMenuOpen(false); }}>Refresh</button>
                             </div>
                         )}
@@ -711,8 +672,6 @@ export default function CustomKeysDashboard({ customKeys, macros, isDeveloperMod
                         if (onClearEditId) onClearEditId();
                     }}
                 />
-            )}
-            <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept=".json" onChange={handleImport} />
-        </div>
+            )}        </div>
     );
 }

@@ -49,9 +49,11 @@ void single_press_test() {
 }
 
 void double_press_test() {
-  ESP_LOGI(TAG, "test double press: Media Mute");
-  kb_macro_process_action(SYS_ACTION_MUTE, true);
-  kb_macro_process_action(SYS_ACTION_MUTE, false);
+  ESP_LOGI(TAG, "test double press: Activate BLE pairing on Profile 1");
+  if (!ble_hid_is_routing_active()) {
+      ble_hid_set_routing_active(true);
+  }
+  ble_hid_profile_pair(0);
 }
 
 void hold_press_test() {

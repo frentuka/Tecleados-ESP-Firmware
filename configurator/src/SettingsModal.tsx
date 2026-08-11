@@ -5,6 +5,8 @@ import type { DeviceStatus } from './types/device';
 interface SettingsModalProps {
     isOpen: boolean;
     onClose: () => void;
+    onOpenExport: () => void;
+    onOpenImport: () => void;
     isConnected: boolean;
     isDeveloperMode: boolean;
     deviceStatus: DeviceStatus | null;
@@ -14,6 +16,8 @@ interface SettingsModalProps {
 export default function SettingsModal({
     isOpen,
     onClose,
+    onOpenExport,
+    onOpenImport,
     isConnected,
     isDeveloperMode,
     deviceStatus,
@@ -37,6 +41,8 @@ export default function SettingsModal({
                 <div className="settings-modal-body">
                     <DeviceDashboard
                         isConnected={isConnected}
+                        onOpenExport={onOpenExport}
+                        onOpenImport={onOpenImport}
                         isDeveloperMode={isDeveloperMode}
                         deviceStatus={deviceStatus}
                         onLog={onLog}

@@ -15,6 +15,7 @@ import {
 import type { DeviceStatus } from './types/device';
 import { useNotificationStore } from './stores/notificationStore';
 import { useOnboardingStore } from './stores/onboardingStore';
+import { useUiStore } from './stores/uiStore';
 import { withTimeout, TimeoutError } from './utils/withTimeout';
 import './assets/css/device-dashboard.css';
 import './assets/css/split-dashboard.css';
@@ -105,6 +106,8 @@ interface DeviceDashboardProps {
     deviceStatus: DeviceStatus | null;
     onLog: (text: string) => void;
     onClose?: () => void;
+    onOpenExport?: () => void;
+    onOpenImport?: () => void;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -115,8 +118,12 @@ const DeviceDashboard: React.FC<DeviceDashboardProps> = ({
     deviceStatus,
     onLog,
     onClose,
+    onOpenExport,
+    onOpenImport,
 }) => {
     const { showNotification } = useNotificationStore();
+    const render3DModel = useUiStore(state => state.render3DModel);
+    const setRender3DModel = useUiStore(state => state.setRender3DModel);
 
     // ── Identity state ────────────────────────────────────────────────────
 
@@ -125,6 +132,7 @@ const DeviceDashboard: React.FC<DeviceDashboardProps> = ({
     const [isSaving, setIsSaving] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
     const [saveResult, setSaveResult] = useState<'ok' | 'err' | null>(null);
+    const [activeTab, setActiveTab] = useState<'device' | 'configurator'>('device');
 
     const isDirty =
         draft.device_name      !== saved.device_name      ||
@@ -372,13 +380,33 @@ const DeviceDashboard: React.FC<DeviceDashboardProps> = ({
 
     return (
         <div className="dd-layout-unified">
+            {/* ── Tabs ── */}
+            <div className="dd-tabs" style={{ display: 'flex', width: '100%', borderBottom: '1px solid rgba(255,255,255,0.1)', background: 'rgba(0,0,0,0.2)' }}>
+                <button
+                    className={`dd-tab ${activeTab === 'device' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('device')}
+                    style={{ flex: 1, textAlign: 'center', padding: '12px 16px', background: 'none', border: 'none', color: activeTab === 'device' ? 'white' : 'rgba(255,255,255,0.5)', cursor: 'pointer', borderBottom: activeTab === 'device' ? '2px solid var(--accent-color)' : '2px solid transparent', fontSize: '0.85rem', fontWeight: 600, transition: 'all 0.2s' }}
+                >
+                    Device Settings
+                </button>
+                <button
+                    className={`dd-tab ${activeTab === 'configurator' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('configurator')}
+                    style={{ flex: 1, textAlign: 'center', padding: '12px 16px', background: 'none', border: 'none', color: activeTab === 'configurator' ? 'white' : 'rgba(255,255,255,0.5)', cursor: 'pointer', borderBottom: activeTab === 'configurator' ? '2px solid var(--accent-color)' : '2px solid transparent', fontSize: '0.85rem', fontWeight: 600, transition: 'all 0.2s' }}
+                >
+                    Configurator Settings
+                </button>
+            </div>
+
             {/* ── Main Content ── */}
             <div className="dd-scrollable-content">
                 {isLoading && <div className="dd-loading-overlay"><span className="dd-loading-spinner"/>Loading settings...</div>}
                 
                 <div className="dd-sections">
-                    {/* ── GENERAL SETTINGS ────────────────────────────── */}
-                    <DdSection label="General Settings">
+                    {activeTab === 'device' && (
+                        <>
+                            {/* ── GENERAL SETTINGS ────────────────────────────── */}
+                            <DdSection label="General Settings">
                         <FieldGroup label="Device Name" hint="Bluetooth and USB device name shown to hosts on pairing. Changes take effect after reconnect or restart.">
                             <div className="dd-field-row">
                                 <input
@@ -407,28 +435,36 @@ const DeviceDashboard: React.FC<DeviceDashboardProps> = ({
                             </div>
                         </FieldGroup>
 
-                        <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                            <button
-                                className="btn btn-secondary btn-sm"
-                                style={{ fontSize: '0.75rem', opacity: 0.7 }}
-                                onClick={() => {
-                                    useOnboardingStore.getState().reset();
-                                    if (onClose) onClose();
-                                }}
-                                title="Restart the onboarding tutorial from the beginning"
-                            >
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '0.4rem', verticalAlign: 'middle' }}>
-                                    <polyline points="1 4 1 10 7 10" />
-                                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+                    </DdSection>
+
+                    {/* ── BACKUP / CONFIGURATION ──────────────────────── */}
+                    <DdSection label="Import / Export Configuration">
+                        <div style={{ display: 'flex', gap: '24px', marginTop: '16px', justifyContent: 'center' }}>
+                            <button className="btn-config-action" onClick={onOpenImport}>
+                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                    <polyline points="7 10 12 15 17 10" />
+                                    <line x1="12" y1="15" x2="12" y2="3" />
                                 </svg>
-                                Replay Onboarding Tour
+                                <span>Import</span>
+                            </button>
+                            <button className="btn-config-action" onClick={onOpenExport}>
+                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                    <polyline points="17 8 12 3 7 8" />
+                                    <line x1="12" y1="3" x2="12" y2="15" />
+                                </svg>
+                                <span>Export</span>
                             </button>
                         </div>
                     </DdSection>
 
-                    {/* ── SPLIT LINK STATUS ───────────────────────────── */}
-                    <DdSection label="Split Link Status">
-                        <div className="dd-split-magic-visual">
+                    {/* ── SPLIT LINK STATUS & CONFIGURATION ───────────────────────────── */}
+                    {(draft.is_split || isDeveloperMode) && (
+                        <DdSection label="Split Link Status & Configuration">
+                            {draft.is_split && (
+                                <>
+                                    <div className="dd-split-magic-visual">
                             <div className="dd-split-half left">
                                 <div className="dd-split-half-glow" />
                             </div>
@@ -527,7 +563,53 @@ const DeviceDashboard: React.FC<DeviceDashboardProps> = ({
                                 </div>
                             )}
                         </div>
+                        </>
+                    )}
+
+                            {/* ── SPLIT CONFIGURATION ── */}
+                            {isDeveloperMode && (
+                                <div style={{ marginTop: draft.is_split ? '24px' : '0', paddingTop: draft.is_split ? '16px' : '0', borderTop: draft.is_split ? '1px solid rgba(255,255,255,0.1)' : 'none' }}>
+                                <div className="dd-toggle-row">
+                                    <Toggle
+                                        id="dd-is-split"
+                                        checked={draft.is_split}
+                                        onChange={v => setField('is_split', v)}
+                                    />
+                                    <label htmlFor="dd-is-split" className="dd-toggle-label">
+                                        This device is part of a split keyboard
+                                    </label>
+                                </div>
+
+                                <div className={`dd-split-fields ${draft.is_split ? '' : 'disabled'}`}>
+                                    <FieldGroup label="Mirror Columns" hint="Column N maps to (MAX_COL−N). Enable on the mirrored half.">
+                                        <div className="dd-toggle-row" style={{ marginTop: 4 }}>
+                                            <Toggle
+                                                id="dd-mirror-cols"
+                                                checked={draft.split_mirror_cols}
+                                                onChange={v => setField('split_mirror_cols', v)}
+                                            />
+                                            <label htmlFor="dd-mirror-cols" className="dd-toggle-label">
+                                                {draft.split_mirror_cols ? 'Enabled' : 'Disabled'}
+                                            </label>
+                                        </div>
+                                    </FieldGroup>
+
+                                    <FieldGroup label="Variant Name" hint={`e.g. "Left", "Right", "Numpad"`}>
+                                        <input
+                                            id="dd-split-variant"
+                                            type="text"
+                                            maxLength={15}
+                                            value={draft.split_variant}
+                                            onChange={e => setField('split_variant', e.target.value)}
+                                            placeholder="Left"
+                                            className="dd-input"
+                                        />
+                                    </FieldGroup>
+                                </div>
+                            </div>
+                        )}
                     </DdSection>
+                    )}
 
                     {/* Benchmark Results Card */}
                     {benchResult && (
@@ -583,46 +665,6 @@ const DeviceDashboard: React.FC<DeviceDashboardProps> = ({
                     {/* ── DEVELOPER MODE ──────────────────────────────── */}
                     {isDeveloperMode && (
                         <>
-                            <DdSection label="Split Configuration">
-                                <div className="dd-toggle-row">
-                                    <Toggle
-                                        id="dd-is-split"
-                                        checked={draft.is_split}
-                                        onChange={v => setField('is_split', v)}
-                                    />
-                                    <label htmlFor="dd-is-split" className="dd-toggle-label">
-                                        This device is part of a split keyboard
-                                    </label>
-                                </div>
-
-                                <div className={`dd-split-fields ${draft.is_split ? '' : 'disabled'}`}>
-                                    <FieldGroup label="Mirror Columns" hint="Column N maps to (MAX_COL−N). Enable on the mirrored half.">
-                                        <div className="dd-toggle-row" style={{ marginTop: 4 }}>
-                                            <Toggle
-                                                id="dd-mirror-cols"
-                                                checked={draft.split_mirror_cols}
-                                                onChange={v => setField('split_mirror_cols', v)}
-                                            />
-                                            <label htmlFor="dd-mirror-cols" className="dd-toggle-label">
-                                                {draft.split_mirror_cols ? 'Enabled' : 'Disabled'}
-                                            </label>
-                                        </div>
-                                    </FieldGroup>
-
-                                    <FieldGroup label="Variant Name" hint={`e.g. "Left", "Right", "Numpad"`}>
-                                        <input
-                                            id="dd-split-variant"
-                                            type="text"
-                                            maxLength={15}
-                                            value={draft.split_variant}
-                                            onChange={e => setField('split_variant', e.target.value)}
-                                            placeholder="Left"
-                                            className="dd-input"
-                                        />
-                                    </FieldGroup>
-                                </div>
-                            </DdSection>
-
                             {isConnectedS && splitRole === SPLIT_ROLE_MASTER && (
                                 <DdSection label="Remote Key Test">
                                     <div className="dd-section-header-row">
@@ -644,6 +686,45 @@ const DeviceDashboard: React.FC<DeviceDashboardProps> = ({
                                     )}
                                 </DdSection>
                             )}
+                        </>
+                    )}
+                    </>
+                )}
+
+                {activeTab === 'configurator' && (
+                    <>
+                            <DdSection label="Configurator Settings">
+                                <FieldGroup label="3D Model Rendering" hint="Disable the interactive 3D keyboard model for better performance on lower-end devices.">
+                                    <div className="dd-toggle-row" style={{ marginTop: 4 }}>
+                                        <Toggle
+                                            id="dd-3d-render"
+                                            checked={render3DModel}
+                                            onChange={v => setRender3DModel(v)}
+                                        />
+                                        <label htmlFor="dd-3d-render" className="dd-toggle-label">
+                                            {render3DModel ? 'Enabled' : 'Disabled'}
+                                        </label>
+                                    </div>
+                                </FieldGroup>
+
+                                <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                                    <button
+                                        className="btn btn-secondary btn-sm"
+                                        style={{ fontSize: '0.75rem', opacity: 0.7 }}
+                                        onClick={() => {
+                                            useOnboardingStore.getState().reset();
+                                            if (onClose) onClose();
+                                        }}
+                                        title="Restart the onboarding tutorial from the beginning"
+                                    >
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '0.4rem', verticalAlign: 'middle' }}>
+                                            <polyline points="1 4 1 10 7 10" />
+                                            <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+                                        </svg>
+                                        Replay Onboarding Tour
+                                    </button>
+                                </div>
+                            </DdSection>
                         </>
                     )}
                 </div>

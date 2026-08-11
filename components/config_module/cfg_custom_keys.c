@@ -24,6 +24,18 @@ void ckeys_default(void *out_struct) {
 
 
 
+esp_err_t ckeys_delete(uint16_t id) {
+    cfg_ckey_index_t idx = {0};
+    size_t idx_len = sizeof(idx);
+    cfgmod_read_storage(CFGMOD_KIND_CKEY, "ck_idx", &idx, &idx_len);
+    esp_err_t err = ckeys_delete_single(id, &idx);
+    
+    char key[16];
+    snprintf(key, sizeof(key), "ck_%u", id);
+    cfgmod_delete_storage(CFGMOD_KIND_CKEY, key);
+    return err;
+}
+
 esp_err_t ckeys_delete_single(uint16_t id, cfg_ckey_index_t *idx) {
     if (id >= CFG_CKEYS_MAX_COUNT) return ESP_ERR_INVALID_ARG;
 
@@ -72,6 +84,24 @@ esp_err_t ckeys_validate(void *in_struct) {
     return ESP_OK;
 }
 
+esp_err_t ckeys_set(const void *in_struct) {
+    const cfg_custom_key_t *ck = (const cfg_custom_key_t *)in_struct;
+    if (ck->id >= CFG_CKEYS_MAX_COUNT) return ESP_ERR_INVALID_ARG;
+
+    char key[16];
+    snprintf(key, sizeof(key), "ck_%u", ck->id);
+
+    esp_err_t err = cfgmod_write_storage(CFGMOD_KIND_CKEY, key, ck, sizeof(cfg_custom_key_t));
+    if (err == ESP_OK) {
+        cfg_ckey_index_t idx = {0};
+        size_t idx_len = sizeof(idx);
+        cfgmod_read_storage(CFGMOD_KIND_CKEY, "ck_idx", &idx, &idx_len);
+        idx.mask[ck->id / 8] |= (1u << (ck->id % 8));
+        cfgmod_write_storage(CFGMOD_KIND_CKEY, "ck_idx", &idx, sizeof(cfg_ckey_index_t));
+    }
+    return err;
+}
+
 /* ============================================================
    Registration
    ============================================================ */
@@ -85,4 +115,6 @@ void cfg_custom_keys_register(cfgmod_on_update_fn update_fn) {
                          ckeys_default,
                          update_fn,
                          sizeof(cfg_custom_key_t));
+    cfgmod_register_get_set(CFGMOD_KIND_CKEY, NULL, ckeys_set);
+    cfgmod_register_delete(CFGMOD_KIND_CKEY, ckeys_delete);
 }

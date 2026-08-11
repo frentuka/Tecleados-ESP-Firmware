@@ -16,6 +16,18 @@ void combos_default(void *out_struct) {
     memset(out_struct, 0, sizeof(cfg_combo_t));
 }
 
+esp_err_t combos_delete(uint16_t id) {
+    cfg_combo_index_t idx = {0};
+    size_t idx_len = sizeof(idx);
+    cfgmod_read_storage(CFGMOD_KIND_COMBO, "cmb_idx", &idx, &idx_len);
+    esp_err_t err = combos_delete_single(id, &idx);
+    
+    char key[16];
+    snprintf(key, sizeof(key), "cmb_%u", id);
+    cfgmod_delete_storage(CFGMOD_KIND_COMBO, key);
+    return err;
+}
+
 esp_err_t combos_delete_single(uint16_t id, cfg_combo_index_t *idx) {
     if (!idx || id >= CFG_COMBOS_MAX_COUNT) return ESP_ERR_INVALID_ARG;
 
@@ -66,6 +78,24 @@ esp_err_t combos_validate(void *in_struct) {
     return ESP_OK;
 }
 
+esp_err_t combos_set(const void *in_struct) {
+    const cfg_combo_t *c = (const cfg_combo_t *)in_struct;
+    if (c->id >= CFG_COMBOS_MAX_COUNT) return ESP_ERR_INVALID_ARG;
+
+    char key[16];
+    snprintf(key, sizeof(key), "cmb_%u", c->id);
+
+    esp_err_t err = cfgmod_write_storage(CFGMOD_KIND_COMBO, key, c, sizeof(cfg_combo_t));
+    if (err == ESP_OK) {
+        cfg_combo_index_t idx = {0};
+        size_t idx_len = sizeof(idx);
+        cfgmod_read_storage(CFGMOD_KIND_COMBO, "cmb_idx", &idx, &idx_len);
+        idx.active_mask |= (1U << c->id);
+        cfgmod_write_storage(CFGMOD_KIND_COMBO, "cmb_idx", &idx, sizeof(cfg_combo_index_t));
+    }
+    return err;
+}
+
 /* =========================================================================
  * Registration
  * ========================================================================= */
@@ -78,4 +108,6 @@ void cfg_combos_register(cfgmod_on_update_fn update_fn) {
         update_fn,
         sizeof(cfg_combo_t)
     );
+    cfgmod_register_get_set(CFGMOD_KIND_COMBO, NULL, combos_set);
+    cfgmod_register_delete(CFGMOD_KIND_COMBO, combos_delete);
 }

@@ -3,6 +3,7 @@ import { useRef, useMemo, useState, useEffect } from 'react'
 import * as THREE from 'three'
 import { Environment, ContactShadows } from '@react-three/drei'
 import { useLayoutStore } from '../stores/layoutStore'
+import { useUiStore } from '../stores/uiStore'
 import { getKeyColor, getCategoryFromCode, KEY_BASE_COLORS } from '../utils/keyColors'
 import { getKeycapGeometry } from '../utils/keycapGeometry'
 
@@ -435,6 +436,7 @@ function KeyboardModel({ isAutoRotating, setIsAutoRotating }: { isAutoRotating: 
 
 export default function Background3D() {
   const isConnected = useLayoutStore(state => state.isConnected);
+  const render3DModel = useUiStore(state => state.render3DModel);
   const [isAutoRotating, setIsAutoRotating] = useState(true);
   const [orangeTarget, setOrangeTarget] = useState<THREE.Object3D | null>(null);
 
@@ -488,7 +490,7 @@ export default function Background3D() {
           <pointLight position={[10, -5, 10]} intensity={1.5} color="#6436b5" />
 
           <group position={[0, -3.5, 0]}>
-            <KeyboardModel isAutoRotating={isAutoRotating} setIsAutoRotating={setIsAutoRotating} />
+            {render3DModel && <KeyboardModel isAutoRotating={isAutoRotating} setIsAutoRotating={setIsAutoRotating} />}
           </group>
 
           <ContactShadows position={[0, -8, 0]} opacity={0.6} scale={20} blur={2.5} far={4} color="#000000" />
