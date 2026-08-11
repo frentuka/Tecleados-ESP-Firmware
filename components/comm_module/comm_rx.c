@@ -150,8 +150,8 @@ bool comm_rx_blast_commit(comm_transport_t source, const uint8_t *last_packet, u
     float process_time_ms = (rx_process_end - rx_process_start) / 1000.0f;
     float transfer_speed_kbps = receive_time_ms > 0 ? size_kb / (receive_time_ms / 1000.0f) : 0;
 
-    ESP_LOGI(TAG, "[Blast RX] Complete. %u packets, %u bytes total in %.1f ms. Speed: %.2f KB/s", 
-             s_rx_blast_total_packets, s_rx_buf_len, receive_time_ms, transfer_speed_kbps);
+    ESP_LOGI(TAG, "[Blast RX] Complete. %u packets, %u bytes total. Recv: %.1f ms (%.2f KB/s), Proc: %.1f ms", 
+             s_rx_blast_total_packets, s_rx_buf_len, receive_time_ms, transfer_speed_kbps, process_time_ms);
 
     rx_blast_reset();
     comm_erase_rx_buffer();
