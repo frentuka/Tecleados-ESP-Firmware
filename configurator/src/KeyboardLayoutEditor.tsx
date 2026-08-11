@@ -593,7 +593,16 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
 
     // ── Fetch physical layout ──
     const fetchPhysicalLayout = useCallback(async () => {
-        const cacheKey = `tecleados_phys_${hidService.getDeviceName()}`;
+        let macRaw = "";
+        try {
+            const identity = await hidService.fetchDeviceIdentity();
+            if (identity && identity.ble_shared_addr) {
+                macRaw = identity.ble_shared_addr.replace(/:/g, '');
+            }
+        } catch (e) {
+            console.warn("Failed to fetch device identity for cache key", e);
+        }
+        const cacheKey = `tecleados_phys_${macRaw || hidService.getDeviceName()}`;
         const cached = localStorage.getItem(cacheKey);
         if (cached) {
             try {
@@ -1004,7 +1013,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                 try {
                                     const resp = await withTimeout(hidService.sendCommand(payload), 7000);
                                     const r = resp as any;
-                                    console.log('[LayoutEditor] KLE Apply SET response:', r ? { status: r.status, statusHex: '0x' + r.status.toString(16), cmd: r.cmd, keyId: r.keyId, jsonLen: r.jsonText.length } : 'NULL (timeout)');
+                                    console.log('[LayoutEditor] KLE Apply SET response:', r ? { status: r.status, statusHex: '0x' + r.status.toString(16), cmd: r.cmd, keyId: r.keyId, dataLen: r.data?.length } : 'NULL (timeout)');
 
                                     if (r && r.status === 0) {
                                         onLogRef.current(`KLE layout saved to device: ${parsed.length} rows, ${parsed.reduce((s, r) => s + r.length, 0)} keys (${jsonBytes.length} bytes)`);

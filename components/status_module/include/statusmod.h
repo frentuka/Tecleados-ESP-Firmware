@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-typedef struct {
+typedef struct __attribute__((packed)) {
     uint8_t  transport_mode;
     uint8_t  selected_profile;
     uint8_t  pairing_profile;

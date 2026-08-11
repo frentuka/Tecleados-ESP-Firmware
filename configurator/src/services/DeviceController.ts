@@ -310,7 +310,7 @@ export class DeviceController {
     public async fetchStatus(): Promise<DeviceStatus | null> {
         if (!this.isConnected()) return null;
         const resp = await this.sendCommand(new Uint8Array([MODULE_STATUS]), 2000);
-        if (resp && resp.status === 0 && resp.data.length >= 10) {
+        if (resp && resp.status === 0 && resp.data.length >= 9) {
             const dv = new DataView(resp.data.buffer, resp.data.byteOffset, resp.data.byteLength);
             let pairing = dv.getUint8(2);
             if (pairing === 255) pairing = -1;
@@ -320,7 +320,7 @@ export class DeviceController {
                 pairing,
                 split_state: dv.getUint8(3),
                 split_role: dv.getUint8(4),
-                bitmap: dv.getUint16(8, true),
+                bitmap: dv.getUint16(7, true),
             };
         }
         return null;
@@ -571,9 +571,9 @@ export class DeviceController {
         if (!this.isConnected()) return null;
         const buf = this.buildConfigPayload(CFG_CMD_GET, CFG_KEY_COMBO_LIMITS);
         const resp = await this.sendCommand(buf, 5000);
-        if (resp && resp.status === 0 && resp.data.length >= 2) {
+        if (resp && resp.status === 0 && resp.data.length >= 4) {
             const dv = new DataView(resp.data.buffer, resp.data.byteOffset, resp.data.byteLength);
-            return { maxCombos: dv.getUint8(0), maxKeys: dv.getUint8(1) };
+            return { maxCombos: dv.getUint16(0, true), maxKeys: dv.getUint16(2, true) };
         }
         return null;
     }
