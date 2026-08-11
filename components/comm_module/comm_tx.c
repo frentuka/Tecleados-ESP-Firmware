@@ -36,7 +36,7 @@ static inline uint16_t tx_get_max_payload_len(void) {
 // Replaced macro with direct function calls
 
 // ============ TX State & Buffer ============
-static uint8_t s_tx_buf[MAX_TX_BUF_SIZE] = {0};
+static uint8_t s_tx_buf[MAX_TX_BUF_SIZE] __attribute__((aligned(8))) = {0};
 static uint16_t s_tx_buf_len = 0;
 static uint16_t s_tx_buf_idx = 0;
 static uint16_t s_tx_buf_last_packet_sent_idx = 0;

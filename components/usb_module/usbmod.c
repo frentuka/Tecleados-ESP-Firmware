@@ -170,6 +170,15 @@ void usb_task(void *arg) {
   }
 }
 
+static char const *string_desc_arr[] = {
+    (const char[]){0x09, 0x04},      // 0: Language
+    "Tecleados",                     // 1: Manufacturer
+    "TEF",                           // 2: Product
+    "13548",                         // 3: Serial
+    "Tecleados ITF", // 4: Keyboard interface
+    "Tecleados Comms ITF"            // 5: Bulk COMM interface
+};
+
 void usb_init() {
   tinyusb_config_t tusb_cfg = TINYUSB_DEFAULT_CONFIG();
   tusb_cfg.descriptor.device = &desc_device;

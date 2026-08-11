@@ -245,7 +245,8 @@ export class CommProtocol {
         try {
             const totalPackets = Math.ceil(data.length / this.maxPayloadLength) || 1;
             const startTime = performance.now();
-            console.log(`[Blast TX] Starting transaction: ${totalPackets} packets, total ${data.length} bytes, max payload ${this.maxPayloadLength} bytes/pkt`);
+            const txName = totalPackets === 1 ? 'Single TX' : 'Blast TX';
+            console.log(`[${txName}] Starting transaction: ${totalPackets} packets, total ${data.length} bytes, max payload ${this.maxPayloadLength} bytes/pkt`);
 
             // Single packet path
             if (totalPackets === 1) {
@@ -458,15 +459,17 @@ export class CommProtocol {
             return;
         }
 
-        if ((flags & PAYLOAD_FLAG_ACK) && this.flagWaiters.has(PAYLOAD_FLAG_ACK)) {
-            this.flagWaiters.get(PAYLOAD_FLAG_ACK)!({ flags, remaining, payloadLen: safeLen, payload: payloadBytes });
-            return;
-        }
-
         // STATUS_REQ during blast RX → respond with bitmap
+        // Must be checked BEFORE flagWaiters because STATUS_REQ (0x50) includes the ACK bit (0x10)
+        // and could be incorrectly consumed as a command ACK if they arrive out of order.
         if (flags === PAYLOAD_FLAG_STATUS_REQ && this.blastRx.active) {
             const bitmapPacket = this.blastRxBuildBitmapPacket();
             this.safeSendReport(bitmapPacket);
+            return;
+        }
+
+        if ((flags & PAYLOAD_FLAG_ACK) && this.flagWaiters.has(PAYLOAD_FLAG_ACK)) {
+            this.flagWaiters.get(PAYLOAD_FLAG_ACK)!({ flags, remaining, payloadLen: safeLen, payload: payloadBytes });
             return;
         }
 
@@ -547,14 +550,23 @@ export class CommProtocol {
         }
 
         // Single packet response (FIRST|LAST)
-        if ((flags & PAYLOAD_FLAG_FIRST) && (flags & PAYLOAD_FLAG_LAST) && safeLen >= 4) {
+        if ((flags & PAYLOAD_FLAG_FIRST) && (flags & PAYLOAD_FLAG_LAST) && safeLen >= 1) {
             const module = payloadBytes[0];
-            const cmd = payloadBytes[1];
-            const keyId = payloadBytes[2];
-            const status = (payloadBytes[3] | (payloadBytes[4] << 8) | (payloadBytes[5] << 16) | (payloadBytes[6] << 24));
-            const data = payloadBytes.slice(8);
-            this.pendingResponse = { module, cmd, keyId, status, data };
-            await this.sendAckAndFinish(true);
+            
+            if (module === MODULE_STATUS) {
+                this.pendingResponse = { module, cmd: 0, keyId: 0, status: 0, data: payloadBytes.slice(1) };
+                await this.sendAckAndFinish(true);
+                return;
+            }
+            
+            if (safeLen >= 8) {
+                const cmd = payloadBytes[1];
+                const keyId = payloadBytes[2];
+                const status = (payloadBytes[4] | (payloadBytes[5] << 8) | (payloadBytes[6] << 16) | (payloadBytes[7] << 24));
+                const data = payloadBytes.slice(8);
+                this.pendingResponse = { module, cmd, keyId, status, data };
+                await this.sendAckAndFinish(true);
+            }
         }
     }
 

@@ -24,7 +24,10 @@ import type { PhysKey } from '../types/device';
  */
 export function parsePhysicalLayoutJson(jsonText: string): PhysKey[][] | null {
     try {
-        const parsed = JSON.parse(jsonText);
+        // The firmware pads the JSON payload with null bytes up to 4096 bytes.
+        // We must strip them out, otherwise JSON.parse will throw a SyntaxError.
+        const cleanJson = jsonText.replace(/\0/g, '');
+        const parsed = JSON.parse(cleanJson);
         if (!parsed.layout || !Array.isArray(parsed.layout)) return null;
 
         // Optional rotation side-map: { "row-col": [r10, rx100, ry100] }

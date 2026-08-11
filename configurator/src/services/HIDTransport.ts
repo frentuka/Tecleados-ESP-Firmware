@@ -250,6 +250,13 @@ export class HIDTransport implements ITransport {
         return 'USB';
     }
 
+    public getDeviceId(): string {
+        if (!this.selectedDevice) return 'unknown';
+        // Use a combination of vendorId, productId, and productName for USB devices.
+        // WebHID does not expose serial numbers for privacy/fingerprinting reasons.
+        return `usb_${this.selectedDevice.vendorId}_${this.selectedDevice.productId}_${this.selectedDevice.productName.replace(/\s+/g, '_')}`;
+    }
+
     // ── Connection Observers ──
 
     public onConnectionChange(cb: ConnectionCallback): void { this.connectionCallbacks.add(cb); }

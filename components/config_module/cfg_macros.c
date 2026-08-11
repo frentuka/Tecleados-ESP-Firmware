@@ -5,9 +5,9 @@
 
 
 void macros_default(void *out_struct) {
-  cfg_macro_list_t *list = (cfg_macro_list_t *)out_struct;
-  list->count = 0;
-  memset(list->macros, 0, sizeof(list->macros));
+  cfg_macro_t *m = (cfg_macro_t *)out_struct;
+  memset(m, 0, sizeof(cfg_macro_t));
+  m->exec_mode = MACRO_EXEC_ONCE_STACK_ONCE;
 }
 
 
@@ -24,12 +24,23 @@ esp_err_t macros_delete_single(uint16_t id, cfg_macro_index_t *idx) {
     return err;
 }
 
+esp_err_t macros_validate(void *in_struct) {
+    cfg_macro_t *m = (cfg_macro_t *)in_struct;
+    m->name[sizeof(m->name) - 1] = '\0';
+    if (m->event_count > CFG_MACRO_MAX_EVENTS) {
+        m->event_count = CFG_MACRO_MAX_EVENTS;
+    }
+    if (m->exec_mode >= MACRO_EXEC_MODE_COUNT) {
+        m->exec_mode = MACRO_EXEC_ONCE_STACK_ONCE;
+    }
+    return ESP_OK;
+}
+
 void cfg_macros_register(void) {
+    cfgmod_register_validate(CFGMOD_KIND_MACRO, macros_validate);
     /*
-     * Intentional no-op. The actual cfgmod_register_kind() call for
-     * CFGMOD_KIND_MACRO is made by kb_macro_init() in kb_macro.c, which
-     * owns the on_macros_updated callback. cfg_init() calls this function
-     * only to keep the registration site visible alongside the other kinds.
+     * The actual cfgmod_register_kind() call for CFGMOD_KIND_MACRO is made 
+     * by kb_macro_init() in kb_macro.c.
      */
 }
 

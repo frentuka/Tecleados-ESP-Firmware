@@ -1,8 +1,10 @@
 #include "cfg_physical.h"
 
 #include "cfgmod.h"
+#include "cfg_storage_keys.h"
 #include <string.h>
 #include "esp_log.h"
+#include "nvs.h"
 
 #define TAG "cfg_physical"
 #define CFG_PHYSICAL_JSON_BUFSIZE 4096
@@ -25,4 +27,14 @@ static void phys_default(void *out_struct) {
 void cfg_physical_register(void) {
     // Registering with a 4096 byte buffer size.
     cfgmod_register_kind(CFGMOD_KIND_PHYSICAL, phys_default, NULL, CFG_PHYSICAL_JSON_BUFSIZE);
+
+    // Initialize physical layout in NVS if it is empty
+    char temp_buf[32];
+    size_t len = sizeof(temp_buf);
+    if (cfgmod_read_storage(CFGMOD_KIND_PHYSICAL, CFG_ST_PHYSICAL_LAYOUT, temp_buf, &len) == ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGI(TAG, "Initializing default physical layout in NVS");
+        // Store only the actual JSON string length (plus null terminator) to save NVS space
+        size_t json_len = strlen(DEFAULT_PHYS_JSON) + 1;
+        cfgmod_write_storage(CFGMOD_KIND_PHYSICAL, CFG_ST_PHYSICAL_LAYOUT, DEFAULT_PHYS_JSON, json_len);
+    }
 }

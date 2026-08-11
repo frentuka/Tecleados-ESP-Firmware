@@ -23,7 +23,7 @@ typedef struct {
   bool transparent_stack_fallback;
 } cfg_system_t;
 
-typedef struct {
+typedef struct __attribute__((packed)) {
     uint8_t  sys_cmd;       // e.g. SYS_CMD_INJECT_KEY (0x01) or SYS_CMD_TRIGGER_ACTION
     uint8_t  row;           // For INJECT_KEY
     uint8_t  col;           // For INJECT_KEY

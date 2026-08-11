@@ -63,11 +63,21 @@ esp_err_t ckeys_load_all(cfg_custom_key_t *out_arr, size_t *out_count) {
     return ESP_OK;
 }
 
+esp_err_t ckeys_validate(void *in_struct) {
+    cfg_custom_key_t *ck = (cfg_custom_key_t *)in_struct;
+    ck->name[sizeof(ck->name) - 1] = '\0';
+    if (ck->mode > CKEY_MODE_MULTI_ACTION) {
+        ck->mode = CKEY_MODE_PRESS_RELEASE;
+    }
+    return ESP_OK;
+}
+
 /* ============================================================
    Registration
    ============================================================ */
 
 void cfg_custom_keys_register(cfgmod_on_update_fn update_fn) {
+    cfgmod_register_validate(CFGMOD_KIND_CKEY, ckeys_validate);
     /* Minimal registration: gives cfgmod_read/write_storage a valid kind slot.
        The actual GET/SET command handling is done in custom cfgmod.c blocks,
        identical to the macro pattern. */

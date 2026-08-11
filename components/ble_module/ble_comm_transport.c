@@ -22,8 +22,7 @@ static bool ble_comm_send_packet(const uint8_t *packet, uint16_t len) {
     // and wait/retry if the mbuf pool is exhausted OR if ble_gatts_notify_custom
     // returns BLE_HS_ENOMEM (6), which happens when the NimBLE L2CAP/ACL buffer
     // pool is full even though the mbuf allocation itself succeeded.
-    uint32_t wait_timeout_ticks = pdMS_TO_TICKS(250);
-    if (wait_timeout_ticks == 0) wait_timeout_ticks = 1;
+    uint32_t wait_timeout_ticks = pdMS_TO_TICKS(1000);
     TickType_t start_tick = xTaskGetTickCount();
 
     while (true) {

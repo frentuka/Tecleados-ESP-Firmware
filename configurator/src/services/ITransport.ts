@@ -38,6 +38,11 @@ export interface ITransport {
      */
     getTransportName(): string;
 
+    /**
+     * Returns a unique stable identifier for the connected device (used for caching).
+     */
+    getDeviceId(): string;
+
     // ── Protocol operations ──────────────────────────────────────────────
     
     sendCommand(payload: Uint8Array, timeoutMs?: number): Promise<CommandResponse | null>;

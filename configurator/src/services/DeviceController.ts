@@ -11,6 +11,7 @@
 
 import { HIDTransport } from './HIDTransport';
 import type { ITransport } from './ITransport';
+import { useNotificationStore } from '../stores/notificationStore';
 import {
     MODULE_CONFIG,
     MODULE_SYSTEM,
@@ -18,6 +19,7 @@ import {
     MODULE_SPLIT,
     CFG_CMD_GET,
     CFG_CMD_SET,
+    CFG_KEY_PHYSICAL_LAYOUT,
     CFG_KEY_LAYOUTS,
     CFG_KEY_LAYOUT_LIMITS,
     CFG_KEY_LAYOUT_SINGLE,
@@ -143,8 +145,50 @@ export class DeviceController {
 
     // ── Low-level command ───────────────────────────────────────────────
 
-    public sendCommand(payload: Uint8Array, timeoutMs?: number): Promise<CommandResponse | null> {
-        return this.transport.sendCommand(payload, timeoutMs);
+    public async sendCommand(payload: Uint8Array, timeoutMs?: number): Promise<CommandResponse | null> {
+        let fetchName: string | null = null;
+        if (payload.length >= 8 && payload[0] === MODULE_CONFIG && payload[1] === CFG_CMD_GET) {
+            const keyId = payload[2];
+            const itemId = payload[3] | (payload[4] << 8);
+            switch (keyId) {
+                case CFG_KEY_PHYSICAL_LAYOUT: fetchName = 'physicalLayout'; break;
+                case CFG_KEY_LAYOUTS: fetchName = 'layouts'; break;
+                case CFG_KEY_LAYOUT_LIMITS: fetchName = 'layoutLimits'; break;
+                case CFG_KEY_LAYOUT_SINGLE: fetchName = `layer_${itemId}`; break;
+                case CFG_KEY_MACROS: fetchName = 'macros'; break;
+                case CFG_KEY_MACRO_LIMITS: fetchName = 'macroLimits'; break;
+                case CFG_KEY_MACRO_SINGLE: fetchName = `macro_${itemId}`; break;
+                case CFG_KEY_CKEYS: fetchName = 'customKeys'; break;
+                case CFG_KEY_CKEY_SINGLE: fetchName = `customKey_${itemId}`; break;
+                case CFG_KEY_COMBOS: fetchName = 'combos'; break;
+                case CFG_KEY_COMBO_LIMITS: fetchName = 'comboLimits'; break;
+                case CFG_KEY_COMBO_SINGLE: fetchName = `combo_${itemId}`; break;
+                case CFG_KEY_SYSTEM: fetchName = 'system'; break;
+            }
+        }
+
+        if (fetchName) {
+            // using dynamic import or accessing getState directly requires import
+            useNotificationStore.getState().showNotification(`Fetching ${fetchName}...`, 'info');
+        }
+
+        const resp = await this.transport.sendCommand(payload, timeoutMs);
+
+        if (fetchName) {
+            if (resp && resp.status === 0) {
+                // Delay clearing slightly so the user can actually see it flashed,
+                // but only clear if we are still showing THIS fetch's notification.
+                setTimeout(() => {
+                    const current = useNotificationStore.getState().notification;
+                    if (current && current.message === `Fetching ${fetchName}...`) {
+                        useNotificationStore.getState().clearNotification();
+                    }
+                }, 300);
+            } else {
+                useNotificationStore.getState().showNotification(`Error fetching ${fetchName}`, 'error');
+            }
+        }
+        return resp;
     }
 
     public sendCustomCommReport(data: Uint8Array): Promise<boolean> {

@@ -93,18 +93,23 @@ export class BinarySchema {
         return { maxLayouts: dv.getUint8(0) };
     }
 
-    public static parseLayoutIndex(dv: DataView): { order: number[], count: number } {
+    public static parseLayoutIndex(dv: DataView): { order: number[], count: number, names?: string[] } {
         // cfg_layout_index_t: active_mask (uint16_t, offset 0), order (uint8_t[16], offset 2), names (char[16][24], offset 18)
         const activeMask = dv.getUint16(0, true);
         const order: number[] = [];
+        const names: string[] = [];
         let count = 0;
         for (let i = 0; i < 16; i++) {
             if ((activeMask & (1 << i)) !== 0) {
                 count++;
             }
-            order.push(dv.getUint8(2 + i));
+            const id = dv.getUint8(2 + i);
+            if (id !== 0xFF) {
+                order.push(id);
+                names.push(decodeCString(dv, 18 + id * 24, 24));
+            }
         }
-        return { order, count };
+        return { order, count, names };
     }
 
     // ── MACROS ─────────────────────────────────────────────────────────────
@@ -207,7 +212,6 @@ export class BinarySchema {
         dv.setUint16(36, ck.id, true);
         dv.setUint8(38, ck.mode);
         encodeCString(ck.name, dv, 40, 32);
-        dv.setUint8(43, ck.mode);
         if (ck.mode === 0 && ck.pr) {
             dv.setUint32(0, ck.pr.pressAction ?? 0, true);
             dv.setUint32(4, ck.pr.releaseAction ?? 0, true);
@@ -231,46 +235,59 @@ export class BinarySchema {
     // ── COMBOS ─────────────────────────────────────────────────────────────
 
     public static parseCombo(dv: DataView): Combo {
-        const id = dv.getUint16(0, true);
+        const action = dv.getUint16(0, true);
         const delayMs = dv.getUint16(2, true);
-        const action = dv.getUint32(4, true);
-        
-        const activeLayers = dv.getUint8(8);
-        const strictOrder = dv.getUint8(12) === 1;
-        const cancelKeys = dv.getUint8(13) === 1;
-        const delayedPress = dv.getUint8(14) === 1;
-        const releaseOnFirstKey = dv.getUint8(15) === 1;
+        const id = dv.getUint16(4, true);
+        const keyCount = dv.getUint8(6);
+        const activeLayersRaw = dv.getUint8(7);
+        const strictOrder = dv.getUint8(8) === 1;
+        const cancelKeys = dv.getUint8(9) === 1;
+        const delayedPress = dv.getUint8(10) === 1;
+        const releaseOnFirstKey = dv.getUint8(11) === 1;
+        const name = decodeCString(dv, 12, 32);
+
+        const activeLayers: number[] = [];
+        for (let i = 0; i < 8; i++) {
+            if ((activeLayersRaw & (1 << i)) !== 0) activeLayers.push(i);
+        }
 
         const keys: { row: number; col: number }[] = [];
-        for (let i = 0; i < 4; i++) {
-            const code = dv.getUint16(16 + i * 2, true);
-            if (code !== 0) keys.push({ row: (code >> 8) & 0xFF, col: code & 0xFF });
+        let offset = 44;
+        for (let i = 0; i < keyCount && i < 8; i++) {
+            keys.push({ row: dv.getUint8(offset), col: dv.getUint8(offset + 1) });
+            offset += 2;
         }
 
         return {
-            id, name: '', action, delayMs, activeLayers: [activeLayers], strictOrder, cancelKeys, delayedPress, releaseOnFirstKey, keys
+            id, name, action, delayMs, activeLayers, strictOrder, cancelKeys, delayedPress, releaseOnFirstKey, keys
         };
     }
 
     public static serializeCombo(combo: Combo, dv: DataView): void {
-        dv.setUint16(0, combo.id, true);
+        dv.setUint16(0, combo.action, true);
         dv.setUint16(2, combo.delayMs, true);
-        dv.setUint32(4, combo.action, true);
+        dv.setUint16(4, combo.id, true);
+        dv.setUint8(6, Math.min(combo.keys.length, 8));
         
-        dv.setUint32(8, combo.activeLayers[0] ?? 0, true);
-        dv.setUint8(12, combo.strictOrder ? 1 : 0);
-        dv.setUint8(13, combo.cancelKeys ? 1 : 0);
-        dv.setUint8(14, combo.delayedPress ? 1 : 0);
-        dv.setUint8(15, combo.releaseOnFirstKey ? 1 : 0);
+        let activeLayersRaw = 0;
+        for (const l of combo.activeLayers) {
+            if (l < 8) activeLayersRaw |= (1 << l);
+        }
+        dv.setUint8(7, activeLayersRaw);
+        dv.setUint8(8, combo.strictOrder ? 1 : 0);
+        dv.setUint8(9, combo.cancelKeys ? 1 : 0);
+        dv.setUint8(10, combo.delayedPress ? 1 : 0);
+        dv.setUint8(11, combo.releaseOnFirstKey ? 1 : 0);
         encodeCString(combo.name, dv, 12, 32);
 
-        let offset = 16;
-        for (let i = 0; i < 4; i++) {
+        let offset = 44;
+        for (let i = 0; i < 8; i++) {
             if (i < combo.keys.length) {
-                const code = ((combo.keys[i].row & 0xFF) << 8) | (combo.keys[i].col & 0xFF);
-                dv.setUint16(offset, code, true);
+                dv.setUint8(offset, combo.keys[i].row);
+                dv.setUint8(offset + 1, combo.keys[i].col);
             } else {
-                dv.setUint16(offset, 0, true);
+                dv.setUint8(offset, 0);
+                dv.setUint8(offset + 1, 0);
             }
             offset += 2;
         }

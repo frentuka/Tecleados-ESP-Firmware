@@ -40,7 +40,7 @@ bool comm_send_single_packet(comm_transport_t target, uint8_t *packet, uint16_t 
         return false;
     }
     
-    uint32_t wait_timeout_ticks = pdMS_TO_TICKS(100);
+    uint32_t wait_timeout_ticks = pdMS_TO_TICKS(1000);
     uint32_t start_tick = xTaskGetTickCount();
     
     while (!ops->is_ready()) {

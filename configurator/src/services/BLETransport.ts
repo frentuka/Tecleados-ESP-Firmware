@@ -236,6 +236,10 @@ export class BLETransport implements ITransport {
         return 'Bluetooth';
     }
 
+    public getDeviceId(): string {
+        return this.device ? this.device.id : 'unknown';
+    }
+
     // ── Protocol operations ──────────────────────────────────────────────
 
     public sendCommand(payload: Uint8Array, timeoutMs?: number): Promise<CommandResponse | null> {

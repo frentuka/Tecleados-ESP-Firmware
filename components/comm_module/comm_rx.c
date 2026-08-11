@@ -30,7 +30,7 @@ static inline uint16_t rx_get_max_payload_len(void) {
 // Replaced macro with direct function calls
 
 // ============ Shared RX Buffer ============
-static uint8_t s_rx_buf[MAX_RX_BUF_SIZE] = {0};
+static uint8_t s_rx_buf[MAX_RX_BUF_SIZE] __attribute__((aligned(8))) = {0};
 static uint16_t s_rx_buf_len = 0;
 static uint64_t s_rx_last_packet_timestamp_us = 0;
 

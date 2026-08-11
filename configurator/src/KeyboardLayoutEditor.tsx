@@ -528,20 +528,25 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
     // Wire format: [MODULE_CONFIG, cmd, keyId, ...data]
     // No payload_len field — the transport layer provides total length
     const buildConfigPayload = (cmd: number, keyId: number, data?: Uint8Array): Uint8Array => {
-        const headerLen = 2; // cmd + keyId (no payload_len — transport provides length)
         const dataLen = data ? data.length : 0;
-        const buf = new Uint8Array(1 + headerLen + dataLen);
+        const buf = new Uint8Array(8 + dataLen);
         buf[0] = MODULE_CONFIG;
         buf[1] = cmd;
         buf[2] = keyId;
-        if (data) buf.set(data, 3);
+        buf[3] = 0; // item_id LSB
+        buf[4] = 0; // item_id MSB
+        buf[5] = 0; // reserved
+        buf[6] = 0; // reserved
+        buf[7] = 0; // reserved
+        if (data) buf.set(data, 8);
         return buf;
     };
 
     const fetchLayouts = useCallback(async () => {
         const layoutData = await hidService.fetchLayouts();
         if (!layoutData) return;
-        const metas = layoutData.order.map(id => ({ id, name: `Layer ${id}` }));
+        const validOrder = layoutData.order.slice(0, layoutData.count);
+        const metas = validOrder.map((id, idx) => ({ id, name: layoutData.names?.[idx] || `Layer ${id}` }));
         setLayoutMetas(metas);
 
         if (metas.length > 0 && !metas.some(m => m.id === activeLayerId)) {
@@ -549,34 +554,69 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
         }
 
         const newChanges: Record<number, boolean> = {};
-
         for (const meta of metas) {
-            setLayerStatus(prev => ({ ...prev, [meta.id]: 'loading' }));
-            
-            const layoutData = await hidService.fetchLayoutSingle(meta.id);
-            if (layoutData) {
-                setLayerDataCache(prev => ({ ...prev, [meta.id]: layoutData.keys }));
-                setLayerStatus(prev => ({ ...prev, [meta.id]: 'loaded' }));
-                onLogRef.current(`Layout ${meta.id} loaded (${meta.name})`);
-            } else {
-                setLayerStatus(prev => ({ ...prev, [meta.id]: 'error' }));
-                onLogRef.current(`Failed to load layout ${meta.id} (${meta.name})`);
-            }
             newChanges[meta.id] = false;
         }
-
         setHasChanges(prev => ({ ...prev, ...newChanges }));
 
+        if (metas.length > 0) {
+            const first = metas[0];
+            setLayerStatus(prev => ({ ...prev, [first.id]: 'loading' }));
+            const layoutData = await hidService.fetchLayoutSingle(first.id);
+            if (layoutData) {
+                setLayerDataCache(prev => ({ ...prev, [first.id]: layoutData.keys }));
+                setLayerStatus(prev => ({ ...prev, [first.id]: 'loaded' }));
+                onLogRef.current(`Layout ${first.id} loaded (${first.name})`);
+            } else {
+                setLayerStatus(prev => ({ ...prev, [first.id]: 'error' }));
+            }
+        }
+
+        if (metas.length > 1) {
+            (async () => {
+                for (let i = 1; i < metas.length; i++) {
+                    const meta = metas[i];
+                    setLayerStatus(prev => ({ ...prev, [meta.id]: 'loading' }));
+                    const layoutData = await hidService.fetchLayoutSingle(meta.id);
+                    if (layoutData) {
+                        setLayerDataCache(prev => ({ ...prev, [meta.id]: layoutData.keys }));
+                        setLayerStatus(prev => ({ ...prev, [meta.id]: 'loaded' }));
+                        onLogRef.current(`Layout ${meta.id} loaded (${meta.name})`);
+                    } else {
+                        setLayerStatus(prev => ({ ...prev, [meta.id]: 'error' }));
+                        onLogRef.current(`Failed to load layout ${meta.id} (${meta.name})`);
+                    }
+                }
+            })();
+        }
     }, [activeLayerId, setActiveLayerId, setLayoutMetas, setLayerDataCache]);
 
-    // ── Fetch physical layout + all layers sequentially on connect ──
+    // ── Fetch physical layout ──
     const fetchPhysicalLayout = useCallback(async () => {
+        const cacheKey = `tecleados_phys_${hidService.getDeviceName()}`;
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) {
+            try {
+                const parsed = parsePhysicalLayoutJson(cached);
+                if (parsed) {
+                    setPhysicalLayout(parsed);
+                    setPhysLayoutStatus('loaded');
+                    onLogRef.current('Physical layout loaded from cache');
+                    return true;
+                }
+            } catch (e) {
+                console.error("Failed to parse cached physical layout", e);
+            }
+        }
+
         const plPayload = buildConfigPayload(CFG_CMD_GET, CFG_KEY_PHYSICAL_LAYOUT);
         const plResp = await hidService.sendCommand(plPayload);
         if (plResp && plResp.status === 0 && plResp.data.length > 0) {
-            const jsonText = new TextDecoder().decode(plResp.data);
+            let jsonText = new TextDecoder().decode(plResp.data);
+            jsonText = jsonText.replace(/\0/g, '');
             const parsed = parsePhysicalLayoutJson(jsonText);
             if (parsed) {
+                localStorage.setItem(cacheKey, jsonText);
                 setPhysicalLayout(parsed);
                 setPhysLayoutStatus('loaded');
                 onLogRef.current('Physical layout loaded from device');

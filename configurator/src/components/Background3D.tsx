@@ -454,7 +454,7 @@ export default function Background3D() {
         transition: 'opacity 2.5s cubic-bezier(0.16, 1, 0.3, 1), transform 2.5s cubic-bezier(0.16, 1, 0.3, 1)',
         pointerEvents: isConnected ? 'auto' : 'none'
       }}>
-        <Canvas shadows camera={{ position: [0, 12, 22], fov: 45 }} gl={{ alpha: true }}>
+        <Canvas shadows={{ type: THREE.PCFShadowMap }} camera={{ position: [0, 12, 22], fov: 45 }} gl={{ alpha: true }}>
           <fog attach="fog" args={['#0c0501', 26, 48]} />
 
           <ambientLight intensity={0.65} />
