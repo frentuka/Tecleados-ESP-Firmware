@@ -56,10 +56,10 @@ The protocol engine handles everything else: variable packet length validation, 
 
 ## Exclusive Session Lock & Memory Management
 
-Configuring a keyboard involves transferring massive JSON payloads (20+ KB for a full layout). To avoid catastrophic heap fragmentation, the protocol engine uses **Single Global Static Buffers**:
+Configuring a keyboard involves transferring complex binary structs. To avoid catastrophic heap fragmentation, the protocol engine uses **Single Global Static Buffers**:
 
-- `s_shared_rx_buf[21500]`
-- `s_shared_tx_buf[21500]`
+- `s_shared_rx_buf[10240]`
+- `s_shared_tx_buf[10240]`
 
 Because these buffers are shared across all transports, the engine enforces an **Exclusive Session Lock** (`comm_session.c`). 
 

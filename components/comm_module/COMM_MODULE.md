@@ -1,5 +1,8 @@
 # COMM Module (`comm_module`)
 
+> **Source:** `components/comm_module/`
+> **Public API:** `include/comm_transport.h`, `include/comm_dispatch.h`, `include/comm_send.h`
+
 The `comm_module` is the **transport-agnostic protocol engine** of the keyboard. It provides a reliable, ordered, flow-controlled data pipe for the configurator to read and write configuration, control the split link, manage BLE profiles, and query device status.
 
 It implements the [Blast+Reconcile protocol](file:///home/srleg/Projects/Tecleados-ESP-Firmware/COMM_PROTOCOL.md) natively and supports multiple simultaneous physical transports (e.g., USB and BLE). 
@@ -11,7 +14,7 @@ It implements the [Blast+Reconcile protocol](file:///home/srleg/Projects/Teclead
 ```
 components/comm_module/
 ├── CMakeLists.txt
-├── COMM_MODULE.md           # This file
+├── COMM_MODULE.md           
 ├── comm_crc.c               # CRC-8 implementation
 ├── comm_dispatch.c          # Callback registry + processing queues
 ├── comm_rx.c                # RX state machine (Blast Receive)
@@ -53,10 +56,10 @@ The protocol engine handles everything else: variable packet length validation, 
 
 ## Exclusive Session Lock & Memory Management
 
-Configuring a keyboard involves transferring massive JSON payloads (20+ KB for a full layout). To avoid catastrophic heap fragmentation, the protocol engine uses **Single Global Static Buffers**:
+Configuring a keyboard involves transferring complex binary structs. To avoid catastrophic heap fragmentation, the protocol engine uses **Single Global Static Buffers**:
 
-- `s_shared_rx_buf[21500]`
-- `s_shared_tx_buf[21500]`
+- `s_shared_rx_buf[10240]`
+- `s_shared_tx_buf[10240]`
 
 Because these buffers are shared across all transports, the engine enforces an **Exclusive Session Lock** (`comm_session.c`). 
 

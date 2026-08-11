@@ -178,9 +178,9 @@ Byte  Field        Size  Description
 
 | ID     | Name                     | Kind       | GET                             | SET                     |
 | ------ | ------------------------ | ---------- | ------------------------------- | ----------------------- |
-| `0x00` | `CFG_KEY_TEST`           | System     | Returns test JSON               | Stores test JSON        |
+| `0x00` | `CFG_KEY_TEST`           | System     | Returns test data               | Stores test data        |
 | `0x01` | `CFG_KEY_HELLO`          | System     | Returns hello message           | —                       |
-| `0x02` | `CFG_KEY_PHYSICAL_LAYOUT`| Physical   | Returns layout JSON             | Stores layout JSON      |
+| `0x02` | `CFG_KEY_PHYSICAL_LAYOUT`| Physical   | Returns layout string           | Stores layout string    |
 | `0x10` | `CFG_KEY_LAYOUTS`        | Layout     | Returns layout outline          | —                       |
 | `0x11` | `CFG_KEY_LAYOUT_SINGLE`  | Layout     | `{id}` → full layout            | Upsert or `{delete:id}` |
 | `0x12` | `CFG_KEY_LAYOUT_LIMITS`  | Layout     | Returns `{maxLayouts}`          | —                       |

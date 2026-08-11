@@ -1,5 +1,8 @@
 # USB Module (`usbmod`)
 
+> **Source:** `components/usb_module/` — `usbmod.c`, `usb_callbacks.c`, ...
+> **Public API:** `include/usbmod.h`
+
 The `usb_module` component is the **physical wire interface** of the keyboard. It wraps TinyUSB into a clean interface that exposes exactly two things to the rest of the firmware:
 
 1. **HID keyboard output** — sending keystrokes to the USB host.

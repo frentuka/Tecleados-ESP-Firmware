@@ -198,9 +198,9 @@ The slave's `ble_usb_callback()` checks `splitmod_get_role()`. If SLAVE and conn
 
 **Files:** `components/config_module/cfg_ble.c`, `cfg_ble.h`
 
-`blemod` knows nothing about NVS or JSON. All persistence is owned by `cfg_ble`.
+`blemod` knows nothing about NVS serialization. All persistence is owned by `cfg_ble`.
 
-**Profile state (`cfg_ble_state_t`)** — serialized to NVS as JSON under the `CFGMOD_KIND_CONNECTION` / `"ble_cfg"` key. Contains: which profile is selected, BLE routing on/off, and for each of the 9 profile slots: peer MAC address, address type, and `addr_nonce`.
+**Profile state (`cfg_ble_state_t`)** — serialized to NVS as a binary struct under the `CFGMOD_KIND_CONNECTION` / `"ble_cfg"` key. Contains: which profile is selected, BLE routing on/off, and for each of the 9 profile slots: peer MAC address, address type, and `addr_nonce`.
 
 **How `blemod` reads config:** At runtime, `blemod` calls `cfg_ble_get_state()` directly to read the selected profile, routing flag, peer addresses, and nonces. This is a synchronous, in-memory read — no NVS access at runtime.
 

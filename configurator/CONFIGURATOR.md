@@ -193,7 +193,7 @@ The first 3 bytes of every application payload are a header:
 Byte 0 : module   — 0x00=CONFIG, 0x01=SYSTEM, 0x02=ACTION, 0x03=STATUS
 Byte 1 : command  — 0x00=GET, 0x01=SET
 Byte 2 : key ID   — what config record to read/write (see CFG_KEY_* constants)
-Bytes 3+: JSON    — UTF-8 encoded JSON data (may span multiple packets)
+Bytes 3+: Payload — Binary C-struct data (may span multiple packets)
 ```
 
 ### CRC-8
@@ -303,7 +303,7 @@ The physical layout describes **where each key sits on the desk** — not what i
 
 ### On-Wire Format
 
-The firmware stores and returns a JSON blob (up to 4096 bytes):
+The firmware stores and returns a UTF-8 string blob containing JSON (unparsed by firmware, up to 4096 bytes):
 
 ```json
 {
@@ -320,7 +320,7 @@ The firmware stores and returns a JSON blob (up to 4096 bytes):
 ```
 
 - Each key occupies **6 consecutive integers** in its visual-row array. Dimensions are scaled by 100 to avoid floating-point in NVS.
-- The optional `rotation` side-map records rotation data for keys that are not axis-aligned (e.g., angled thumb clusters). It is keyed by `"row-col"` string so old firmware that ignores unknown JSON fields is unaffected.
+- The optional `rotation` side-map records rotation data for keys that are not axis-aligned (e.g., angled thumb clusters). It is keyed by `"row-col"` string.
 - `r` is scaled by **10** (not 100) to preserve one decimal place of precision for common angles like `±15.5°`.
 
 Parsing and serialization live in `configurator/src/utils/layoutUtils.ts` (`parsePhysicalLayoutJson` / `serializePhysicalLayout`).
@@ -462,7 +462,7 @@ On connect, the app queries `CFG_KEY_MACRO_LIMITS` which returns `{ maxMacros, m
 
 ### Device encoding
 
-Macros are sent as JSON via `CFG_KEY_MACRO_SINGLE` (SET). The JSON is the full `Macro` object. Bulk fetch uses `CFG_KEY_MACROS` (GET) which returns a list of all macros (outline only — no elements). Per-macro elements are then fetched individually with `CFG_KEY_MACRO_SINGLE` (GET, body: `{ id }`).
+Macros are sent as a packed binary struct (`cfg_macro_t`) via `CFG_KEY_MACRO_SINGLE` (SET). The struct contains the full Macro definition. Bulk fetch uses `CFG_KEY_MACROS` (GET) which returns a binary list of all macros (outline only — no elements). Per-macro elements are then fetched individually with `CFG_KEY_MACRO_SINGLE` (GET, specifying the ID).
 
 Delete sends `CFG_KEY_MACRO_SINGLE` (SET, body: `{ delete: id }`).
 
@@ -596,7 +596,7 @@ When active, a `DevControlsPanel` appears as a strip at the bottom of the viewpo
 **Left — Config Explorer:**
 - **Target Module** selector — CONFIG or SYSTEM.
 - **Key ID** selector — selects which config record to read/write.
-- **Auto-Form** — populated by a GET of the selected key; allows editing and SETing raw JSON records.
+- **Auto-Form** — populated by a GET of the selected key; allows editing and SETing raw binary structs (represented via DataView fields).
 
 **Right — Raw Packet Log:**
 - Real-time display of every HID report sent/received.
@@ -656,11 +656,7 @@ The configurator is the primary client of `cfg_usb_callback()`. Every user actio
 
 ### [[STATUS_MODULE]] — Live State Display
 
-The `StatusWidget.tsx` component subscribes to unsolicited status pushes from the firmware. On initial connection, `App.tsx` sends a `MODULE_STATUS` poll to request an immediate snapshot before any BLE or split event fires. The widget maps the JSON fields to human-readable indicators:
-
-```json
-{ "mode": 1, "profile": 2, "pairing": -1, "bitmap": 7, "split_state": 4, "split_role": 1 }
-```
+The `StatusWidget.tsx` component subscribes to unsolicited status pushes from the firmware. On initial connection, `App.tsx` sends a `MODULE_STATUS` poll to request an immediate snapshot before any BLE or split event fires. The widget parses the incoming binary `statusmod_msg_t` fields using `DataView` (enforcing little-endian) to update human-readable indicators (e.g. `mode`, `profile`, `bitmap`).
 
 ### [[SPLIT_MODULE]] — Split Keyboard Control
 
@@ -761,7 +757,7 @@ App               useMacros           HIDTransport           Device
  |              (MODULE_CONFIG, GET, MACROS) |                    |
  |                     |---> enqueueTask    |                    |
  |                     |                    |---FIRST|LAST------>|
- |                     |                    |<--FIRST|LAST-------|  JSON list
+ |                     |                    |<--FIRST|LAST-------|  Binary struct
  |                     |                    |---ACK------------->|
  |                     |<-- CommandResponse  |                    |
  |                     |                    |                    |
@@ -769,9 +765,9 @@ App               useMacros           HIDTransport           Device
  |                     |  sendCommand([00,00,09,{"id":2}])        |
  |                     |---> enqueueTask    |                    |
  |                     |                    |---FIRST|LAST------>|
- |                     |                    |<--FIRST ----------|  JSON part 1
- |                     |                    |<--MID  ----------|   JSON part 2
- |                     |                    |<--LAST ----------|   JSON part 3
+ |                     |                    |<--FIRST ----------|  Binary part 1
+ |                     |                    |<--MID  ----------|   Binary part 2
+ |                     |                    |<--LAST ----------|   Binary part 3
  |                     |                    |---BITMAP--------->|  (ACK all parts)
  |                     |                    |<--ACK-------------|
  |                     |<-- CommandResponse  |                    |

@@ -11,10 +11,8 @@ The **Config Module** is the authoritative source of truth for all persistent st
 
 The module employs a reactive, registry-based architecture that decouples generic storage logic from specific configuration schemas.
 
-### 1. Dual-Path Storage (Auto-Upgrade)
-To maintain backward compatibility while maximizing performance, the module uses a size-aware resolution strategy in `cfgmod_get_config()`:
-- **Fast Path (Binary)**: If the NVS blob size matches the registered C struct size exactly, it is loaded directly into memory. This is the default for all new writes.
-- **Legacy Path (JSON)**: If sizes mismatch, the blob is treated as a UTF-8 JSON string. The module parses it, populates the C struct using a registered deserializer, and automatically "upgrades" the record to Binary format on the next save.
+### 1. Pure Binary Storage
+To maximize performance and minimize memory usage, the module stores all configurations purely as binary C-structs in NVS. The structs are explicitly ordered by decreasing size to ensure natural memory alignment, and strict bounds validation is applied on all sets.
 
 ### 2. Index-Based Collections
 For complex, multi-item configurations like Macros and Custom Keys, the module avoids "scanning" NVS (which is slow). Instead, it uses a **Bitmask Index**:
@@ -22,10 +20,8 @@ For complex, multi-item configurations like Macros and Custom Keys, the module a
 - `ck_idx`: A similar mask for custom key slots.
 This allows the firmware to enumerate active items instantly by reading a single record.
 
-### 3. PSRAM-Backed Memory Safety
-Configuration payloads can be large (up to 32KB). To prevent stack overflows or internal DRAM exhaustion:
-- **cJSON Hooks**: The module redirects all `cJSON` allocations to **PSRAM** using `MALLOC_CAP_SPIRAM`.
-- **Response Buffering**: The USB response buffer is allocated in PSRAM, allowing multi-packet "blasts" for large macro sequences.
+### 3. In-Place Binary Operations
+Configuration operations process binary structures directly. To prevent stack overflows, large structs are never instantiated on the task stack. Instead, the module uses in-place bounds checking and `memcpy()` operations directly against the `comm_module`'s global, session-locked receive buffer.
 
 ---
 
@@ -49,13 +45,12 @@ The Config Module acts as the central state provider for every functional subsys
 
 ### [USB_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/USB_MODULE.md) — Configuration Transport
 - **Command Routing**: Registers a callback for `MODULE_CONFIG`. It handles the vendor-specific HID channel for the web configurator.
-- **Payload Management**: Manages a 32KB PSRAM buffer for framing JSON responses.
 
 ### [STATUS_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/STATUS_MODULE.md) — Reactive Notifications
 - **Event Bus**: Posts `CONFIG_EVENT_KIND_UPDATED` whenever a setting is saved. This triggers the Status Module to push a fresh system snapshot to the UI.
 
 ### [KEYBOARD_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/KEYBOARD_MODULE.md) — High-Speed Logic
-- **Direct Reads**: The keyboard engine bypasses JSON entirely, reading binary structs directly from NVS for sub-millisecond layer switches.
+- **Direct Reads**: The keyboard engine reads binary structs directly from NVS for sub-millisecond layer switches.
 - **Refresh Callbacks**: Registers `on_update` callbacks that cause the keyboard matrix to reload its action-code cache immediately after a USB write.
 
 ### [SPLIT_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/SPLIT_MODULE.md) — Distributed Synchronization
@@ -68,7 +63,10 @@ The Config Module acts as the central state provider for every functional subsys
 Communications follow a **Request/Response** pattern on the Comm channel.
 
 ### Frame Structure
-`[ModuleID (1b)] [Cmd (1b)] [KeyID (1b)] [Status (4b)] [JSON Payload (Nb)]`
+### Frame Structure
+`[ModuleID (1b)] [Cmd (1b)] [KeyID (1b)] [Reserved (1b)] [Status (4b)] [Binary Payload (Nb)]`
+
+> **Note**: An explicitly sized custom header (7 bytes) ensures that the payload perfectly aligns to an 8-byte boundary, mitigating ESP32 `LoadStoreAlignment` exceptions.
 
 ### Key ID Map
 | Key ID | Field | Description |
@@ -93,7 +91,6 @@ graph TD
     subgraph config_module ["Config Module"]
         CM["cfgmod.c<br/>(Generic Router)"]
         NVS["NVS Storage<br/>(Namespaces)"]
-        PSRAM["PSRAM Allocator<br/>(cJSON Hooks)"]
     end
 
     USB["USB_MODULE<br/>(Comm Channel)"]
@@ -101,8 +98,7 @@ graph TD
     SPLIT["SPLIT_MODULE<br/>(NVS Mirroring)"]
     STATUS["STATUS_MODULE<br/>(Event Subscriber)"]
 
-    USB -- "JSON SET/GET" --> CM
-    CM -- "Serialize" --> PSRAM
+    USB -- "Binary SET/GET" --> CM
     CM -- "Write/Read" --> NVS
     
     NVS -- "Fast Binary Load" --> KB

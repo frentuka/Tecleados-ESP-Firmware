@@ -1,292 +1,144 @@
-# Keyboard Module Documentation
+# Keyboard Module (`kb_module`)
 
-Component path: `components/keyboard/`
+> **Source:** `components/keyboard/` — `kb_manager.c`, `kb_matrix.c`, `kb_layout.c`, `kb_macro.c`, `kb_system_action.c`, `kb_report.c`, `kb_custom_key.c`, `kb_state.c`, `kb_combo.c`
+> **Public API:** `include/kb_manager.h`, `include/kb_layout.h`, `include/kb_matrix.h`, `include/kb_report.h`, `include/kb_combo.h`
 
----
+The Keyboard module is the **central nervous system** of the firmware. It is responsible for the entire lifecycle of a keypress: from high-frequency hardware scanning and debouncing to the complex logic of layers, macros, and multi-transport HID reporting.
 
-## Overview
-
-The keyboard module implements a full HID keyboard pipeline: physical matrix scanning → debouncing → layer-aware key mapping → action dispatch → virtual NKRO state → USB/BLE HID report delivery. It also drives a tap/hold engine for gesture-based actions and a macro execution engine for complex key sequences.
-
----
-
-## File Structure
-
-| File | Role |
-|------|------|
-| `kb_manager.c` | Main task: scan loop, debounce, edge detection, report scheduling |
-| `kb_macro.c` | Virtual NKRO state, action dispatcher, macro + tap-worker tasks |
-| `kb_system_action.c` | Generic tap/hold state machine |
-| `kb_custom_key.c` | Custom key modes (PressRelease, MultiAction) |
-| `kb_matrix.c` | GPIO matrix hardware driver + ISR |
-| `kb_report.c` | USB/BLE HID report routing |
-| `kb_layout.c` | Default keymap + thin wrapper over config module lookup |
-| `kb_state.c` | Host LED status (Caps Lock, etc.) tracking |
-| `kb_bitmap.h` | **Internal** — shared bit-manipulation helpers (not exported) |
-
-Public headers live in `include/`.
+It acts as the primary "Producer" of data in the system, either fulfilling reports locally via [USB_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/USB_MODULE.md) or delegating to [BLE_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/BLE_MODULE.md) and [SPLIT_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/SPLIT_MODULE.md).
 
 ---
 
-## Entry Point
+##  Internal Architecture
 
-```c
-// main.c — called once after USB/BLE init
-kb_manager_start();
-```
+The module is not a single entity but a coordinated system of specialized tasks and state machines designed to maintain a **1000Hz polling rate** while handling asynchronous events like macro execution and configuration updates.
 
-`kb_manager_start()` in order:
-1. `kb_state_init()` — clears LED state
-2. `kb_macro_init()` — allocates NKRO state, loads macros, spawns tasks
-3. `kb_system_action_init()` — spawns tap/hold timing task
-4. `kb_custom_key_init()` — loads custom keys, chains callback
-5. `cfg_layout_load_all()` — loads keymap from NVS (falls back to `keymaps[]`)
-6. Registers USB system callback for test key injection
-7. `kb_matrix_gpio_init()` — configures row/column GPIOs
-8. Spawns `kb_mgr` task
+### 1. The Multi-Task Pipeline
 
----
+| Task | Priority | Core | Responsibility |
+|---|---|---|---|
+| `kb_mgr` | 5 | Any | The main loop: Scanning, debouncing, and matrix merging. |
+| `kb_macro` | 4 | Any | The macro executor: Handles sequential key injections and delays. |
+| `kb_sys_action` | 5 | Any | The tap/hold machine: Manages timing for double-taps and holds. |
+| `kb_tap_n` (x4) | 4 | Any | Worker tasks for fire-and-forget taps (e.g. from custom keys). |
 
-## Action Code Spaces
+### 2. High-Performance Matrix scanning
+The `kb_mgr` task drives the column GPIOs and reads the row GPIOs at a rate of 1000 times per second. To achieve this without starving the rest of the system, it uses an **Interrupt-Driven Wake** mechanism:
 
-All key assignments are 16-bit **action codes**:
+- When no keys are held, the task enters a blocked state (`ulTaskNotifyTake`).
+- Any GPIO change on the matrix triggers a hardware interrupt.
+- The ISR notifies the task to wake up and resume high-frequency scanning.
+- This ensures **0% CPU usage** when the keyboard is idle while maintaining **sub-millisecond latency** on the first press.
 
-| Range | Type |
-|-------|------|
-| `0x0000` | None |
-| `0x0001–0x00FF` | Standard HID keycodes |
-| `0x0100–0x01FF` | Reserved (future individual consumer codes) |
-| `0x2000–0x20FF` | System actions (BLE, media, RGB) |
-| `0x3000–0x3FFF` | Custom key IDs |
-| `0x4000–0x4FFF` | Macro IDs |
-| `0x5000–0x50FF` | Layer actions (Momentary, Toggle, On, Off) |
-| `0xFFFF` | `KB_KEY_TRANSPARENT` — falls through to base layer |
+#### Split column mirroring
+The `kb_matrix_scan()` function accepts a `bool mirror_cols` flag. When enabled, each physical column `N` detected by the scanner is reported as logical column `(KB_MATRIX_COL_COUNT − 1 − N)`. This is essential for the "mirrored" half of a split keyboard (traditionally the right hand), where the physical traces of the columns are often reversed relative to the left half. 
 
-System action constants are defined in `kb_layout.h` (`SYS_ACTION_*`, `MEDIA_ACTION_*`).
+The mirroring state is maintained as a module-level `s_mirror_cols` static in `kb_manager.c`, which is:
+- Initialized from `cfg_system_t.split_mirror_cols` during `kb_manager_start()`.
+- Dynamically updated via a `CONFIG_EVENT_KIND_UPDATED` handler, allowing changes saved in the Configurator to take effect immediately on the next scan cycle without requiring a device restart.
 
----
-
-## Signal Flow
-
-```
-Physical key press
-  └─ kb_manager_task: kb_matrix_scan() → debounce → edge detection
-       └─ kb_layout_get_action_code(row, col, active_layer)
-            └─ kb_macro_process_action(action_code, is_pressed)
-                 ├─ HID (0x01–0xFF):   kb_macro_virtual_press/release()
-                 ├─ System (0x2000+):  process_system_action()
-                 │    ├─ Layer keys:   s_active_layer update
-                 │    ├─ Media/volume: kb_send_consumer_report()
-                 │    └─ BLE:          kb_system_action_process() → tap/hold engine
-                 ├─ Macro (0x4000+):   enqueue to macro_task
-                 └─ CKey (0x3000+):    kb_custom_key_process_action()
-  └─ kb_macro_send_report()
-       └─ kb_send_report(v_nkro)
-            ├─ BLE active + connected: ble_hid_send_keyboard_report()
-            └─ USB mounted:            usb_send_keyboard_6kro() or _nkro()
-```
+### 3. Virtual NKRO "Snapshotting"
+To prevent I/O blocking from slowing down the logic engine, the keyboard uses a **Virtual NKRO Map** (`s_v_nkro`):
+1.  All modules (layouts, macros, system actions) write their desired key states to the 256-bit bitmap.
+2.  The management task takes a **mutex-protected snapshot** of this map (taking ~50ns).
+3.  The snapshot is then passed to the reporting layer (`kb_report.c`) where it may wait for USB/BLE transport.
+4.  This decoupling ensures that logical key presses never wait for slow radio or USB acknowledge cycles.
 
 ---
 
-## Scan Loop (`kb_manager_task`)
+##  Logic Engine
 
-- Runs at priority 5, 6 KB stack, internal RAM.
-- Target rate: **1000 Hz** (`MAX_POLLING_RATE_HZ`).
-- **Idle sleep**: when no keys are pressed, enables GPIO interrupts on all rows (columns driven LOW) and sleeps via `ulTaskNotifyTake`. Woken by ISR on key press. Bypassed when `s_force_active` is enabled (via `kb_manager_set_force_active()`) to allow high-rate polling measurements during benchmarks even if no keys are pressed.
+### 1. Action Code Spaces
+Keys are not just HID constants; they are 16-bit **Action Codes** that define complex behaviors:
 
-- **GPIO settling**: each column is driven LOW and held for `esp_rom_delay_us(5)` before rows are read. This is a ~5 µs busy-wait — sufficient for GPIO output settling — replacing a former `taskYIELD()` that caused 18 unnecessary context switches per scan (~540 µs wasted per 833 µs budget).
-- **Debounce**: integrator with `KB_DEBOUNCE_SCANS = 5`. A key must be stable for 5 consecutive scans to change state.
-- **Edge detection**: after debounce, the current and previous bitmaps are XOR'd to produce a change mask; only set bits (changed keys) are iterated using `__builtin_ctz`. A typical single keypress visits 1 bit instead of all 108.
-- **Cached emptiness**: `s_matrix_nonempty` is updated once after each `debounce_update()` and reused by the rate-limiter idle check, avoiding a redundant bitmap scan per rate-limited iteration.
-- **Layer-sticky action codes**: on press, the action code for the current layer is stored per key; the matching release always fires the same code even if the layer changes while the key is held.
-- **Forced reports**: a report is also sent every `MIN_REPORT_RATE_HZ` (1 Hz) to keep the host alive even with no matrix changes.
-- **Boot protocol**: auto-detected via `usb_keyboard_use_boot_protocol()`; report format switches between 6KRO and NKRO transparently.
+| Range | Name | Description |
+|---|---|---|
+| `0x0001` – `0x00FF` | **HID Key** | Standard keyboard keys (A, B, Shift, etc). |
+| `0x0100` – `0x01FF` | **Media Key** | Consumer controls (Volume, Play/Pause). |
+| `0x2000` – `0x20FF` | **System Action**| BLE profile swaps, Split pairing, Media, RGB. |
+| `0x3000` – `0x3FFF` | **Custom Key** | User-defined complex keys (Configurator presets). |
+| `0x4000` – `0x4FFF` | **Macro** | Trigger for a multi-step sequence defined in NVS. |
+| `0x5000` – `0x50FF` | **Layer Action** | Momentary, Toggle, On, Off layer actions. |
 
----
+### 2. Combos
+The `kb_combo` engine intercepts keys before they are resolved into single actions. 
+- It monitors the state of all keys pressed.
+- When a combination of keys matches a defined combo, the combo's action is fired.
+- Depending on the combo configuration, it may retroactively release the individual keys (`cancelKeys: true`) if they were already sent to the host.
+- It supports a **suppression time window** (`delayedPress: true` with a `delayMs` timer) which holds the first key from firing while it waits to see if the other combo keys are pressed. If `delayedPress` is false, it relies purely on the keys being detected in a simultaneous overlapping down-state, which requires more precise timing from the user.
 
-## Virtual NKRO State (`kb_macro.c`)
+### 3. The Tap / Hold State Machine
+Specialized "system actions" (like BLE profile switching) are processed via `kb_system_action.c`. This sub-module implements a state machine that distinguishes between:
+- **Single Tap**: Press and release within <300ms.
+- **Hold**: Press sustained for >500ms.
+- **Double Tap**: Two consecutive presses within <300ms of each other.
 
-A 32-byte (256-bit) bitmap `s_v_nkro[]` holds every currently "pressed" HID keycode. Protected by `s_v_nkro_mutex`.
-
-- `kb_macro_virtual_press(kc)` — sets bit `kc`
-- `kb_macro_virtual_release(kc)` — clears bit `kc`
-- `kb_macro_send_report()` — snapshots `s_v_nkro` under the mutex (~50 ns), releases it, then retries `kb_send_report()` up to 100× on endpoint-busy. The mutex is **not** held during retries, so virtual press/release on other tasks are never blocked by USB endpoint congestion. A stale snapshot is harmless: the next scan sends a fresh report within ~833 µs.
-
-Layer switching is tracked dynamically via two 16-bit masks: `s_momentary_layers` and `s_toggled_layers`. The highest active layer bit takes precedence. If no bits are set, it falls back to Base (0).
-
----
-
-## Macro Engine
-
-### Execution Modes
-
-| Mode | Behaviour |
-|------|-----------|
-| `MACRO_EXEC_ONCE_STACK_ONCE` | Execute; allow 1 pending execution while running |
-| `MACRO_EXEC_ONCE_NO_STACK` | Execute once; ignore additional presses while running |
-| `MACRO_EXEC_ONCE_STACK_N` | Execute; allow up to `stack_max` pending |
-| `MACRO_EXEC_HOLD_REPEAT` | Loop while key held |
-| `MACRO_EXEC_HOLD_REPEAT_CANCEL` | Loop while held; key release cancels mid-execution |
-| `MACRO_EXEC_TOGGLE_REPEAT` | Toggle looping on/off per press |
-| `MACRO_EXEC_TOGGLE_REPEAT_CANCEL` | Toggle; second press also cancels mid-execution |
-| `MACRO_EXEC_BURST_N` | Execute exactly `repeat_count` times |
-
-### Event Types (within a macro)
-
-| Type | Behaviour |
-|------|-----------|
-| `MACRO_EVT_KEY_PRESS` | Virtual key down (or recursive macro call) |
-| `MACRO_EVT_KEY_RELEASE` | Virtual key up |
-| `MACRO_EVT_KEY_TAP` | Press + hold `press_duration_ms` + release |
-| `MACRO_EVT_DELAY_MS` | Sleep; split into 10 ms chunks in cancellable modes |
-
-Macros may call other macros recursively (max depth 5).
-
-### Tasks
-
-- **`kb_macro`** (priority 4, 5 KB): consumes `s_macro_queue` (32-item), executes macros.
-- **`kb_tap_0..3`** (priority 4, 3 KB each): consume `s_tap_queue` (32-item), fire single taps from custom keys / system actions.
+Whenever a complex gesture is completed, the keyboard module **publishes an event** to the system bus: `KB_EVENTS / KB_EVENT_SYSTEM_ACTION`. This decouples the keyboard logic from the [BLE_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/BLE_MODULE.md), which listens for these events to trigger profile swaps.
 
 ---
 
-## Tap/Hold Engine (`kb_system_action.c`)
+##  Module Connections
 
-A generic state machine that converts raw press/release into richer gesture events.
+### [USB_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/USB_MODULE.md) — Direct Wire Interface
+*   **Routing**: If BLE is inactive, HID reports are formatted for USB.
+*   **Boot vs NKRO**: The module detects if the PC is in BIOS mode via `usb_keyboard_use_boot_protocol()` and automatically switches from the 231-key NKRO bitmap to the legacy 6KRO report.
+*   **Remote Injection**: Used by the [CONFIGURATOR](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/CONFIGURATOR.md) to simulate matrix activity for testing.
 
-### States
+### [BLE_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/BLE_MODULE.md) — Radio Management
+*   **The Routing Gate**: `kb_report.c` uses `ble_hid_is_routing_active()` as a master switch. When enabled, it performs the **NKRO → 6KRO conversion** (splitting the bitmap into 6 slots + modifiers) before passing it to the BLE stack.
+*   **Decoupled Control**: Instead of calling BLE functions directly, the keyboard broadcasts events. The `ble_controller.c` file in the [BLE_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/BLE_MODULE.md) consumes these to select profiles or pair devices.
 
-```
-IDLE → PRESSED_WAIT_HOLD → HELD
-          └─ (release) → RELEASED_WAIT_DOUBLE → IDLE
-                              └─ (re-press) → IDLE (DOUBLE_TAP fired)
-```
+### [SPLIT_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/SPLIT_MODULE.md) — Logical Merging
+*   **Slave Role**: The keyboard provides a callback (`kb_manager_set_matrix_cb`). When the split module detects this device is a slave, it hooks into this to intercept raw matrix deltas and send them to the master.
+*   **Master Role**: The Master half receives these deltas and calls `kb_manager_set_remote_matrix()`. The keyboard task OR-es this remote bitmap with the local hardware scan, processing the entire split unit as a single virtual matrix.
 
-### Events
+### [CONFIGURATOR](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/CONFIGURATOR.md) — NVS Persistence
+*   **Layout Resolution**: Uses `cfg_layouts.h` to pull keymaps from NVS. If a key is `KB_KEY_TRANSPARENT`, the lookup engine recursively falls back to the base layer.
+*   **Live Reloading**: Listens to `CFGMOD_KIND_MACRO` updates. When you save a macro in the browser, the keyboard engine instantly reloads the runtime structures without a reboot.
 
-| Event | When |
-|-------|------|
-| `KB_EV_PRESS` | Immediately on key down |
-| `KB_EV_RELEASE` | Immediately on key up |
-| `KB_EV_HOLD` | After `hold_threshold_ms` (default 500 ms) with no release |
-| `KB_EV_SINGLE_TAP` | After `double_tap_threshold_ms` (default 300 ms) from **release** with no second press |
-| `KB_EV_DOUBLE_TAP` | Second press within `double_tap_threshold_ms` of **release** |
+---
 
-> **Important**: the double-tap window is measured from the **key release**, not the original press. This ensures a consistent gesture window regardless of how long the first tap was held.
+##  Dependency Flow
 
-Per-action timing can be overridden via `kb_system_action_process_ex()` with a `kb_sys_action_timing_t` struct (0 = use engine default).
+```mermaid
+graph TD
+    subgraph keyboard ["Keyboard Module"]
+        MGR["kb_manager (Core Loop)"]
+        MACRO["macro_engine (Sequence)"]
+        SYS["system_action (Tap/Hold)"]
+        MATRIX["kb_matrix (Hardware)"]
+    end
 
-Up to 10 concurrent action trackers. The background task `kb_sys_action` (priority 5, 4 KB) checks timeouts every 10 ms when trackers are active. When no trackers are allocated it blocks indefinitely on `ulTaskNotifyTake`; `alloc_tracker()` calls `xTaskNotifyGive()` to wake it immediately when a gesture starts.
+    EVENT_BUS["Event Bus<br/>(KB_EVENTS)"]
+    CONFIG["cfg_layouts<br/>(NVS)"]
 
-### Callback
-
-A single callback slot (`s_action_cb`) is registered with `kb_system_action_register_cb()`. Custom keys chain-register by saving the previous callback and forwarding non-CKey events:
-
-```
-main → ble_controller_init() → kb_system_action_register_cb(on_kb_sys_action)
-                   ↓
-kb_custom_key_init() saves on_kb_sys_action as s_prev_action_cb,
-registers ckey_action_event_cb() — CKey events handled here,
-everything else forwarded to s_prev_action_cb.
+    MATRIX -- "GPIO Interrupts" --> MGR
+    MGR -- "Matrix XOR Diff" --> SYS
+    SYS -- "Post Event" --> EVENT_BUS
+    MGR -- "Action Lookup" --> CONFIG
+    MGR -- "Combo Check" --> COMBO["kb_combo (Engine)"]
+    COMBO -- "Process Action" --> MACRO
+    MGR -- "Process Action" --> MACRO
+    
+    MACRO -- "kb_macro_send_report()" --> ROUTER["kb_report (Routing Gate)"]
+    
+    ROUTER -- "ble_hid_send..." --> BLE["BLE_MODULE"]
+    ROUTER -- "usb_send..." --> USB["USB_MODULE"]
 ```
 
 ---
 
-## Custom Keys (`kb_custom_key.c`)
+##  File Map
 
-Two modes, selected per-key in `cfg_custom_keys`:
-
-### PressRelease mode
-- **On press**: fires `press_action` as a tap with `press_tap_release_delay_ms` hold time.
-- **On release**: waits until the press tap finishes (if `wait_for_finish`), then fires `release_action` as a tap.
-
-### MultiAction mode
-Routes the outcome of the tap/hold engine to one of three inner actions:
-
-| Gesture | Action |
-|---------|--------|
-| `KB_EV_SINGLE_TAP` | `tap_action` |
-| `KB_EV_DOUBLE_TAP` | `double_tap_action` |
-| `KB_EV_HOLD` | `hold_action` |
-
-Timing thresholds (`double_tap_threshold_ms`, `hold_threshold_ms`) can be set per custom key.
-
-All inner actions are fired as taps via `kb_macro_fire_tap()` (non-blocking, queued to a tap worker).
-
----
-
-## Report Routing (`kb_report.c`)
-
-```c
-bool kb_hid_ready(void);           // Is any HID interface ready?
-esp_err_t kb_send_report(v_nkro);  // Keyboard report
-esp_err_t kb_send_consumer_report(media_keycode); // Consumer/media report
-```
-
-Priority:
-1. **BLE** — if `ble_hid_is_routing_active()` and connected: send via `ble_hid_send_keyboard_report()`.
-2. **USB** — if `tud_mounted()` and endpoint ready: send 6KRO (boot protocol) or NKRO depending on `usb_keyboard_use_boot_protocol()`.
-
-NKRO→6KRO conversion is only performed when the transport actually requires it (BLE always; USB only in boot/6KRO protocol mode). For NKRO USB mode the raw bitmap is sent directly — the modifier byte is extracted in O(1) as `v_nkro[0xE0 >> 3]` (byte 28), since the modifier keycodes `0xE0–0xE7` map exactly to that byte. When conversion is needed, the scan loop runs `kc = 1` to `kc < 0xE0` for regular keys, then reads the modifier byte directly.
-
----
-
-## Hardware Matrix (`kb_matrix.c`)
-
-- **6 rows** (GPIO 1–6): inputs with pull-up.
-- **18 columns** (GPIO 7–18, 21, 38–42): push-pull outputs.
-- Scanning: drive each column LOW, read all rows (LOW = pressed via diode).
-- Bit encoding: `bit_index = row * KB_MATRIX_COL_COUNT + col`.
-- ISR: falling-edge on all rows (with all columns LOW) wakes `kb_mgr` during idle.
-
----
-
-## Layout / Keymap (`kb_layout.c`)
-
-- The factory-default keymap for the Base layer `keymaps_base[6][18]` is defined **once** in `kb_layout.c` and exported via `extern const` in `kb_layout.h`. All other 15 layers default to transparent.
-- `kb_layout_get_action_code()` delegates to `cfg_layout_get_action_code()` which serves from a PSRAM cache (layer 0 also mirrored in DRAM for hot-path speed).
-- On first boot, NVS is empty; `cfg_layout_load_all()` copies from `keymaps[]` to the cache.
-
----
-
-## LED State (`kb_state.c`)
-
-`kb_state_update_leds(led_status)` is called by the USB module on HID output reports. Currently, Caps Lock lights the RGB LED red.
-
----
-
-## Test Key Injection
-
-`kb_manager_test_nkro_keypress(row, col)` — sends a single NKRO report directly over USB (bypasses the matrix scan path). Used for factory/CI testing.
-
-Over USB: the `MODULE_SYSTEM` HID channel accepts:
-- `SYS_CMD_INJECT_KEY (0x01)` + `row, col, state` — injects a virtual key into the scan bitmap.
-- `SYS_CMD_CLEAR_INJECTED (0x02)` — clears all injected keys.
-
----
-
-## Concurrency Summary
-
-| Task | Priority | Stack | Responsibility |
-|------|----------|-------|----------------|
-| `kb_mgr` | 5 | 6 KB | Scan, debounce, action dispatch, report send |
-| `kb_sys_action` | 5 | 4 KB | Tap/hold timeout polling (10 ms when active; sleeps when idle) |
-| `kb_macro` | 4 | 5 KB | Macro execution |
-| `kb_tap_0..3` | 4 | 3 KB | Fire-tap workers (4 parallel slots) |
-
-**Synchronisation**:
-- `s_v_nkro_mutex` (mutex): guards the virtual NKRO bitmap across all tasks.
-- `s_injected_matrix_lock` (portMUX spinlock): guards the test injection bitmap between ISR/task context.
-- `s_paused` (volatile bool): set by `kb_manager_set_paused()` to suppress report sends.
-
----
-
-## BLE Integration (`main/ble_controller.c`)
-
-Registers `on_kb_sys_action` as the system action callback **before** `kb_manager_start()`. The callback handles:
-
-| Action | Gesture | Behaviour |
-|--------|---------|-----------|
-| `SYS_ACTION_BLE_TOGGLE` | Single tap | Toggle BLE routing active |
-| `SYS_ACTION_BLE_1..9` | Single tap | Connect profile N |
-| `SYS_ACTION_BLE_1..9` | Hold | Pair profile N |
-| `SYS_ACTION_BLE_1..9` | Double tap | Toggle connection for profile N |
+| File | Responsibility |
+|---|---|
+| `kb_manager.c` | Task management, 1000Hz loop, debouncing, and matrix merging logic. |
+| `kb_matrix.c` | Low-level GPIO scanning and Interrupt-on-change initialization. |
+| `kb_layout.c` | Keymap lookup and recursive layer fallback (`KB_KEY_TRANSPARENT`). |
+| `kb_macro.c` | Multithreaded macro executor with stacking and cancellation support. |
+| `kb_system_action.c`| Tap/Hold/Double-tap state machine and event bus broadcasting. |
+| `kb_report.c` | The master routing decision point between USB and BLE transports. |
+| `kb_custom_key.c` | Handler for "Custom Key" action codes (presets from the configurator). |
+| `kb_combo.c` | Runtime engine for evaluating combos, canceling keys, and delaying keys. |
+| `kb_state.c` | Management of HID LED states (Caps Lock, Num Lock) shared across modules. |
+| `kb_bitmap.h` | Inline bitmap utilities for high-performance bit manipulation. |
