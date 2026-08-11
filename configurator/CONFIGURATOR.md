@@ -38,9 +38,9 @@ Browser
         ├── Zustand Stores         — global state (device, macros, custom keys, logs, notifications)
         ├── React Hooks            — local business logic (useMacros, useCustomKeys)
         └── DeviceController       — high-level typed API
-              └── HIDTransport     — low-level WebHID transport
-                    └── WebHID API — USB HID connection to the keyboard
-                          └── ESP32 firmware (USB HID device, VID 0x303A / PID 0x1324)
+              └── ITransport       — Abstract transport interface
+                    ├── HIDTransport     — USB HID implementation (WebHID)
+                    └── BLETransport     — Bluetooth LE implementation (Web Bluetooth)
 ```
 
 ### Layer responsibilities
@@ -51,8 +51,8 @@ Browser
 | Zustand stores   | `stores/`                      | Global state shared across components                                |
 | React hooks      | `hooks/`                       | Local async device operations with their own state                   |
 | DeviceController | `services/DeviceController.ts` | Typed commands — fetchStatus, fetchMacros, saveMacro, etc.           |
-| HIDTransport     | `services/HIDTransport.ts`     | Packet building, CRC-8, Blast+Reconcile TX/RX, task queue, reconnect |
-| WebHID           | browser API                    | USB HID report send/receive                                          |
+| CommProtocol     | `services/CommProtocol.ts`     | Protocol engine, Blast+Reconcile TX/RX, task queue, CRC-8            |
+| Transports       | `services/HIDTransport.ts`, `BLETransport.ts` | Transport-specific I/O, WebHID/WebBluetooth connection lifecycle |
 
 ---
 
@@ -104,8 +104,11 @@ configurator/
 │   │   └── useConfirm.tsx              — Promise-based confirm dialog (renders portal, resolves on OK/Cancel)
 │   │
 │   ├── services/
-│   │   ├── DeviceController.ts         — High-level business logic wrapping HIDTransport
-│   │   └── HIDTransport.ts             — Low-level: WebHID, CRC-8, Blast+Reconcile, task queue, reconnect
+│   │   ├── DeviceController.ts         — High-level business logic
+│   │   ├── CommProtocol.ts             — Transport-agnostic protocol engine (Blast+Reconcile)
+│   │   ├── ITransport.ts               — Interface for transports
+│   │   ├── HIDTransport.ts             — WebHID implementation
+│   │   └── BLETransport.ts             — Web Bluetooth implementation
 │   │
 │   ├── stores/
 │   │   ├── deviceStore.ts              — Zustand: isConnected, deviceStatus, isDeveloperMode, controller ref
@@ -198,7 +201,7 @@ Bytes 3+: Payload — Binary C-struct data (may span multiple packets)
 
 ### CRC-8
 
-Polynomial `0x07` (same as the firmware `usb_crc.c`). The browser-side table is pre-computed in `HIDTransport.ts`. The firmware verifies CRC on every received packet; the browser verifies it on every received packet via `handleInputReport`.
+Polynomial `0x07` (same as the firmware `comm_crc.c`). The browser-side table is pre-computed in `CommProtocol.ts`. The firmware verifies CRC on every received packet; the browser verifies it on every received packet via `handleInputReport`.
 
 ### Multi-Packet Protocol: Blast + Reconcile
 
@@ -227,15 +230,15 @@ Phase 4 — Commit
 
 **Receive (device → host):**
 
-The same algorithm runs in reverse. The device blasts responses; the browser accumulates packets using a receive-side bitmap (`blastRx` state). When the LAST packet arrives, the browser assembles the full payload from the buffer and resolves the pending `sendCommand` promise. The abort guard (`BLAST_RX_MAX_PACKETS = 5000`) prevents infinite accumulation on a runaway device.
+The same algorithm runs in reverse. The device blasts responses; the browser accumulates packets using a receive-side bitmap (`blastRx` state) inside `CommProtocol`. When the LAST packet arrives, the browser assembles the full payload from the buffer and resolves the pending `sendCommand` promise. The abort guard (`BLAST_RX_MAX_PACKETS = 5000`) prevents infinite accumulation on a runaway device.
 
 ### Task Queue
 
-All commands are serialized through a FIFO task queue (`enqueueTask`). Only one command can be in-flight at a time. A 50 ms gap (`TASK_QUEUE_DELAY_MS`) is inserted between tasks to give the USB subsystem time to recover.
+All commands are serialized through a FIFO task queue (`enqueueTask`) in `CommProtocol`. Only one command can be in-flight at a time. A 50 ms gap (`TASK_QUEUE_DELAY_MS`) is inserted between tasks to give the underlying transport time to recover.
 
 ### Auto-Reconnect
 
-If the device disconnects unexpectedly while `wantConnection` is true, `HIDTransport` starts polling every 2 s (`RECONNECT_INTERVAL_MS`) via `navigator.hid.getDevices()` looking for the previously-authorized device. It also listens for the `connect` WebHID event and fast-reconnects within 1 s if the same VID/PID reappears.
+If the device disconnects unexpectedly while `wantConnection` is true, the active transport (`HIDTransport` or `BLETransport`) attempts to restore connection (e.g. by polling `navigator.hid.getDevices()` or listening for disconnect events).
 
 ---
 
@@ -749,7 +752,7 @@ On timeout, a `TimeoutError` is caught and surfaced as an `error` notification w
 **Fetching a single macro (id=2):**
 
 ```
-App               useMacros           HIDTransport           Device
+App               useMacros           CommProtocol           Device
  |                     |                    |                    |
  | fetchMacros()       |                    |                    |
  |-------------------->|                    |                    |

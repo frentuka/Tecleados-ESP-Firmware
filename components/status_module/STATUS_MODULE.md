@@ -25,7 +25,7 @@ Instead of polling other modules (which would be inefficient), the Status Module
 ### 3. The Push Mechanism
 Every cache update triggers `send_status_push()`. This function performs two steps:
 1.  **Serialization**: Casts the `s_cache` directly into a tightly packed 10-byte binary `statusmod_msg_t` struct.
-2.  **Transmission**: Hands the packet to the `USB_MODULE` or `BLE_MODULE` for physical delivery to the host.
+2.  **Transmission**: Hands the packet to the `COMM_MODULE` for transport-agnostic delivery to the host via `comm_send_payload`.
 
 ---
 
@@ -33,9 +33,9 @@ Every cache update triggers `send_status_push()`. This function performs two ste
 
 The Status Module sits at the intersection of all major subsystems, acting as their collective voice.
 
-### [USB_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/USB_MODULE.md) — The Delivery Vehicle
-- **Manual Polling**: Registers a callback via `usbmod_register_callback`. If the Configurator app sends a manual request, the Status Module forces an immediate cache refresh and push.
-- **Payload Transport**: Uses the high-priority `send_payload` API to ensure status updates reach the PC even during heavy keyboard activity.
+### [COMM_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/COMM_MODULE.md) — The Delivery Vehicle
+- **Manual Polling**: Registers a callback via `comm_dispatch_register`. If the Configurator app sends a manual request, the Status Module forces an immediate cache refresh and push.
+- **Payload Transport**: Uses `comm_send_payload` to ensure status updates reach the configurator across any active transport.
 
 ### [BLE_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/BLE_MODULE.md) — Connection Authority
 - Subscribes to `BLE_EVENTS`. It tracks profile connection/disconnection, routing toggles, and pairing timer statuses.
@@ -76,13 +76,13 @@ graph TD
     end
 
     EV_BUS["Event Bus<br/>(BLE / Split / Config)"]
-    USB["USB_MODULE<br/>(Transport)"]
+    COMM["COMM_MODULE<br/>(Transport)"]
 
     EV_BUS -- "Trigger Update" --> CACHE
     CACHE -- "Trigger Serialise" --> PUSH
-    PUSH -- "send_payload()" --> USB
+    PUSH -- "comm_send_payload()" --> COMM
     
-    USB -- "Manual Poll" --> statusmod
+    COMM -- "Manual Poll" --> statusmod
 ```
 
 ---

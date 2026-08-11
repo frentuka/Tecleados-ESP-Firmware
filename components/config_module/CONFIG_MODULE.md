@@ -43,8 +43,8 @@ The module partitions data into dedicated NVS namespaces to prevent key collisio
 
 The Config Module acts as the central state provider for every functional subsystem.
 
-### [USB_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/USB_MODULE.md) — Configuration Transport
-- **Command Routing**: Registers a callback for `MODULE_CONFIG`. It handles the vendor-specific HID channel for the web configurator.
+### [COMM_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/COMM_MODULE.md) — Configuration Transport
+- **Command Routing**: Registers a callback via `comm_dispatch_register`. It handles the transport-agnostic comm protocol for the web configurator (USB/BLE).
 
 ### [STATUS_MODULE](file:///home/srleg/Projects/Tecleados-ESP-Firmware/universe/modules/STATUS_MODULE.md) — Reactive Notifications
 - **Event Bus**: Posts `CONFIG_EVENT_KIND_UPDATED` whenever a setting is saved. This triggers the Status Module to push a fresh system snapshot to the UI.
@@ -58,9 +58,9 @@ The Config Module acts as the central state provider for every functional subsys
 
 ---
 
-## USB Wire Protocol
+## COMM Protocol
 
-Communications follow a **Request/Response** pattern on the Comm channel.
+Communications follow a **Request/Response** pattern on the Comm channel (USB or BLE).
 
 ### Frame Structure
 ### Frame Structure
@@ -93,12 +93,12 @@ graph TD
         NVS["NVS Storage<br/>(Namespaces)"]
     end
 
-    USB["USB_MODULE<br/>(Comm Channel)"]
+    COMM["COMM_MODULE<br/>(Transport Agnostic)"]
     KB["KEYBOARD_MODULE<br/>(Raw Binary Read)"]
     SPLIT["SPLIT_MODULE<br/>(NVS Mirroring)"]
     STATUS["STATUS_MODULE<br/>(Event Subscriber)"]
 
-    USB -- "Binary SET/GET" --> CM
+    COMM -- "Binary SET/GET" --> CM
     CM -- "Write/Read" --> NVS
     
     NVS -- "Fast Binary Load" --> KB
@@ -112,7 +112,7 @@ graph TD
 
 | File | Responsibility |
 |---|---|
-| `cfgmod.c` | Core router, USB callback management, and dual-path NVS logic. |
+| `cfgmod.c` | Core router, COMM callback management, and dual-path NVS logic. |
 | `cfg_layouts.c` | High-speed binary storage for matrix action codes. |
 | `cfg_macros.c` | Manages macro index and multi-event storage. |
 | `cfg_custom_keys.c` | Handles complex press/release/tap/hold logic rules. |
