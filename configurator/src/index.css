@@ -1059,3 +1059,5 @@ a,
 .onboarding-welcome-card {
   pointer-events: auto;
 }
+
+@import './assets/css/responsive.css';

@@ -1,0 +1,19 @@
+/* ═══════════════════════════════════════════════
+   RESPONSIVE OVERRIDES
+   Import this file LAST in index.css
+   ═══════════════════════════════════════════════ */
+
+/* ── Mobile (up to 767px) ── */
+@media (max-width: 767px) {
+  /* Mobile overrides will be added here in future phases */
+}
+
+/* ── Tablet (768px – 1023px) ── */
+@media (min-width: 768px) and (max-width: 1023px) {
+  /* Tablet overrides will be added here in future phases */
+}
+
+/* ── Touch device overrides (interaction model) ── */
+@media (hover: none) and (pointer: coarse) {
+  /* Touch-specific overrides will be added here in future phases */
+}
