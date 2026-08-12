@@ -9,7 +9,7 @@
 #include "kb_layout.h"
 #include "event_bus.h"
 
-#include "cJSON.h"
+
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 
@@ -29,67 +29,7 @@ static void layout_default(void *out_struct) {
   memset(l, 0, sizeof(cfg_layer_t));
 }
 
-/*
-    Serialize: { "keys": [[c0,c1,...],[c0,c1,...],...] }
-*/
-static cJSON *layout_serialize(const void *in_struct) {
-  const cfg_layer_t *l = (const cfg_layer_t *)in_struct;
-  cJSON *root = cJSON_CreateObject();
-  if (!root)
-    return NULL;
 
-  cJSON *rows = cJSON_CreateArray();
-  if (!rows) {
-    cJSON_Delete(root);
-    return NULL;
-  }
-
-  for (int r = 0; r < KB_MATRIX_ROW_COUNT; r++) {
-    cJSON *row_arr = cJSON_CreateArray();
-    if (!row_arr) {
-      cJSON_Delete(root);
-      return NULL;
-    }
-    for (int c = 0; c < KB_MATRIX_COL_COUNT; c++) {
-      cJSON_AddItemToArray(row_arr, cJSON_CreateNumber(l->keys[r][c]));
-    }
-    cJSON_AddItemToArray(rows, row_arr);
-  }
-  cJSON_AddItemToObject(root, "keys", rows);
-  return root;
-}
-
-/*
-    Deserialize: Parse { "keys": [[...],[...],...] }
-*/
-static bool layout_deserialize(cJSON *root, void *out_struct) {
-  cfg_layer_t *l = (cfg_layer_t *)out_struct;
-  cJSON *rows = cJSON_GetObjectItem(root, "keys");
-  if (!cJSON_IsArray(rows))
-    return false;
-
-  int r = 0;
-  cJSON *row_item;
-  cJSON_ArrayForEach(row_item, rows) {
-    if (r >= KB_MATRIX_ROW_COUNT)
-      break;
-    if (!cJSON_IsArray(row_item))
-      return false;
-
-    int c = 0;
-    cJSON *col_item;
-    cJSON_ArrayForEach(col_item, row_item) {
-      if (c >= KB_MATRIX_COL_COUNT)
-        break;
-      if (cJSON_IsNumber(col_item)) {
-        l->keys[r][c] = (uint16_t)col_item->valueint;
-      }
-      c++;
-    }
-    r++;
-  }
-  return true;
-}
 
 /*
     Update callback: when an external SET arrives via USB,
@@ -117,8 +57,7 @@ static void layout_update_cb(const char *key) {
     Registration
 */
 void cfg_layouts_register(void) {
-  cfgmod_register_kind(CFGMOD_KIND_LAYOUT, layout_default, layout_deserialize,
-                       layout_serialize, layout_update_cb,
+  cfgmod_register_kind(CFGMOD_KIND_LAYOUT, layout_default, layout_update_cb,
                        sizeof(cfg_layer_t));
 }
 
@@ -409,58 +348,4 @@ const cfg_layout_index_t *cfg_layout_get_index(void) {
     return &s_idx;
 }
 
-// ── Serialization ──
 
-cJSON *layouts_serialize_outline(void) {
-    cJSON *root = cJSON_CreateObject();
-    if (!root) return NULL;
-    
-    cJSON *layouts = cJSON_CreateArray();
-    cJSON_AddItemToObject(root, "layouts", layouts);
-    
-    for (uint8_t i = 0; i < CFG_LAYOUT_MAX_COUNT; i++) {
-        uint8_t id = s_idx.order[i];
-        if (id != 0xFF && cfg_layout_exists(id)) {
-            cJSON *item = cJSON_CreateObject();
-            cJSON_AddNumberToObject(item, "id", id);
-            cJSON_AddStringToObject(item, "name", s_idx.names[id]);
-            cJSON_AddItemToArray(layouts, item);
-        }
-    }
-    return root;
-}
-
-cJSON *layouts_serialize_single(uint8_t id) {
-    if (!cfg_layout_exists(id)) return NULL;
-    
-    cJSON *root = cJSON_CreateObject();
-    if (!root) return NULL;
-    
-    cJSON_AddNumberToObject(root, "id", id);
-    cJSON_AddStringToObject(root, "name", s_idx.names[id]);
-    
-    cfg_layer_t layer;
-    if (cfg_layout_get_layer(id, &layer) != ESP_OK) {
-        cJSON_Delete(root);
-        return NULL;
-    }
-    
-    cJSON *keys = cJSON_CreateArray();
-    for (int r = 0; r < KB_MATRIX_ROW_COUNT; r++) {
-        cJSON *row_arr = cJSON_CreateArray();
-        for (int c = 0; c < KB_MATRIX_COL_COUNT; c++) {
-            cJSON_AddItemToArray(row_arr, cJSON_CreateNumber(layer.keys[r][c]));
-        }
-        cJSON_AddItemToArray(keys, row_arr);
-    }
-    cJSON_AddItemToObject(root, "keys", keys);
-    
-    return root;
-}
-
-cJSON *layouts_serialize_limits(void) {
-    cJSON *root = cJSON_CreateObject();
-    if (!root) return NULL;
-    cJSON_AddNumberToObject(root, "maxLayouts", CFG_LAYOUT_MAX_COUNT);
-    return root;
-}

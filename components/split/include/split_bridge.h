@@ -36,5 +36,6 @@ void split_bridge_send_ble_status_to_slave(void);
 void split_bridge_on_ble_event(void *arg, esp_event_base_t base,
                                 int32_t event_id, void *data);
 
-/** @brief USB MODULE_BLE callback: run locally or forward to master. */
-bool split_bridge_ble_usb_callback(uint8_t *data, uint16_t data_len);
+#include "comm_transport.h"
+/** @brief MODULE_BLE callback: run locally or forward to master. */
+bool split_bridge_ble_usb_callback(comm_transport_t source, uint8_t *data, uint16_t data_len);

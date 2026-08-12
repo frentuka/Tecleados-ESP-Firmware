@@ -38,9 +38,9 @@ Browser
         ├── Zustand Stores         — global state (device, macros, custom keys, logs, notifications)
         ├── React Hooks            — local business logic (useMacros, useCustomKeys)
         └── DeviceController       — high-level typed API
-              └── HIDTransport     — low-level WebHID transport
-                    └── WebHID API — USB HID connection to the keyboard
-                          └── ESP32 firmware (USB HID device, VID 0x303A / PID 0x1324)
+              └── ITransport       — Abstract transport interface
+                    ├── HIDTransport     — USB HID implementation (WebHID)
+                    └── BLETransport     — Bluetooth LE implementation (Web Bluetooth)
 ```
 
 ### Layer responsibilities
@@ -51,8 +51,8 @@ Browser
 | Zustand stores   | `stores/`                      | Global state shared across components                                |
 | React hooks      | `hooks/`                       | Local async device operations with their own state                   |
 | DeviceController | `services/DeviceController.ts` | Typed commands — fetchStatus, fetchMacros, saveMacro, etc.           |
-| HIDTransport     | `services/HIDTransport.ts`     | Packet building, CRC-8, Blast+Reconcile TX/RX, task queue, reconnect |
-| WebHID           | browser API                    | USB HID report send/receive                                          |
+| CommProtocol     | `services/CommProtocol.ts`     | Protocol engine, Blast+Reconcile TX/RX, task queue, CRC-8            |
+| Transports       | `services/HIDTransport.ts`, `BLETransport.ts` | Transport-specific I/O, WebHID/WebBluetooth connection lifecycle |
 
 ---
 
@@ -104,8 +104,11 @@ configurator/
 │   │   └── useConfirm.tsx              — Promise-based confirm dialog (renders portal, resolves on OK/Cancel)
 │   │
 │   ├── services/
-│   │   ├── DeviceController.ts         — High-level business logic wrapping HIDTransport
-│   │   └── HIDTransport.ts             — Low-level: WebHID, CRC-8, Blast+Reconcile, task queue, reconnect
+│   │   ├── DeviceController.ts         — High-level business logic
+│   │   ├── CommProtocol.ts             — Transport-agnostic protocol engine (Blast+Reconcile)
+│   │   ├── ITransport.ts               — Interface for transports
+│   │   ├── HIDTransport.ts             — WebHID implementation
+│   │   └── BLETransport.ts             — Web Bluetooth implementation
 │   │
 │   ├── stores/
 │   │   ├── deviceStore.ts              — Zustand: isConnected, deviceStatus, isDeveloperMode, controller ref
@@ -193,12 +196,12 @@ The first 3 bytes of every application payload are a header:
 Byte 0 : module   — 0x00=CONFIG, 0x01=SYSTEM, 0x02=ACTION, 0x03=STATUS
 Byte 1 : command  — 0x00=GET, 0x01=SET
 Byte 2 : key ID   — what config record to read/write (see CFG_KEY_* constants)
-Bytes 3+: JSON    — UTF-8 encoded JSON data (may span multiple packets)
+Bytes 3+: Payload — Binary C-struct data (may span multiple packets)
 ```
 
 ### CRC-8
 
-Polynomial `0x07` (same as the firmware `usb_crc.c`). The browser-side table is pre-computed in `HIDTransport.ts`. The firmware verifies CRC on every received packet; the browser verifies it on every received packet via `handleInputReport`.
+Polynomial `0x07` (same as the firmware `comm_crc.c`). The browser-side table is pre-computed in `CommProtocol.ts`. The firmware verifies CRC on every received packet; the browser verifies it on every received packet via `handleInputReport`.
 
 ### Multi-Packet Protocol: Blast + Reconcile
 
@@ -227,15 +230,15 @@ Phase 4 — Commit
 
 **Receive (device → host):**
 
-The same algorithm runs in reverse. The device blasts responses; the browser accumulates packets using a receive-side bitmap (`blastRx` state). When the LAST packet arrives, the browser assembles the full payload from the buffer and resolves the pending `sendCommand` promise. The abort guard (`BLAST_RX_MAX_PACKETS = 5000`) prevents infinite accumulation on a runaway device.
+The same algorithm runs in reverse. The device blasts responses; the browser accumulates packets using a receive-side bitmap (`blastRx` state) inside `CommProtocol`. When the LAST packet arrives, the browser assembles the full payload from the buffer and resolves the pending `sendCommand` promise. The abort guard (`BLAST_RX_MAX_PACKETS = 5000`) prevents infinite accumulation on a runaway device.
 
 ### Task Queue
 
-All commands are serialized through a FIFO task queue (`enqueueTask`). Only one command can be in-flight at a time. A 50 ms gap (`TASK_QUEUE_DELAY_MS`) is inserted between tasks to give the USB subsystem time to recover.
+All commands are serialized through a FIFO task queue (`enqueueTask`) in `CommProtocol`. Only one command can be in-flight at a time. A 50 ms gap (`TASK_QUEUE_DELAY_MS`) is inserted between tasks to give the underlying transport time to recover.
 
 ### Auto-Reconnect
 
-If the device disconnects unexpectedly while `wantConnection` is true, `HIDTransport` starts polling every 2 s (`RECONNECT_INTERVAL_MS`) via `navigator.hid.getDevices()` looking for the previously-authorized device. It also listens for the `connect` WebHID event and fast-reconnects within 1 s if the same VID/PID reappears.
+If the device disconnects unexpectedly while `wantConnection` is true, the active transport (`HIDTransport` or `BLETransport`) attempts to restore connection (e.g. by polling `navigator.hid.getDevices()` or listening for disconnect events).
 
 ---
 
@@ -303,7 +306,7 @@ The physical layout describes **where each key sits on the desk** — not what i
 
 ### On-Wire Format
 
-The firmware stores and returns a JSON blob (up to 4096 bytes):
+The firmware stores and returns a UTF-8 string blob containing JSON (unparsed by firmware, up to 4096 bytes):
 
 ```json
 {
@@ -320,7 +323,7 @@ The firmware stores and returns a JSON blob (up to 4096 bytes):
 ```
 
 - Each key occupies **6 consecutive integers** in its visual-row array. Dimensions are scaled by 100 to avoid floating-point in NVS.
-- The optional `rotation` side-map records rotation data for keys that are not axis-aligned (e.g., angled thumb clusters). It is keyed by `"row-col"` string so old firmware that ignores unknown JSON fields is unaffected.
+- The optional `rotation` side-map records rotation data for keys that are not axis-aligned (e.g., angled thumb clusters). It is keyed by `"row-col"` string.
 - `r` is scaled by **10** (not 100) to preserve one decimal place of precision for common angles like `±15.5°`.
 
 Parsing and serialization live in `configurator/src/utils/layoutUtils.ts` (`parsePhysicalLayoutJson` / `serializePhysicalLayout`).
@@ -462,7 +465,7 @@ On connect, the app queries `CFG_KEY_MACRO_LIMITS` which returns `{ maxMacros, m
 
 ### Device encoding
 
-Macros are sent as JSON via `CFG_KEY_MACRO_SINGLE` (SET). The JSON is the full `Macro` object. Bulk fetch uses `CFG_KEY_MACROS` (GET) which returns a list of all macros (outline only — no elements). Per-macro elements are then fetched individually with `CFG_KEY_MACRO_SINGLE` (GET, body: `{ id }`).
+Macros are sent as a packed binary struct (`cfg_macro_t`) via `CFG_KEY_MACRO_SINGLE` (SET). The struct contains the full Macro definition. Bulk fetch uses `CFG_KEY_MACROS` (GET) which returns a binary list of all macros (outline only — no elements). Per-macro elements are then fetched individually with `CFG_KEY_MACRO_SINGLE` (GET, specifying the ID).
 
 Delete sends `CFG_KEY_MACRO_SINGLE` (SET, body: `{ delete: id }`).
 
@@ -596,7 +599,7 @@ When active, a `DevControlsPanel` appears as a strip at the bottom of the viewpo
 **Left — Config Explorer:**
 - **Target Module** selector — CONFIG or SYSTEM.
 - **Key ID** selector — selects which config record to read/write.
-- **Auto-Form** — populated by a GET of the selected key; allows editing and SETing raw JSON records.
+- **Auto-Form** — populated by a GET of the selected key; allows editing and SETing raw binary structs (represented via DataView fields).
 
 **Right — Raw Packet Log:**
 - Real-time display of every HID report sent/received.
@@ -656,11 +659,7 @@ The configurator is the primary client of `cfg_usb_callback()`. Every user actio
 
 ### [[STATUS_MODULE]] — Live State Display
 
-The `StatusWidget.tsx` component subscribes to unsolicited status pushes from the firmware. On initial connection, `App.tsx` sends a `MODULE_STATUS` poll to request an immediate snapshot before any BLE or split event fires. The widget maps the JSON fields to human-readable indicators:
-
-```json
-{ "mode": 1, "profile": 2, "pairing": -1, "bitmap": 7, "split_state": 4, "split_role": 1 }
-```
+The `StatusWidget.tsx` component subscribes to unsolicited status pushes from the firmware. On initial connection, `App.tsx` sends a `MODULE_STATUS` poll to request an immediate snapshot before any BLE or split event fires. The widget parses the incoming binary `statusmod_msg_t` fields using `DataView` (enforcing little-endian) to update human-readable indicators (e.g. `mode`, `profile`, `bitmap`).
 
 ### [[SPLIT_MODULE]] — Split Keyboard Control
 
@@ -753,7 +752,7 @@ On timeout, a `TimeoutError` is caught and surfaced as an `error` notification w
 **Fetching a single macro (id=2):**
 
 ```
-App               useMacros           HIDTransport           Device
+App               useMacros           CommProtocol           Device
  |                     |                    |                    |
  | fetchMacros()       |                    |                    |
  |-------------------->|                    |                    |
@@ -761,7 +760,7 @@ App               useMacros           HIDTransport           Device
  |              (MODULE_CONFIG, GET, MACROS) |                    |
  |                     |---> enqueueTask    |                    |
  |                     |                    |---FIRST|LAST------>|
- |                     |                    |<--FIRST|LAST-------|  JSON list
+ |                     |                    |<--FIRST|LAST-------|  Binary struct
  |                     |                    |---ACK------------->|
  |                     |<-- CommandResponse  |                    |
  |                     |                    |                    |
@@ -769,9 +768,9 @@ App               useMacros           HIDTransport           Device
  |                     |  sendCommand([00,00,09,{"id":2}])        |
  |                     |---> enqueueTask    |                    |
  |                     |                    |---FIRST|LAST------>|
- |                     |                    |<--FIRST ----------|  JSON part 1
- |                     |                    |<--MID  ----------|   JSON part 2
- |                     |                    |<--LAST ----------|   JSON part 3
+ |                     |                    |<--FIRST ----------|  Binary part 1
+ |                     |                    |<--MID  ----------|   Binary part 2
+ |                     |                    |<--LAST ----------|   Binary part 3
  |                     |                    |---BITMAP--------->|  (ACK all parts)
  |                     |                    |<--ACK-------------|
  |                     |<-- CommandResponse  |                    |

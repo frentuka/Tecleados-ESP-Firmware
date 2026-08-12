@@ -80,6 +80,10 @@ static void apply_ble_routing_for_role(split_role_t role)
     ESP_LOGI(TAG, "BLE routing → %s (role=%u)",
              should_suspend ? "SUSPENDED" : "RESUMED", (unsigned)role);
 
+    if (should_suspend) {
+        ESP_LOGI(TAG, "Phase 3 Verif: BLE routing suspension triggered.");
+    }
+
     if (!should_suspend) {
         // Bonds are already pre-warmed by config sync.  Skip directed ADV —
         // it reduces radio congestion during the initial heavy config sync.
@@ -205,7 +209,7 @@ void split_bridge_on_ble_event(void *arg, esp_event_base_t base,
     split_bridge_send_ble_status_to_slave();
 }
 
-bool split_bridge_ble_usb_callback(uint8_t *data, uint16_t data_len)
+bool split_bridge_ble_usb_callback(comm_transport_t source, uint8_t *data, uint16_t data_len)
 {
     if (!data || data_len < 1) return false;
     uint8_t cmd = data[0];

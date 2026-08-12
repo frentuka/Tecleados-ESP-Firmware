@@ -1,14 +1,10 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import type { Macro, ImportableMacro } from './types/macros';
+import type { Macro } from './types/macros';
 import { MACRO_BASE } from './KeyDefinitions';
 import { getModeBadge } from './components/MacroIcons';
 import MacroEditorModal from './components/MacroEditorModal';
 import { MacroPreview } from './components/MacroPreview';
-import MacroModeModal from './components/MacroModeModal';
-import ExportModal from './components/ExportModal';
-import ImportModal from './components/ImportModal';
-import { saveJsonFile } from './utils/fileUtils';
-import { useNotificationStore } from './stores/notificationStore';
+import MacroModeModal from './components/MacroModeModal';import { useNotificationStore } from './stores/notificationStore';
 import EmptyState from './components/EmptyState';
 import macroEmptyAnim from './assets/lottie/macro-empty.json';
 import './assets/css/macros-dashboard.css';
@@ -46,16 +42,10 @@ export default function MacrosDashboard({
     const [fetchingMacroId, setFetchingMacroId] = useState<number | null>(null);
     const [busyMacroIds, setBusyMacroIds] = useState<Map<number, string>>(new Map());
     const [isCreating, setIsCreating] = useState(false);
-    const [isMenuOpen, setIsMenuOpen] = useState(false);
-    const [isExportModalOpen, setIsExportModalOpen] = useState(false);
-    const [isExporting, setIsExporting] = useState(false);
-    const [isImportModalOpen, setIsImportModalOpen] = useState(false);
-    const [isImporting, setIsImporting] = useState(false);
-    const [macrosToImport, setMacrosToImport] = useState<ImportableMacro[]>([]);
-    
+    const [isMenuOpen, setIsMenuOpen] = useState(false);    
     const fileInputRef = useRef<HTMLInputElement>(null);
     const menuRef = useRef<HTMLDivElement>(null);
-    const importGuardRef = useRef(false);
+
     const cardRefs = useRef<Map<number, HTMLDivElement>>(new Map());
     const [activeHighlight, setActiveHighlight] = useState<number | null>(null);
     const [searchTerm, setSearchTerm] = useState('');
@@ -154,87 +144,9 @@ export default function MacrosDashboard({
         }
     };
 
-    const handleExportSubmit = async (selectedMacros: Macro[]) => {
-        setIsExporting(true);
-        try {
-            const fullMacros = [];
-            for (const sm of selectedMacros) {
-                if (onFetchSingleMacro) {
-                    const fm = await onFetchSingleMacro(sm.id);
-                    if (fm) {
-                        const { id, ...macroWithoutId } = fm;
-                        fullMacros.push(macroWithoutId);
-                    }
-                } else {
-                    const { id, ...macroWithoutId } = sm;
-                    fullMacros.push(macroWithoutId);
-                }
-            }
-            const dataStr = JSON.stringify(fullMacros, null, 2);
 
-            await saveJsonFile(dataStr, 'macros_export.json');
-            showNotification("Macros exported successfully", "success");
-        } catch (err) {
-            showNotification("Failed to export macros.", "error");
-        } finally {
-            setIsExporting(false);
-            setIsExportModalOpen(false);
-        }
-    };
 
-    const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
-        const file = event.target.files?.[0];
-        if (!file) return;
-
-        const reader = new FileReader();
-        reader.onload = async (e) => {
-            try {
-                const importedData = JSON.parse(e.target?.result as string);
-                const parsedMacros = Array.isArray(importedData) ? importedData : [importedData];
-                const importableMacros: ImportableMacro[] = parsedMacros.map((m, i) => ({
-                    ...m,
-                    tempId: `import-${Date.now()}-${i}-${Math.random().toString(36).substring(2, 9)}`
-                }));
-                setMacrosToImport(importableMacros);
-                setIsImportModalOpen(true);
-            } catch (error) {
-                showNotification("Failed to parse JSON file.", "error");
-            }
-        };
-        reader.readAsText(file);
-        event.target.value = '';
-    };
-
-    const handleImportSubmit = async (selectedMacros: ImportableMacro[]) => {
-        if (importGuardRef.current) return;
-        importGuardRef.current = true;
-        setIsImporting(true);
-        try {
-            for (const m of selectedMacros) {
-                const { tempId, id, ...restOfMacro } = m;
-                const newMacro = { ...restOfMacro, id: -1 };
-                setIsCreating(true);
-                try {
-                    await onSaveMacro(newMacro);
-                    setMacrosToImport(prev => prev.filter(item => item.tempId !== tempId));
-                    showNotification(`Macro "${newMacro.name}" imported`, "success");
-                } catch (err: any) {
-                    showNotification(`Failed to save imported macro "${newMacro.name}": ${err?.message || 'Unknown error'}`, "error");
-                    break;
-                } finally {
-                    setIsCreating(false);
-                }
-            }
-        } finally {
-            setIsImporting(false);
-            setMacrosToImport(prev => {
-                if (prev.length === 0) setIsImportModalOpen(false);
-                return prev;
-            });
-            importGuardRef.current = false;
-        }
-    };
-
+    
     return (
         <div className="macros-dashboard" style={{ height: '100%' }}>
 
@@ -262,9 +174,7 @@ export default function MacrosDashboard({
                             </svg>
                         </button>
                         {isMenuOpen && (
-                            <div className="dropdown-menu">
-                                <button className="dropdown-item" onClick={() => { setIsExportModalOpen(true); setIsMenuOpen(false); }}>Export Macros</button>
-                                <button className="dropdown-item" onClick={() => { fileInputRef.current?.click(); setIsMenuOpen(false); }}>Import Macros</button>
+                            <div className="dropdown-menu">                                <button className="dropdown-item" onClick={() => { fileInputRef.current?.click(); setIsMenuOpen(false); }}>Import Macros</button>
                                 <button className="dropdown-item" onClick={() => { onReload?.(); setIsMenuOpen(false); }}>Refresh</button>
                             </div>
                         )}
@@ -403,28 +313,6 @@ export default function MacrosDashboard({
                         if (onClearEditId) onClearEditId();
                     }}
                 />
-            )}
-
-            {isExportModalOpen && (
-                <ExportModal
-                    macros={sortedMacros}
-                    onClose={() => setIsExportModalOpen(false)}
-                    onExport={handleExportSubmit}
-                    isExporting={isExporting}
-                />
-            )}
-
-            {isImportModalOpen && (
-                <ImportModal
-                    macros={macrosToImport}
-                    maxMacros={macroLimits?.maxMacros || 0}
-                    currentCount={macros.length}
-                    onClose={() => setIsImportModalOpen(false)}
-                    onImport={handleImportSubmit}
-                    isImporting={isImporting}
-                />
-            )}
-            <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept=".json" onChange={handleImport} />
-        </div>
+            )}        </div>
     );
 }

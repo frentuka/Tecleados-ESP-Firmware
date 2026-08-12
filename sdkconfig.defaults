@@ -34,12 +34,16 @@ CONFIG_BT_NIMBLE_MAX_CONNECTIONS=3
 CONFIG_BT_NIMBLE_WHITELIST_SIZE=9
 
 # MSYS mbuf pools — the dominant RAM consumers.
-# MSYS1 (small): HCI commands, ATT PDUs, HID reports (all well under 256 B).
-# MSYS2 (large): initial descriptor exchange and connection setup bursts.
-# After connection is established the keyboard only ever sends tiny reports,
-# so the pool drains quickly and blocks are recycled.
-CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT=24
-CONFIG_BT_NIMBLE_MSYS_2_BLOCK_COUNT=8
+# MSYS1 (small): HCI commands, ATT PDUs, HID reports, and COMM notifications.
+#   With ATT MTU=256 the payload is 256 bytes. NimBLE adds L2CAP (4B) + ACL (4B)
+#   headers = 264 bytes minimum per notification. 292 gives headroom for all
+#   protocol framing so COMM blast packets always fit in MSYS1 without spilling
+#   into MSYS2 (which was causing BLE_HS_ENOMEM during large blast TXes).
+# MSYS2 (large): connection setup descriptor bursts.
+CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT=28
+CONFIG_BT_NIMBLE_MSYS_1_BLOCK_SIZE=292
+CONFIG_BT_NIMBLE_MSYS_2_BLOCK_COUNT=12
+CONFIG_BT_NIMBLE_MSYS_2_BLOCK_SIZE=320
 
 # ACL buffers between LL controller and host.  One or two in-flight per
 # connection is typical for HID; 10 gives headroom for 3 concurrent.
@@ -51,9 +55,11 @@ CONFIG_BT_NIMBLE_TRANSPORT_EVT_COUNT=16
 CONFIG_BT_NIMBLE_TRANSPORT_EVT_DISCARD_COUNT=4
 
 # CCCDs (client characteristic config descriptors).  A keyboard HID profile
-# needs ~4–5 per connection (keyboard report, boot report, battery, consumer).
-# 15 = 5 × 3 connections with a small buffer.
-CONFIG_BT_NIMBLE_MAX_CCCDS=15
+# needs ~4–5 per connection. The custom COMM service requires 2 more.
+# 21 = 7 × 3 connections.
+CONFIG_BT_NIMBLE_MAX_CCCDS=21
+CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=256
+CONFIG_BT_NIMBLE_LL_CFG_FEAT_DATA_LEN_EXT=y
 
 # ATT prepared-write queue.  Long writes are never used by HID.  Minimum = 1.
 CONFIG_BT_NIMBLE_ATT_MAX_PREP_ENTRIES=4

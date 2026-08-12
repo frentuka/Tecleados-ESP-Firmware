@@ -53,12 +53,14 @@ const ConsoleIcon = () => (
     </svg>
 );
 
+
 // ── Props ──
 interface SidebarProps {
     activeTab: SidebarTab;
     onTabChange: (tab: SidebarTab) => void;
     onSettingsClick: () => void;
     onConsoleClick: () => void;
+    
     isDeveloperMode: boolean;
     children: React.ReactNode;
 }
@@ -96,6 +98,7 @@ export default function Sidebar({
     onTabChange,
     onSettingsClick,
     onConsoleClick,
+    
     isDeveloperMode,
     children,
 }: SidebarProps) {
@@ -180,6 +183,7 @@ export default function Sidebar({
                             className="sidebar-icon-dev"
                         />
                     )}
+                    
                     <SidebarIconButton
                         icon={<SettingsIcon />}
                         label="Settings"

@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { hidService } from '../HIDService';
 import type { CustomKey } from '../types/customKeys';
 import { withTimeout } from '../utils/withTimeout';
@@ -18,6 +18,12 @@ export function useCustomKeys(
     confirm: ConfirmFn,
 ) {
     const [customKeys, setCustomKeys] = useState<CustomKey[]>([]);
+
+    useEffect(() => {
+        if (!isConnected) {
+            setCustomKeys([]);
+        }
+    }, [isConnected]);
 
     const fetchSingleCustomKey = useCallback(async (id: number): Promise<CustomKey | null> => {
         if (!isConnected) return null;
@@ -39,14 +45,16 @@ export function useCustomKeys(
     const fetchCustomKeys = useCallback(async () => {
         if (!isConnected) return;
         try {
-            const outline = await hidService.fetchCustomKeys();
-            setCustomKeys(outline.sort((a, b) => a.id - b.id));
+            const ids = await hidService.fetchCustomKeys();
+            
+            const skeletons = ids.map(id => ({ id, name: `Loading... (ID ${id})`, mode: 0 } as CustomKey));
+            setCustomKeys(skeletons);
 
-            addLog(`Found ${outline.length} custom keys. Fetching details...`);
+            addLog(`Found ${ids.length} custom keys. Fetching details...`);
 
             // Sequentially fetch details for each custom key
-            for (const k of outline) {
-                await fetchSingleCustomKey(k.id);
+            for (const id of ids) {
+                await fetchSingleCustomKey(id);
             }
             addLog(`All custom key details loaded.`);
         } catch (e) {

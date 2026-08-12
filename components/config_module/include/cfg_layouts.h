@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "cJSON.h"
+
 #include "esp_err.h"
 #include "kb_matrix.h"
 
@@ -16,11 +16,18 @@ typedef struct cfg_layer {
 #define CFG_LAYOUT_NAME_LEN     24
 
 // Persistent index: tracks which layout slots are populated + their names
-typedef struct __attribute__((packed)) {
+typedef struct {
     uint16_t active_mask;
-    char     names[CFG_LAYOUT_MAX_COUNT][CFG_LAYOUT_NAME_LEN];
     uint8_t  order[CFG_LAYOUT_MAX_COUNT];
+    char     names[CFG_LAYOUT_MAX_COUNT][CFG_LAYOUT_NAME_LEN];
+    uint8_t  reserved[2];
 } cfg_layout_index_t;
+
+_Static_assert(sizeof(cfg_layout_index_t) == 404, "cfg_layout_index_t size mismatch");
+_Static_assert(offsetof(cfg_layout_index_t, active_mask) == 0, "offset mismatch");
+_Static_assert(offsetof(cfg_layout_index_t, order) == 2, "offset mismatch");
+_Static_assert(offsetof(cfg_layout_index_t, names) == 18, "offset mismatch");
+
 
 // ── Registration & Init ──
 void        cfg_layouts_register(void);
@@ -44,7 +51,3 @@ uint8_t     cfg_layout_get_count(void);                  // Number of active lay
 bool        cfg_layout_exists(uint8_t id);               // Check if slot is populated
 const cfg_layout_index_t *cfg_layout_get_index(void);    // Read-only pointer to in-memory index
 
-// ── Serialization ──
-cJSON *layouts_serialize_outline(void);
-cJSON *layouts_serialize_single(uint8_t id);
-cJSON *layouts_serialize_limits(void);

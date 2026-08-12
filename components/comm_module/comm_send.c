@@ -1,0 +1,53 @@
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "comm_send.h"
+#include "comm_crc.h"
+#include "comm_defs.h"
+#include "esp_log.h"
+
+static const char *TAG = "comm_send";
+
+bool comm_build_send_single_packet(comm_transport_t target, uint8_t flags, uint16_t rem, uint8_t payload_len, const uint8_t *payload) {
+    // Minimum packet size is 4 bytes header + payload_len + 1 byte CRC
+    uint16_t logical_len = sizeof(comm_packet_header_t) + payload_len + 1;
+    
+    uint8_t buffer[COMM_MAX_PACKET_SIZE] = {0};
+    
+    comm_packet_header_t *header = (comm_packet_header_t *)buffer;
+    header->flags = flags;
+    header->remaining_packets = rem;
+    header->payload_len = payload_len;
+    
+    if (payload_len > 0 && payload != NULL) {
+        memcpy(buffer + sizeof(comm_packet_header_t), payload, payload_len);
+    }
+    
+    return comm_send_single_packet(target, buffer, logical_len);
+}
+
+bool comm_send_single_packet(comm_transport_t target, uint8_t *packet, uint16_t logical_len) {
+    comm_crc_prepare_packet(packet, logical_len);
+    
+    const comm_transport_ops_t *ops = comm_transport_get(target);
+    if (!ops || !ops->is_ready || !ops->send_packet) {
+        return false;
+    }
+    
+    uint32_t wait_timeout_ticks = pdMS_TO_TICKS(1000);
+    uint32_t start_tick = xTaskGetTickCount();
+    
+    while (!ops->is_ready()) {
+        if ((xTaskGetTickCount() - start_tick) >= wait_timeout_ticks) {
+            ESP_LOGW(TAG, "Transport %d not ready (timeout)", target);
+            return false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+    
+    return ops->send_packet(packet, logical_len);
+}

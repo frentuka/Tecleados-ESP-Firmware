@@ -9,6 +9,7 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_err.h"
+#include "nvs.h"
 #include "cfg_storage_keys.h"
 #include "cfg_layouts.h"
 #include "cfg_ble.h"
@@ -65,7 +66,7 @@ static void ensure_tx_sem_init(void)
  * ========================================================================= */
 
 const split_sync_entry_t SPLIT_SYNC_ENTRIES[] = {
-    { CFGMOD_KIND_LAYOUT,   "lay_idx"       },
+    { CFGMOD_KIND_LAYOUT,   "ly_idx"       },
     { CFGMOD_KIND_SYSTEM,   "sys"           },
     { CFGMOD_KIND_PHYSICAL, CFG_ST_PHYSICAL_LAYOUT },
     { CFGMOD_KIND_MACRO,    "mac_idx"       },
@@ -126,22 +127,25 @@ esp_err_t split_config_sync_push(const uint8_t *peer_mac, split_seq_alloc_fn_t g
     uint8_t probe_byte;
     esp_err_t ret = cfgmod_read_storage(kind, key, &probe_byte, &blob_len);
 
-    if (ret == ESP_ERR_NOT_FOUND) {
-        ESP_LOGD(TAG, "read_storage(%u, %s): not found — skipping", kind, key);
+    if (ret == ESP_ERR_NOT_FOUND || ret == ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGD(TAG, "read_storage(%u, %s): not found - skipping", kind, key);
         return ESP_OK;
     }
+    
     // When the provided buffer is too small, nvs_get_blob sets *inout_len to the
-    // real blob size and returns a non-zero error (platform-specific "invalid length").
-    // We treat any non-ESP_OK, non-ESP_ERR_NOT_FOUND result as "size updated in blob_len".
-    // blob_len now holds the actual required size regardless of which error was returned.
-    if (ret != ESP_OK && ret != ESP_ERR_NOT_FOUND) {
+    // real blob size and returns ESP_ERR_NVS_INVALID_LENGTH.
+    // cfg_ble_bond_read_all returns ESP_ERR_INVALID_SIZE in the same scenario.
+    if (ret == ESP_ERR_NVS_INVALID_LENGTH || ret == ESP_ERR_INVALID_SIZE) {
         // blob_len was updated by cfgmod_read_storage / nvs_get_blob to the true size.
         // Proceed with allocation.
         if (blob_len <= 1) {
-            // Unexpected: NVS reported an error but didn't update blob_len.
-            ESP_LOGW(TAG, "read_storage probe(%u, %s): unexpected error %s with blob_len=0", kind, key, esp_err_to_name(ret));
+            // Unexpected: NVS reported invalid length but didn't update blob_len.
+            ESP_LOGW(TAG, "read_storage probe(%u, %s): unexpected invalid length with blob_len=%u", kind, key, blob_len);
             return ESP_OK;
         }
+    } else if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "read_storage probe(%u, %s): unexpected error %s", kind, key, esp_err_to_name(ret));
+        return ESP_OK;
     }
 
     if (blob_len == 0) return ESP_OK;
@@ -151,10 +155,10 @@ esp_err_t split_config_sync_push(const uint8_t *peer_mac, split_seq_alloc_fn_t g
 
     ret = cfgmod_read_storage(kind, key, blob, &blob_len);
     if (ret != ESP_OK) {
-        if (ret != ESP_ERR_NOT_FOUND) {
-            ESP_LOGW(TAG, "read_storage(%u, %s): %s — skipping", kind, key, esp_err_to_name(ret));
+        if (ret != ESP_ERR_NOT_FOUND && ret != ESP_ERR_NVS_NOT_FOUND) {
+            ESP_LOGW(TAG, "read_storage(%u, %s): %s - skipping", kind, key, esp_err_to_name(ret));
         } else {
-            ESP_LOGD(TAG, "read_storage(%u, %s): not found — skipping", kind, key);
+            ESP_LOGD(TAG, "read_storage(%u, %s): not found - skipping", kind, key);
         }
         free(blob);
         return ESP_OK;
@@ -229,7 +233,7 @@ esp_err_t split_config_sync_push_kind(const uint8_t *peer_mac, split_seq_alloc_f
         if (ret != ESP_OK) last_ret = ret;
 
         // Special handling for dynamic sub-keys (Layouts, Macros, Custom Keys)
-        if (kind == CFGMOD_KIND_LAYOUT && strcmp(key, "lay_idx") == 0) {
+        if (kind == CFGMOD_KIND_LAYOUT && strcmp(key, "ly_idx") == 0) {
             cfg_layout_index_t lidx = {0};
             size_t lidx_len = sizeof(lidx);
             if (cfgmod_read_storage(kind, key, &lidx, &lidx_len) == ESP_OK) {
@@ -665,6 +669,14 @@ void split_config_sync_process_deferred(void)
     
     if (ret == ESP_OK) {
         ESP_LOGI(TAG, "config sync applied kind=%u key=%s", kind, key);
+        
+        // If we just synced ble_cfg from the peer, the peer's 'unsynced=1' flag 
+        // might have been transferred to us. We must clear it silently so we don't 
+        // falsely think we have unsynced updates, which causes wrongful role swaps.
+        if (kind == CFGMOD_KIND_CONNECTION && strncmp(key, "ble_cfg", 7) == 0) {
+            cfg_ble_clear_unsynced();
+        }
+
         if (rev_sync) {
             ESP_LOGI(TAG, "triggering corrective reverse sync for kind=%u key=%s", kind, key);
             split_config_sync_push(dst_mac, split_session_next_seq, (cfgmod_kind_t)kind, key);

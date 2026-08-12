@@ -3,21 +3,16 @@
 #include <stdio.h>
 #include <string.h>
 
-
 #include "usb_callbacks.h"
-#include "usb_callbacks_rx.h"
-#include "usb_callbacks_tx.h"
 #include "usb_descriptors.h"
 #include "usbmod.h"
 #include "cfg_system.h"
-
-
-
+#include "comm_module.h"
+#include "comm_transport.h"
 
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_mac.h"
-
 
 #include "tinyusb.h"
 #include "tinyusb_default_config.h"
@@ -31,11 +26,11 @@ static void usb_event_cb(tinyusb_event_t *event, void *arg) {
   switch (event->id) {
   case TINYUSB_EVENT_ATTACHED:
     ESP_LOGI(TAG, "USB mounted (host connected)");
+    comm_transport_set_connected(COMM_TRANSPORT_USB, true);
     break;
   case TINYUSB_EVENT_DETACHED:
     ESP_LOGI(TAG, "USB unmounted (host disconnected)");
-    erase_tx_buffer();
-    erase_rx_buffer();
+    comm_transport_set_connected(COMM_TRANSPORT_USB, false);
     break;
   default:
     break;
@@ -129,21 +124,43 @@ void usb_send_keystroke(uint8_t hid_keycode) {
   }
 }
 
-// ======== Callbacks ========
-
-void usbmod_register_callback(usb_msg_module_t callback_module,
-                               usb_data_callback_t callback) {
-  register_callback(callback_module, callback);
-}
-
-bool usbmod_execute_callback(usb_msg_module_t callback_module, uint8_t const *data,
-                             uint16_t data_len) {
-  return execute_callback(callback_module, data, data_len);
-}
 
 /*
     Main USB module
 */
+
+// Transport operations for comm_module
+static bool usbmod_send_packet(const uint8_t *packet, uint16_t len) {
+    if (!tud_mounted() || !tud_hid_n_ready(ITF_NUM_HID_COMM)) {
+        return false;
+    }
+    
+    // USB HID requires reports to strictly match the descriptor size.
+    // The COMM report descriptor specifies 63 bytes payload (plus 1 byte report ID = 64 bytes total).
+    uint16_t required_len = COMM_REPORT_SIZE; // 63
+    uint8_t padded_buf[63] = {0};
+    
+    if (len > required_len) {
+        len = required_len;
+    }
+    memcpy(padded_buf, packet, len);
+    
+    return tud_hid_n_report(ITF_NUM_HID_COMM, REPORT_ID_COMM, padded_buf, required_len);
+}
+
+static bool usbmod_is_ready(void) {
+    return tud_mounted() && tud_hid_n_ready(ITF_NUM_HID_COMM);
+}
+
+static uint16_t usbmod_get_max_packet_size(void) {
+    return COMM_REPORT_SIZE;
+}
+
+static const comm_transport_ops_t s_usb_ops = {
+    .send_packet = usbmod_send_packet,
+    .is_ready = usbmod_is_ready,
+    .get_max_packet_size = usbmod_get_max_packet_size
+};
 
 // TinyUSB task
 void usb_task(void *arg) {
@@ -152,6 +169,15 @@ void usb_task(void *arg) {
     taskYIELD();
   }
 }
+
+static char const *string_desc_arr[] = {
+    (const char[]){0x09, 0x04},      // 0: Language
+    "Tecleados",                     // 1: Manufacturer
+    "TEF",                           // 2: Product
+    "13548",                         // 3: Serial
+    "Tecleados ITF", // 4: Keyboard interface
+    "Tecleados Comms ITF"            // 5: Bulk COMM interface
+};
 
 void usb_init() {
   tinyusb_config_t tusb_cfg = TINYUSB_DEFAULT_CONFIG();
@@ -191,7 +217,8 @@ void usb_init() {
 
   xTaskCreatePinnedToCoreWithCaps(usb_task, "usb_task", 4096, NULL, 5, NULL, 1, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 
-  usb_callbacks_init();
+  comm_transport_register(COMM_TRANSPORT_USB, &s_usb_ops);
+  comm_transport_set_connected(COMM_TRANSPORT_USB, tud_mounted());
 
   ESP_LOGI(TAG, "USB initialized !");
 }

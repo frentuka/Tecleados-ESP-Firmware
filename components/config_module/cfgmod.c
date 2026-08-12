@@ -1,20 +1,22 @@
 #include "cfgmod.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 #include <stdio.h>
 #include <string.h>
 
-#include "cJSON.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "nvs.h"
 #include "nvs_flash.h"
-#include "usbmod.h"
-#include "usb_send.h"
+#include "comm_module.h"
+#include "comm_transport.h"
 
 #include "cfg_custom_keys.h"
 #include "cfg_macros.h"
 #include "cfg_combos.h"
 #include "cfg_layouts.h"
+#include "cfg_storage_keys.h"
 #include "event_bus.h"
 
 static inline void cfgmod_post_update_event(cfgmod_kind_t kind, const char *key) {
@@ -53,13 +55,13 @@ static const char *const s_kind_ns[CFGMOD_KIND_MAX] = {
 
 typedef struct {
   cfgmod_default_fn def_fn;
-  cfgmod_deserialize_fn des_fn;
-  cfgmod_serialize_fn ser_fn;
   cfgmod_on_update_fn update_fn;
   size_t struct_size;
   bool registered;
   cfgmod_get_fn get_fn;  // optional: overrides cfgmod_get_config in USB GET handler
   cfgmod_set_fn set_fn;  // optional: overrides cfgmod_set_config in USB SET handler
+  cfgmod_delete_fn delete_fn; // optional: generic DELETE override
+  cfgmod_validate_fn validate_fn; // optional: validates data before writing to NVS
 } cfgmod_registry_t;
 
 static cfgmod_registry_t s_registry[CFGMOD_KIND_MAX];
@@ -71,19 +73,27 @@ void cfgmod_register_get_set(cfgmod_kind_t kind, cfgmod_get_fn get_fn, cfgmod_se
   }
 }
 
+void cfgmod_register_delete(cfgmod_kind_t kind, cfgmod_delete_fn delete_fn) {
+  if (kind < CFGMOD_KIND_MAX) {
+    s_registry[kind].delete_fn = delete_fn;
+  }
+}
+
+void cfgmod_register_validate(cfgmod_kind_t kind, cfgmod_validate_fn validate_fn) {
+  if (kind < CFGMOD_KIND_MAX) {
+    s_registry[kind].validate_fn = validate_fn;
+  }
+}
+
 esp_err_t cfgmod_register_kind(cfgmod_kind_t kind, cfgmod_default_fn def_fn,
-                               cfgmod_deserialize_fn des_fn,
-                               cfgmod_serialize_fn ser_fn,
                                cfgmod_on_update_fn update_fn,
                                size_t struct_size) {
   if (kind >= CFGMOD_KIND_MAX)
     return ESP_ERR_INVALID_ARG;
-  if (!def_fn || !des_fn || !ser_fn || struct_size == 0)
+  if (!def_fn || struct_size == 0)
     return ESP_ERR_INVALID_ARG;
 
   s_registry[kind].def_fn = def_fn;
-  s_registry[kind].des_fn = des_fn;
-  s_registry[kind].ser_fn = ser_fn;
   s_registry[kind].update_fn = update_fn;
   s_registry[kind].struct_size = struct_size;
   s_registry[kind].registered = true;
@@ -102,485 +112,206 @@ typedef struct {
 static const cfgmod_key_map_t s_key_map[CFG_KEY_MAX] = {
    [CFG_KEY_TEST]    = { CFGMOD_KIND_SYSTEM, "test" },
    [CFG_KEY_HELLO]   = { CFGMOD_KIND_SYSTEM, "hello" },
-   [CFG_KEY_PHYSICAL_LAYOUT] = { CFGMOD_KIND_PHYSICAL, "physical" },
-   [CFG_KEY_LAYOUTS]       = { CFGMOD_KIND_LAYOUT, "layouts" },
-   [CFG_KEY_LAYOUT_SINGLE] = { CFGMOD_KIND_LAYOUT, "layouts" },
-   [CFG_KEY_LAYOUT_LIMITS] = { CFGMOD_KIND_LAYOUT, "layouts" },
-   [CFG_KEY_MACROS]  = { CFGMOD_KIND_MACRO, "macros" },
-   [CFG_KEY_MACRO_LIMITS] = { CFGMOD_KIND_MACRO, "macros" },
-   [CFG_KEY_MACRO_SINGLE] = { CFGMOD_KIND_MACRO, "macros" },
-   [CFG_KEY_CKEYS]        = { CFGMOD_KIND_CKEY, "ckeys" },
-   [CFG_KEY_CKEY_SINGLE]  = { CFGMOD_KIND_CKEY, "ckeys" },
+   [CFG_KEY_PHYSICAL_LAYOUT] = { CFGMOD_KIND_PHYSICAL, CFG_ST_PHYSICAL_LAYOUT },
+   [CFG_KEY_LAYOUTS]       = { CFGMOD_KIND_LAYOUT, CFG_ST_LAYER_IDX },
+   [CFG_KEY_LAYOUT_SINGLE] = { CFGMOD_KIND_LAYOUT, NULL },
+   [CFG_KEY_MACROS]  = { CFGMOD_KIND_MACRO, "mac_idx" },
+   [CFG_KEY_MACRO_SINGLE] = { CFGMOD_KIND_MACRO, NULL },
+   [CFG_KEY_CKEYS]        = { CFGMOD_KIND_CKEY, "ck_idx" },
+   [CFG_KEY_CKEY_SINGLE]  = { CFGMOD_KIND_CKEY, NULL },
    [CFG_KEY_SYSTEM]       = { CFGMOD_KIND_SYSTEM, "sys" },
-   [CFG_KEY_COMBOS]       = { CFGMOD_KIND_COMBO, "combos" },
-   [CFG_KEY_COMBO_SINGLE] = { CFGMOD_KIND_COMBO, "combos" },
-   [CFG_KEY_COMBO_LIMITS] = { CFGMOD_KIND_COMBO, "combos" },
+   [CFG_KEY_COMBOS]       = { CFGMOD_KIND_COMBO, "cmb_idx" },
+   [CFG_KEY_COMBO_SINGLE] = { CFGMOD_KIND_COMBO, NULL },
 };
 
-/*
- * Parse a cJSON object from a raw byte buffer.
- * Allocates a temporary null-terminated copy, parses it, then frees the copy.
- * The caller owns the returned cJSON tree and must call cJSON_Delete() on it.
- * Returns NULL on allocation failure or JSON parse error.
- */
-static cJSON *parse_json_from_bytes(const uint8_t *data, size_t data_len) {
-    char *tmp = malloc(data_len + 1);
-    if (!tmp) return NULL;
-    memcpy(tmp, data, data_len);
-    tmp[data_len] = '\0';
-    cJSON *root = cJSON_Parse(tmp);
-    free(tmp);
-    return root;
-}
-
-/*
- * Serialize `root` as unformatted JSON into out_payload[status_size..].
- * Always calls cJSON_Delete(root) — ownership is transferred.
- * Sets *out_status to ESP_OK or ESP_ERR_NO_MEM.
- * Sets *out_payload_len to (status_size + json_len) on success,
- * or status_size on failure.
- */
-static void write_json_response(cJSON *root,
-                                uint8_t *out_payload, size_t out_payload_max,
-                                size_t status_size,
-                                esp_err_t *out_status,
-                                size_t *out_payload_len) {
-    if (!root) {
-        *out_status = ESP_ERR_NOT_FOUND;
-        *out_payload_len = status_size;
-        return;
+static void update_active_mask(cfgmod_kind_t kind, uint16_t id, bool active) {
+    if (kind == CFGMOD_KIND_MACRO) {
+        if (id >= 64) return;
+        uint64_t mask = 0;
+        size_t len = sizeof(mask);
+        cfgmod_read_storage(kind, "mac_idx", &mask, &len);
+        if (active) mask |= (1ULL << id);
+        else mask &= ~(1ULL << id);
+        cfgmod_write_storage(kind, "mac_idx", &mask, sizeof(mask));
+    } else if (kind == CFGMOD_KIND_COMBO) {
+        if (id >= 32) return;
+        uint32_t mask = 0;
+        size_t len = sizeof(mask);
+        cfgmod_read_storage(kind, "cmb_idx", &mask, &len);
+        if (active) mask |= (1UL << id);
+        else mask &= ~(1UL << id);
+        cfgmod_write_storage(kind, "cmb_idx", &mask, sizeof(mask));
+    } else if (kind == CFGMOD_KIND_CKEY) {
+        if (id >= 120) return;
+        uint8_t mask[15] = {0};
+        size_t len = sizeof(mask);
+        cfgmod_read_storage(kind, "ck_idx", mask, &len);
+        if (active) mask[id / 8] |= (1 << (id % 8));
+        else mask[id / 8] &= ~(1 << (id % 8));
+        cfgmod_write_storage(kind, "ck_idx", mask, sizeof(mask));
     }
-    char *json_str = cJSON_PrintUnformatted(root);
-    cJSON_Delete(root);
-    if (!json_str) {
-        *out_status = ESP_ERR_NO_MEM;
-        *out_payload_len = status_size;
-        return;
-    }
-    size_t json_len = strlen(json_str) + 1;
-    if (json_len <= out_payload_max - status_size) {
-        memcpy(out_payload + status_size, json_str, json_len);
-        *out_payload_len = status_size + json_len;
-        *out_status = ESP_OK;
-    } else {
-        *out_status = ESP_ERR_NO_MEM;
-        *out_payload_len = status_size;
-    }
-    free(json_str);
 }
 
 esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
                                  size_t *out_len, size_t out_max) {
-  if (!data || !out || !out_len || out_max == 0) {
-    ESP_LOGE(TAG, "Wrong data");
-    return ESP_ERR_INVALID_ARG;
-  }
+  if (!data || !out || !out_len || out_max == 0) return ESP_ERR_INVALID_ARG;
   *out_len = 0;
 
-  if (len < sizeof(cfgmod_wire_header_t)) {
-    ESP_LOGE(TAG, "Invalid size (size < sizeof(cfgmod_wire_header_t))");
-    return ESP_ERR_INVALID_SIZE;
-  }
+  if (len < sizeof(cfgmod_req_header_t)) return ESP_ERR_INVALID_SIZE;
 
-  cfgmod_wire_header_t hdr;
+  cfgmod_req_header_t hdr;
   memcpy(&hdr, data, sizeof(hdr));
 
-  if (hdr.key_id >= CFG_KEY_MAX) {
-    ESP_LOGE(TAG, "Invalid Key ID: %d", hdr.key_id);
-    return ESP_ERR_INVALID_ARG;
+  if (hdr.key_id >= CFG_KEY_MAX) return ESP_ERR_INVALID_ARG;
+
+  // Handle LIMITS keys (required by configurator frontend)
+  if (hdr.cmd == CFG_CMD_GET) {
+      if (hdr.key_id == CFG_KEY_LAYOUT_LIMITS) {
+          uint8_t limit = 16; // CFG_LAYOUT_MAX_COUNT
+          cfgmod_rsp_header_t rsp = { .cmd = hdr.cmd, .key_id = hdr.key_id, .status = ESP_OK };
+          memcpy(out, &rsp, sizeof(rsp));
+          memcpy(out + sizeof(rsp), &limit, 1);
+          *out_len = sizeof(rsp) + 1;
+          return ESP_OK;
+      }
+      if (hdr.key_id == CFG_KEY_MACRO_LIMITS) {
+          uint16_t limits[2] = { 64, 256 }; // maxMacros, maxEvents
+          cfgmod_rsp_header_t rsp = { .cmd = hdr.cmd, .key_id = hdr.key_id, .status = ESP_OK };
+          memcpy(out, &rsp, sizeof(rsp));
+          memcpy(out + sizeof(rsp), limits, 4);
+          *out_len = sizeof(rsp) + 4;
+          return ESP_OK;
+      }
+      if (hdr.key_id == CFG_KEY_COMBO_LIMITS) {
+          uint16_t limits[2] = { 32, 8 }; // maxCombos, maxKeys
+          cfgmod_rsp_header_t rsp = { .cmd = hdr.cmd, .key_id = hdr.key_id, .status = ESP_OK };
+          memcpy(out, &rsp, sizeof(rsp));
+          memcpy(out + sizeof(rsp), limits, 4);
+          *out_len = sizeof(rsp) + 4;
+          return ESP_OK;
+      }
   }
 
   cfgmod_kind_t kind = s_key_map[hdr.key_id].kind;
-  const char *key = s_key_map[hdr.key_id].key_name;
+  const char *base_key = s_key_map[hdr.key_id].key_name;
+  
+  char dynamic_key[CFGMOD_MAX_KEY_LEN] = {0};
+  const char *target_key = base_key;
 
-  if (!key) {
-    ESP_LOGE(TAG, "Unmapped Key ID: %d", hdr.key_id);
-    return ESP_ERR_INVALID_ARG;
+  // Handle *_SINGLE commands which use dynamic keys based on item_id
+  if (!base_key) {
+      if (hdr.key_id == CFG_KEY_LAYOUT_SINGLE) snprintf(dynamic_key, sizeof(dynamic_key), CFG_ST_LAYER_FMT, hdr.item_id);
+      else if (hdr.key_id == CFG_KEY_MACRO_SINGLE) snprintf(dynamic_key, sizeof(dynamic_key), "mac_%u", hdr.item_id);
+      else if (hdr.key_id == CFG_KEY_CKEY_SINGLE) snprintf(dynamic_key, sizeof(dynamic_key), "ck_%u", hdr.item_id);
+      else if (hdr.key_id == CFG_KEY_COMBO_SINGLE) snprintf(dynamic_key, sizeof(dynamic_key), "cmb_%u", hdr.item_id);
+      else return ESP_ERR_INVALID_ARG;
+      target_key = dynamic_key;
   }
 
   const uint8_t *data_in = data + sizeof(hdr);
   size_t data_in_len = len - sizeof(hdr);
 
-  // Build response header
-  cfgmod_wire_header_t rsp = { .cmd = hdr.cmd, .key_id = hdr.key_id };
+  cfgmod_rsp_header_t rsp = { .cmd = hdr.cmd, .key_id = hdr.key_id, .status = ESP_OK };
+  if (out_max < sizeof(rsp)) return ESP_ERR_NO_MEM;
 
-  const size_t status_size = sizeof(esp_err_t);
-  if (out_max < sizeof(rsp) + status_size)
-    return ESP_ERR_NO_MEM;
-
-  esp_err_t status = ESP_OK;
   uint8_t *out_payload = out + sizeof(rsp);
   size_t out_payload_max = out_max - sizeof(rsp);
-  memset(out_payload, 0, out_payload_max);
   size_t actual_payload_len = 0;
 
-  // ---- Layout handlers ----
-  if (hdr.key_id == CFG_KEY_LAYOUTS && hdr.cmd == CFG_CMD_GET) {
-    write_json_response(layouts_serialize_outline(),
-                        out_payload, out_payload_max, status_size,
-                        &status, &actual_payload_len);
-
-  } else if (hdr.key_id == CFG_KEY_LAYOUTS && hdr.cmd == CFG_CMD_SET) {
-    cJSON *req = parse_json_from_bytes(data_in, data_in_len);
-    status = ESP_FAIL;
-    if (req) {
-      cJSON *order_arr = cJSON_GetObjectItem(req, "order");
-      if (cJSON_IsArray(order_arr)) {
-        int count = cJSON_GetArraySize(order_arr);
-        uint8_t *new_order = malloc(count);
-        if (new_order) {
-          for (int i = 0; i < count; i++) {
-            cJSON *item = cJSON_GetArrayItem(order_arr, i);
-            if (cJSON_IsNumber(item)) {
-                new_order[i] = (uint8_t)item->valueint;
-            } else {
-                new_order[i] = 0xFF;
-            }
+  if (hdr.cmd == CFG_CMD_GET) {
+      if (s_registry[kind].get_fn) {
+          rsp.status = s_registry[kind].get_fn(out_payload);
+          if (rsp.status == ESP_OK) actual_payload_len = s_registry[kind].struct_size;
+      } else {
+          size_t read_len = out_payload_max;
+          rsp.status = cfgmod_read_storage(kind, target_key, out_payload, &read_len);
+          if (rsp.status == ESP_OK) {
+              actual_payload_len = read_len;
+          } else if (rsp.status == ESP_ERR_NVS_NOT_FOUND || rsp.status == ESP_ERR_NOT_FOUND) {
+              if (hdr.key_id == CFG_KEY_MACROS) {
+                  memset(out_payload, 0, 8);
+                  actual_payload_len = 8;
+                  rsp.status = ESP_OK;
+              } else if (hdr.key_id == CFG_KEY_COMBOS) {
+                  memset(out_payload, 0, 4);
+                  actual_payload_len = 4;
+                  rsp.status = ESP_OK;
+              } else if (hdr.key_id == CFG_KEY_CKEYS) {
+                  memset(out_payload, 0, 15);
+                  actual_payload_len = 15;
+                  rsp.status = ESP_OK;
+              } else if (s_registry[kind].def_fn && s_registry[kind].struct_size <= out_payload_max) {
+                  s_registry[kind].def_fn(out_payload);
+                  actual_payload_len = s_registry[kind].struct_size;
+                  rsp.status = ESP_OK;
+              }
           }
-          status = cfg_layout_reorder(new_order, count);
-          free(new_order);
-        } else {
-          status = ESP_ERR_NO_MEM;
-        }
       }
-      cJSON_Delete(req);
-    }
-    actual_payload_len = 0;  } else if (hdr.key_id == CFG_KEY_LAYOUT_LIMITS && hdr.cmd == CFG_CMD_GET) {
-    write_json_response(layouts_serialize_limits(),
-                        out_payload, out_payload_max, status_size,
-                        &status, &actual_payload_len);
-
-  } else if (hdr.key_id == CFG_KEY_LAYOUT_SINGLE && hdr.cmd == CFG_CMD_GET) {
-    cJSON *req = parse_json_from_bytes(data_in, data_in_len);
-    uint8_t requested_id = 0xFF;
-    if (req) {
-      cJSON *id_item = cJSON_GetObjectItem(req, "id");
-      if (cJSON_IsNumber(id_item)) requested_id = (uint8_t)id_item->valueint;
-      cJSON_Delete(req);
-    }
-    if (requested_id != 0xFF) {
-      write_json_response(layouts_serialize_single(requested_id),
-                          out_payload, out_payload_max, status_size,
-                          &status, &actual_payload_len);
-    } else {
-      status = ESP_ERR_INVALID_ARG;
-      actual_payload_len = status_size;
-    }
-
-  } else if (hdr.key_id == CFG_KEY_LAYOUT_SINGLE && hdr.cmd == CFG_CMD_SET) {
-    cJSON *root = parse_json_from_bytes(data_in, data_in_len);
-    if (root) {
-        cJSON *create_item = cJSON_GetObjectItem(root, "create");
-        cJSON *delete_item = cJSON_GetObjectItem(root, "delete");
-        cJSON *rename_item = cJSON_GetObjectItem(root, "rename");
-        cJSON *keys_item   = cJSON_GetObjectItem(root, "keys");
-        cJSON *id_item     = cJSON_GetObjectItem(root, "id");
-        
-        if (create_item && cJSON_IsString(create_item)) {
-            uint8_t new_id;
-            status = cfg_layout_create(create_item->valuestring, &new_id);
-            if (status == ESP_OK) {
-                cJSON *resp = cJSON_CreateObject();
-                cJSON_AddNumberToObject(resp, "id", new_id);
-                write_json_response(resp, out_payload, out_payload_max, status_size, &status, &actual_payload_len);
-            } else {
-                actual_payload_len = status_size;
-            }
-        } else if (delete_item && cJSON_IsNumber(delete_item)) {
-            status = cfg_layout_delete((uint8_t)delete_item->valueint);
-            actual_payload_len = status_size;
-        } else if (id_item && cJSON_IsNumber(id_item)) {
-            uint8_t id = (uint8_t)id_item->valueint;
-            if (rename_item && cJSON_IsString(rename_item)) {
-                status = cfg_layout_rename(id, rename_item->valuestring);
-                actual_payload_len = status_size;
-            } else if (keys_item && cJSON_IsArray(keys_item)) {
-                cfg_layer_t layer;
-                memset(&layer, 0, sizeof(layer));
-                int r = 0;
-                cJSON *row;
-                cJSON_ArrayForEach(row, keys_item) {
-                    if (r < KB_MATRIX_ROW_COUNT && cJSON_IsArray(row)) {
-                        int c = 0;
-                        cJSON *col;
-                        cJSON_ArrayForEach(col, row) {
-                            if (c < KB_MATRIX_COL_COUNT && cJSON_IsNumber(col)) {
-                                layer.keys[r][c] = (uint16_t)col->valueint;
-                            }
-                            c++;
-                        }
-                    }
-                    r++;
-                }
-                status = cfg_layout_set_layer(id, &layer);
-                actual_payload_len = status_size;
-            } else {
-                status = ESP_ERR_INVALID_ARG;
-                actual_payload_len = status_size;
-            }
-        } else {
-            status = ESP_ERR_INVALID_ARG;
-            actual_payload_len = status_size;
-        }
-        cJSON_Delete(root);
-    } else {
-        status = ESP_ERR_INVALID_ARG;
-        actual_payload_len = status_size;
-    }
-
-  // ---- Macro handlers ----
-  } else if (hdr.key_id == CFG_KEY_MACRO_LIMITS && hdr.cmd == CFG_CMD_GET) {
-    write_json_response(macros_serialize_limits(),
-                        out_payload, out_payload_max, status_size,
-                        &status, &actual_payload_len);
-
-  } else if (hdr.key_id == CFG_KEY_MACRO_SINGLE && hdr.cmd == CFG_CMD_SET) {
-    cJSON *root = parse_json_from_bytes(data_in, data_in_len);
-    if (root) {
-      cfg_macro_index_t idx = {0};
-      size_t idx_len = sizeof(idx);
-      cfgmod_read_storage(CFGMOD_KIND_MACRO, "mac_idx", &idx, &idx_len);
-
-      cJSON *del = cJSON_GetObjectItem(root, "delete");
-      status = cJSON_IsNumber(del)
-               ? macros_delete_single((uint16_t)del->valueint, &idx)
-               : macros_upsert_single(root, &idx);
-
-      if (status != ESP_OK) {
-        ESP_LOGE(TAG, "NVS write failed for macro: 0x%X", (unsigned)status);
-      } else {
-        if (s_registry[CFGMOD_KIND_MACRO].update_fn) {
-          s_registry[CFGMOD_KIND_MACRO].update_fn("macros");
-        }
-        cfgmod_post_update_event(CFGMOD_KIND_MACRO, "macros");
-      }
-      cJSON_Delete(root);
-    } else {
-      status = ESP_ERR_INVALID_ARG;
-    }
-    actual_payload_len = status_size;
-
-  } else if (hdr.key_id == CFG_KEY_MACRO_SINGLE && hdr.cmd == CFG_CMD_GET) {
-    cJSON *req = parse_json_from_bytes(data_in, data_in_len);
-    uint16_t requested_id = 0xFFFF;
-    if (req) {
-      cJSON *id_item = cJSON_GetObjectItem(req, "id");
-      if (cJSON_IsNumber(id_item)) requested_id = (uint16_t)id_item->valueint;
-      cJSON_Delete(req);
-    }
-    if (requested_id != 0xFFFF) {
-      cfg_macro_index_t idx = {0};
-      size_t idx_len = sizeof(idx);
-      cfgmod_read_storage(CFGMOD_KIND_MACRO, "mac_idx", &idx, &idx_len);
-      write_json_response(macros_serialize_single(requested_id, &idx),
-                          out_payload, out_payload_max, status_size,
-                          &status, &actual_payload_len);
-    } else {
-      status = ESP_ERR_INVALID_ARG;
-      actual_payload_len = status_size;
-    }
-
-  } else if (hdr.key_id == CFG_KEY_MACROS && hdr.cmd == CFG_CMD_GET) {
-    cfg_macro_index_t idx = {0};
-    size_t idx_len = sizeof(idx);
-    cfgmod_read_storage(CFGMOD_KIND_MACRO, "mac_idx", &idx, &idx_len);
-    write_json_response(macros_serialize_outline(&idx),
-                        out_payload, out_payload_max, status_size,
-                        &status, &actual_payload_len);
-
-  // ---- Custom Key handlers ----
-  } else if (hdr.key_id == CFG_KEY_CKEYS && hdr.cmd == CFG_CMD_GET) {
-    cfg_ckey_index_t ck_idx = {0};
-    size_t ck_idx_len = sizeof(ck_idx);
-    cfgmod_read_storage(CFGMOD_KIND_CKEY, "ck_idx", &ck_idx, &ck_idx_len);
-    write_json_response(ckeys_serialize_outline(&ck_idx),
-                        out_payload, out_payload_max, status_size,
-                        &status, &actual_payload_len);
-
-  } else if (hdr.key_id == CFG_KEY_CKEY_SINGLE && hdr.cmd == CFG_CMD_GET) {
-    cJSON *req = parse_json_from_bytes(data_in, data_in_len);
-    uint16_t requested_id = 0xFFFF;
-    if (req) {
-      cJSON *id_item = cJSON_GetObjectItem(req, "id");
-      if (cJSON_IsNumber(id_item)) requested_id = (uint16_t)id_item->valueint;
-      cJSON_Delete(req);
-    }
-    if (requested_id != 0xFFFF) {
-      cfg_ckey_index_t ck_idx = {0};
-      size_t ck_idx_len = sizeof(ck_idx);
-      cfgmod_read_storage(CFGMOD_KIND_CKEY, "ck_idx", &ck_idx, &ck_idx_len);
-      write_json_response(ckeys_serialize_single(requested_id, &ck_idx),
-                          out_payload, out_payload_max, status_size,
-                          &status, &actual_payload_len);
-    } else {
-      status = ESP_ERR_INVALID_ARG;
-      actual_payload_len = status_size;
-    }
-
-  } else if (hdr.key_id == CFG_KEY_CKEY_SINGLE && hdr.cmd == CFG_CMD_SET) {
-    cJSON *root = parse_json_from_bytes(data_in, data_in_len);
-    if (root) {
-      cfg_ckey_index_t ck_idx = {0};
-      size_t ck_idx_len = sizeof(ck_idx);
-      cfgmod_read_storage(CFGMOD_KIND_CKEY, "ck_idx", &ck_idx, &ck_idx_len);
-
-      cJSON *del = cJSON_GetObjectItem(root, "delete");
-      status = cJSON_IsNumber(del)
-               ? ckeys_delete_single((uint16_t)del->valueint, &ck_idx)
-               : ckeys_upsert_single(root, &ck_idx);
-
-      if (status != ESP_OK) {
-        ESP_LOGE(TAG, "Custom key NVS write failed: 0x%X", (unsigned)status);
-      } else {
-        if (s_registry[CFGMOD_KIND_CKEY].update_fn) {
-          s_registry[CFGMOD_KIND_CKEY].update_fn("ckeys");
-        }
-        cfgmod_post_update_event(CFGMOD_KIND_CKEY, "ckeys");
-      }
-      cJSON_Delete(root);
-    } else {
-      status = ESP_ERR_INVALID_ARG;
-    }
-    actual_payload_len = status_size;
-
-  // ---- Combo handlers ----
-  } else if (hdr.key_id == CFG_KEY_COMBO_LIMITS && hdr.cmd == CFG_CMD_GET) {
-    write_json_response(combos_serialize_limits(),
-                        out_payload, out_payload_max, status_size,
-                        &status, &actual_payload_len);
-
-  } else if (hdr.key_id == CFG_KEY_COMBOS && hdr.cmd == CFG_CMD_GET) {
-    cfg_combo_index_t cmb_idx = {0};
-    size_t cmb_idx_len = sizeof(cmb_idx);
-    cfgmod_read_storage(CFGMOD_KIND_COMBO, "cmb_idx", &cmb_idx, &cmb_idx_len);
-    write_json_response(combos_serialize_outline(&cmb_idx),
-                        out_payload, out_payload_max, status_size,
-                        &status, &actual_payload_len);
-
-  } else if (hdr.key_id == CFG_KEY_COMBO_SINGLE && hdr.cmd == CFG_CMD_GET) {
-    cJSON *req = parse_json_from_bytes(data_in, data_in_len);
-    uint16_t requested_id = 0xFFFF;
-    if (req) {
-      cJSON *id_item = cJSON_GetObjectItem(req, "id");
-      if (cJSON_IsNumber(id_item)) requested_id = (uint16_t)id_item->valueint;
-      cJSON_Delete(req);
-    }
-    if (requested_id != 0xFFFF) {
-      cfg_combo_index_t cmb_idx = {0};
-      size_t cmb_idx_len = sizeof(cmb_idx);
-      cfgmod_read_storage(CFGMOD_KIND_COMBO, "cmb_idx", &cmb_idx, &cmb_idx_len);
-      write_json_response(combos_serialize_single(requested_id, &cmb_idx),
-                          out_payload, out_payload_max, status_size,
-                          &status, &actual_payload_len);
-    } else {
-      status = ESP_ERR_INVALID_ARG;
-      actual_payload_len = status_size;
-    }
-
-  } else if (hdr.key_id == CFG_KEY_COMBO_SINGLE && hdr.cmd == CFG_CMD_SET) {
-    cJSON *root = parse_json_from_bytes(data_in, data_in_len);
-    if (root) {
-      cfg_combo_index_t cmb_idx = {0};
-      size_t cmb_idx_len = sizeof(cmb_idx);
-      cfgmod_read_storage(CFGMOD_KIND_COMBO, "cmb_idx", &cmb_idx, &cmb_idx_len);
-
-      cJSON *del = cJSON_GetObjectItem(root, "delete");
-      status = cJSON_IsNumber(del)
-               ? combos_delete_single((uint16_t)del->valueint, &cmb_idx)
-               : combos_upsert_single(root, &cmb_idx);
-
-      if (status != ESP_OK) {
-        ESP_LOGE(TAG, "Combo NVS write failed: 0x%X", (unsigned)status);
-      } else {
-        if (s_registry[CFGMOD_KIND_COMBO].update_fn) {
-          s_registry[CFGMOD_KIND_COMBO].update_fn("combos");
-        }
-        cfgmod_post_update_event(CFGMOD_KIND_COMBO, "combos");
-      }
-      cJSON_Delete(root);
-    } else {
-      status = ESP_ERR_INVALID_ARG;
-    }
-    actual_payload_len = status_size;
-
-  // ---- Generic GET/SET handlers ----
-  } else if (hdr.cmd == CFG_CMD_GET) {
-    ESP_LOGI(TAG, "Received GET message for %s (kind=%d, key_id=%d)", key, kind, (int)hdr.key_id);
-
-    if (kind < CFGMOD_KIND_MAX && s_registry[kind].registered) {
-      void *temp_struct = malloc(s_registry[kind].struct_size);
-      if (temp_struct) {
-        // Use custom get_fn if available (e.g. cfg_system applies sys_id overlay)
-        if (s_registry[kind].get_fn) {
-          s_registry[kind].get_fn(temp_struct);
-        } else {
-          cfgmod_get_config(kind, key, temp_struct);
-        }
-        cJSON *root = s_registry[kind].ser_fn(temp_struct);
-        free(temp_struct);
-        write_json_response(root,
-                            out_payload, out_payload_max, status_size,
-                            &status, &actual_payload_len);
-      } else {
-        status = ESP_ERR_NO_MEM;
-        actual_payload_len = status_size;
-      }
-    } else {
-      size_t read_len = out_payload_max - status_size;
-      status = cfgmod_read_storage(kind, key, out_payload + status_size, &read_len);
-      actual_payload_len = (status == ESP_OK) ? status_size + read_len : status_size;
-    }
-
   } else if (hdr.cmd == CFG_CMD_SET) {
-    ESP_LOGI(TAG, "Received SET message for %s (kind=%d, key_id=%d, len=%d)", key, kind, (int)hdr.key_id, (int)data_in_len);
-
-    cJSON *root = parse_json_from_bytes(data_in, data_in_len);
-    if (root) {
-      if (kind < CFGMOD_KIND_MAX && s_registry[kind].registered) {
-        void *temp_struct = malloc(s_registry[kind].struct_size);
-        if (temp_struct) {
-          // Load existing config first to support partial JSON updates.
-          // Use custom get_fn if available so the base includes per-device
-          // post-processing (e.g. sys_id overlay for system config).
-          if (s_registry[kind].get_fn) {
-            s_registry[kind].get_fn(temp_struct);
-          } else {
-            cfgmod_get_config(kind, key, temp_struct);
+      // Intercept layout commands that don't match the default size (create, rename, delete)
+      if (hdr.key_id == CFG_KEY_LAYOUT_SINGLE) {
+          if (hdr.item_id == 0xFFFF) {
+              // Create layout: data_in contains up to 24 chars of name
+              uint8_t out_id = 0;
+              rsp.status = cfg_layout_create((const char *)data_in, &out_id);
+              if (rsp.status == ESP_OK) {
+                  uint16_t id16 = out_id;
+                  memcpy(out_payload, &id16, sizeof(id16));
+                  actual_payload_len = sizeof(id16);
+              }
+              goto end_set;
+          } else if (hdr.item_id & 0x8000) {
+              // Rename layout: item_id & ~0x8000 is the real id
+              uint16_t id = hdr.item_id & ~0x8000;
+              rsp.status = cfg_layout_rename((uint8_t)id, (const char *)data_in);
+              goto end_set;
+          } else if (data_in_len == 0) {
+              // Delete layout
+              rsp.status = cfg_layout_delete((uint8_t)hdr.item_id);
+              goto end_set;
           }
-          status = s_registry[kind].des_fn(root, temp_struct)
-                   ? (s_registry[kind].set_fn
-                      ? s_registry[kind].set_fn(temp_struct)
-                      : cfgmod_set_config(kind, key, temp_struct))
-                   : ESP_ERR_INVALID_ARG;
-          free(temp_struct);
-        } else {
-          status = ESP_ERR_NO_MEM;
-        }
-      } else {
-        // Fallback for non-registered kinds (raw JSON string write)
-        char *json_str = cJSON_PrintUnformatted(root);
-        if (json_str) {
-          status = cfgmod_write_storage(kind, key, json_str, strlen(json_str) + 1);
-          free(json_str);
-        } else {
-          status = ESP_ERR_NO_MEM;
-        }
       }
-      cJSON_Delete(root);
-    } else {
-      status = ESP_ERR_INVALID_ARG;
-    }
-    actual_payload_len = status_size;
 
+      if (data_in_len == 0 && !base_key) {
+          // 0-length payload for *_SINGLE means DELETE
+          if (s_registry[kind].delete_fn) {
+              rsp.status = s_registry[kind].delete_fn(hdr.item_id);
+          } else {
+              rsp.status = cfgmod_delete_storage(kind, target_key);
+          }
+          if (rsp.status == ESP_OK) {
+              update_active_mask(kind, hdr.item_id, false);
+              if (s_registry[kind].update_fn) {
+                  s_registry[kind].update_fn(target_key);
+              }
+          }
+      } else {
+          if (s_registry[kind].registered && s_registry[kind].struct_size != data_in_len && kind != CFGMOD_KIND_PHYSICAL) {
+              ESP_LOGE(TAG, "Size mismatch for SET %s: expected %u, got %u", target_key, s_registry[kind].struct_size, data_in_len);
+              rsp.status = ESP_ERR_INVALID_SIZE;
+          } else {
+              if (s_registry[kind].validate_fn) {
+                  rsp.status = s_registry[kind].validate_fn((void*)data_in);
+              }
+              if (rsp.status == ESP_OK) {
+                  if (s_registry[kind].set_fn) {
+                      rsp.status = s_registry[kind].set_fn(data_in);
+                  } else {
+                      rsp.status = cfgmod_write_storage(kind, target_key, data_in, data_in_len);
+                      if (rsp.status == ESP_OK && !base_key) {
+                          update_active_mask(kind, hdr.item_id, true);
+                      }
+                  }
+              }
+          }
+      }
+end_set:;
   } else {
-    status = ESP_ERR_INVALID_ARG;
-    actual_payload_len = status_size;
+      rsp.status = ESP_ERR_INVALID_ARG;
   }
 
-  memcpy(out_payload, &status, status_size);
   memcpy(out, &rsp, sizeof(rsp));
   *out_len = sizeof(rsp) + actual_payload_len;
-
   return ESP_OK;
 }
 
@@ -633,49 +364,33 @@ static esp_err_t resolve_ns_and_key(cfgmod_kind_t kind, const char *key,
 static bool s_init = false;
 bool cfg_is_init(void) { return s_init; }
 
-#define CFG_USB_RESP_BUF_SIZE 32000
+#define CFG_USB_RESP_BUF_SIZE 10240
 
-bool cfg_usb_callback(uint8_t *data, uint16_t data_len) {
-    size_t buf_size = CFG_USB_RESP_BUF_SIZE;
-    uint8_t *out_buf = heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!out_buf) out_buf = malloc(buf_size); // fallback to internal RAM
-    if (!out_buf) {
-        ESP_LOGE(TAG, "cfg_usb_callback failed to allocate memory");
+static uint8_t s_cfg_resp_buf[CFG_USB_RESP_BUF_SIZE] __attribute__((aligned(8)));
+static SemaphoreHandle_t s_cfg_resp_mutex = NULL;
+
+bool cfg_usb_callback(comm_transport_t source, uint8_t *data, uint16_t data_len) {
+    if (!s_cfg_resp_mutex || xSemaphoreTake(s_cfg_resp_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        ESP_LOGE(TAG, "cfg_usb_callback failed to acquire mutex");
         return false;
     }
     
     size_t out_len = 0;
-    
-    // Add module ID back as the first byte of response so the web UI knows it's from Config
-    out_buf[0] = MODULE_CONFIG;
-    
-    esp_err_t err = cfgmod_handle_usb_comm(data, data_len, out_buf + 1, &out_len, buf_size - 1);
+    esp_err_t err = cfgmod_handle_usb_comm(data, data_len, s_cfg_resp_buf, &out_len, CFG_USB_RESP_BUF_SIZE);
     
     if (err == ESP_OK && out_len > 0) {
-        send_payload(out_buf, out_len + 1);
+        comm_send_message(source, MODULE_CONFIG, s_cfg_resp_buf, out_len);
     }
     
-    free(out_buf);
+    xSemaphoreGive(s_cfg_resp_mutex);
     return err == ESP_OK;
-}
-
-static void* spiram_cjson_malloc(size_t size) {
-    void* ptr = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!ptr) ptr = malloc(size);
-    return ptr;
-}
-
-static void spiram_cjson_free(void* ptr) {
-    free(ptr);
 }
 
 // Initialize NVS for cfg storage use.
 esp_err_t cfg_init(void) {
-  // Use PSRAM for cJSON to prevent large config ASTs from exhausting internal memory
-  cJSON_Hooks hooks;
-  hooks.malloc_fn = spiram_cjson_malloc;
-  hooks.free_fn = spiram_cjson_free;
-  cJSON_InitHooks(&hooks);
+  if (!s_cfg_resp_mutex) {
+      s_cfg_resp_mutex = xSemaphoreCreateMutex();
+  }
 
   esp_err_t err = nvs_flash_init();
   if (err == ESP_ERR_NVS_NO_FREE_PAGES ||
@@ -698,8 +413,8 @@ esp_err_t cfg_init(void) {
     cfg_physical_register();
     cfg_ble_init();
 
-    // Register USB callback for the CONFIG MODULE
-    usbmod_register_callback(MODULE_CONFIG, cfg_usb_callback);
+    // Register comm callback for the CONFIG MODULE
+    comm_register_module(MODULE_CONFIG, cfg_usb_callback);
   }
 
   return err;
@@ -797,7 +512,7 @@ esp_err_t cfgmod_write_storage(cfgmod_kind_t kind, const char *key,
   return err;
 }
 
-// Fetch a config struct from storage (applies defaults then tries NVS binary/JSON)
+// Fetch a config struct from storage (applies defaults then tries NVS binary)
 esp_err_t cfgmod_get_config(cfgmod_kind_t kind, const char *key,
                             void *out_struct) {
   if (kind >= CFGMOD_KIND_MAX || !s_registry[kind].registered || !out_struct) {
@@ -826,43 +541,18 @@ esp_err_t cfgmod_get_config(cfgmod_kind_t kind, const char *key,
     return ESP_OK; // fallback to default
   }
 
-  // Attempt binary load first (if size matches exactly)
+  // Pure binary load
   if (required_size == s_registry[kind].struct_size) {
     if (nvs_get_blob(handle, nvs_key, out_struct, &required_size) == ESP_OK) {
       ESP_LOGI(TAG, "NVS get_blob %s (len=%u) binary load successful", nvs_key, (unsigned)required_size);
       nvs_close(handle);
       return ESP_OK;
     }
+  } else {
+    ESP_LOGE(TAG, "NVS get_blob %s: size mismatch (expected %u, got %u). Returning defaults.", 
+             nvs_key, s_registry[kind].struct_size, (unsigned)required_size);
   }
 
-  // Legacy JSON fallback
-  char *json_str = malloc(required_size + 1);
-  if (!json_str) {
-    nvs_close(handle);
-    return ESP_ERR_NO_MEM;
-  }
-
-  if (nvs_get_blob(handle, nvs_key, json_str, &required_size) == ESP_OK) {
-    json_str[required_size] = '\0'; // Ensure null-termination
-    ESP_LOGI(TAG, "NVS get_blob %s (len=%u) legacy JSON load", nvs_key, (unsigned)required_size);
-    cJSON *root = cJSON_Parse(json_str);
-    if (root) {
-      if (!s_registry[kind].des_fn(root, out_struct)) {
-        ESP_LOGE(TAG,
-                 "Failed to deserialize JSON for config %s, using defaults",
-                 nvs_key);
-        s_registry[kind].def_fn(
-            out_struct); // Reset to defaults on deserialization failure
-      }
-      cJSON_Delete(root);
-    } else {
-      ESP_LOGE(TAG, "Failed to parse JSON for config %s, using defaults",
-               nvs_key);
-      s_registry[kind].def_fn(out_struct); // Reset to defaults on parse failure
-    }
-  }
-
-  free(json_str);
   nvs_close(handle);
   return ESP_OK;
 }

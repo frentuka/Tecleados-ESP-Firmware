@@ -21,7 +21,7 @@ import KeyActionPopover from './components/KeyActionPopover';
 import type { Macro } from './types/macros';
 import { parseKleJson } from './utils/kleParser';
 import { parsePhysicalLayoutJson, serializePhysicalLayout } from './utils/layoutUtils';
-import { saveJsonFile } from './utils/fileUtils';
+
 import { useNotificationStore } from './stores/notificationStore';
 import { useLayoutStore } from './stores/layoutStore';
 import { withTimeout, TimeoutError } from './utils/withTimeout';
@@ -123,7 +123,7 @@ function SortableLayoutTab({ id, meta, isActive, hasChanges, onDelete, onSelect 
             {...attributes}
             {...listeners}
             className={`layout-tab-pill ${isActive ? 'layout-tab-pill-active' : ''} ${hasChanges ? 'layout-tab-pill-changed' : ''}`}
-            onClick={(e) => {
+            onClick={() => {
                 if (isDragging) return;
                 onSelect();
             }}
@@ -307,61 +307,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
         }
     }, [selectedKeys, isRowColEditMode, physicalLayout]);
 
-    // ── Export/Import ──
-    const exportLayout = async () => {
-        const data: any = {
-            version: 1,
-            matrixRows: MATRIX_ROWS,
-            matrixCols: MATRIX_COLS,
-            layers: Object.values(layerDataCache),
-            timestamp: new Date().toISOString()
-        };
 
-        if (isDeveloperMode) {
-            data.physicalLayout = physicalLayout || DEFAULT_PHYSICAL_LAYOUT;
-        }
-
-        const fileName = `${hidService.getDeviceName()}_${new Date().toISOString().slice(0, 10)}.json`;
-        const jsonContent = JSON.stringify(data, null, 2);
-
-        await saveJsonFile(jsonContent, fileName);
-        onLogRef.current('Layout exported to JSON');
-        showNotification('Layout exported to JSON', 'success');
-    };
-
-    const handleImportClick = () => {
-        fileInputRef.current?.click();
-    };
-
-    const importLayout = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-
-        const reader = new FileReader();
-        reader.onload = (event) => {
-            try {
-                const data = JSON.parse(event.target?.result as string);
-                if (data.physicalLayout && isDeveloperMode) {
-                    setPhysicalLayout(data.physicalLayout);
-                    setPhysLayoutStatus('loaded');
-                    setHasPhysLayoutChanges(true); // Mark as changed so user can save to device
-                }
-                if (data.layers && Array.isArray(data.layers)) {
-                    showNotification('Importing layers is not fully supported in the new layout system yet.', 'warning');
-                }
-                const msg = 'Layout imported from JSON. Remember to save layout and layers to device.';
-                onLogRef.current(msg);
-                showNotification(msg, 'warning');
-            } catch (err) {
-                onLogRef.current('Failed to parse layout JSON');
-                showNotification('Failed to parse layout JSON', 'error');
-                console.error(err);
-            }
-        };
-        reader.readAsText(file);
-        // Reset input
-        e.target.value = '';
-    };
 
     // ── Key Test Mode Cleanup ──
     const exitKeyTestMode = useCallback(async () => {
@@ -528,57 +474,104 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
     // Wire format: [MODULE_CONFIG, cmd, keyId, ...data]
     // No payload_len field — the transport layer provides total length
     const buildConfigPayload = (cmd: number, keyId: number, data?: Uint8Array): Uint8Array => {
-        const headerLen = 2; // cmd + keyId (no payload_len — transport provides length)
         const dataLen = data ? data.length : 0;
-        const buf = new Uint8Array(1 + headerLen + dataLen);
+        const buf = new Uint8Array(8 + dataLen);
         buf[0] = MODULE_CONFIG;
         buf[1] = cmd;
         buf[2] = keyId;
-        if (data) buf.set(data, 3);
+        buf[3] = 0; // item_id LSB
+        buf[4] = 0; // item_id MSB
+        buf[5] = 0; // reserved
+        buf[6] = 0; // reserved
+        buf[7] = 0; // reserved
+        if (data) buf.set(data, 8);
         return buf;
     };
 
     const fetchLayouts = useCallback(async () => {
-        const metas = await hidService.fetchLayouts();
+        const layoutData = await hidService.fetchLayouts();
+        if (!layoutData) return;
+        const validOrder = layoutData.order.slice(0, layoutData.count);
+        const metas = validOrder.map((id, idx) => ({ id, name: (layoutData as any).names?.[idx] || `Layer ${id}` }));
         setLayoutMetas(metas);
 
-        if (metas.length > 0 && !metas.some((m: any) => m.id === activeLayerId)) {
+        if (metas.length > 0 && !metas.some(m => m.id === activeLayerId)) {
             setActiveLayerId(metas[0].id);
         }
 
-        const newCache: Record<number, any> = {};
-        const newStatus: Record<number, 'idle' | 'loading' | 'loaded' | 'error'> = {};
         const newChanges: Record<number, boolean> = {};
-
         for (const meta of metas) {
-            newStatus[meta.id] = 'loading';
-            setLayerStatus(prev => ({ ...prev, [meta.id]: 'loading' }));
-            
-            const layoutData = await hidService.fetchLayoutSingle(meta.id);
-            if (layoutData) {
-                newCache[meta.id] = layoutData.keys;
-                newStatus[meta.id] = 'loaded';
-                onLogRef.current(`Layout ${meta.id} loaded (${meta.name})`);
-            } else {
-                newStatus[meta.id] = 'error';
-                onLogRef.current(`Failed to load layout ${meta.id} (${meta.name})`);
-            }
             newChanges[meta.id] = false;
         }
-
-        setLayerDataCache(newCache);
-        setLayerStatus(prev => ({ ...prev, ...newStatus }));
         setHasChanges(prev => ({ ...prev, ...newChanges }));
 
+        if (metas.length > 0) {
+            const first = metas[0];
+            setLayerStatus(prev => ({ ...prev, [first.id]: 'loading' }));
+            const layoutData = await hidService.fetchLayoutSingle(first.id);
+            if (layoutData) {
+                setLayerDataCache(prev => ({ ...prev, [first.id]: layoutData.keys }));
+                setLayerStatus(prev => ({ ...prev, [first.id]: 'loaded' }));
+                onLogRef.current(`Layout ${first.id} loaded (${first.name})`);
+            } else {
+                setLayerStatus(prev => ({ ...prev, [first.id]: 'error' }));
+            }
+        }
+
+        if (metas.length > 1) {
+            (async () => {
+                for (let i = 1; i < metas.length; i++) {
+                    const meta = metas[i];
+                    setLayerStatus(prev => ({ ...prev, [meta.id]: 'loading' }));
+                    const layoutData = await hidService.fetchLayoutSingle(meta.id);
+                    if (layoutData) {
+                        setLayerDataCache(prev => ({ ...prev, [meta.id]: layoutData.keys }));
+                        setLayerStatus(prev => ({ ...prev, [meta.id]: 'loaded' }));
+                        onLogRef.current(`Layout ${meta.id} loaded (${meta.name})`);
+                    } else {
+                        setLayerStatus(prev => ({ ...prev, [meta.id]: 'error' }));
+                        onLogRef.current(`Failed to load layout ${meta.id} (${meta.name})`);
+                    }
+                }
+            })();
+        }
     }, [activeLayerId, setActiveLayerId, setLayoutMetas, setLayerDataCache]);
 
-    // ── Fetch physical layout + all layers sequentially on connect ──
+    // ── Fetch physical layout ──
     const fetchPhysicalLayout = useCallback(async () => {
+        let macRaw = "";
+        try {
+            const identity = await hidService.fetchDeviceIdentity();
+            if (identity && identity.ble_shared_addr) {
+                macRaw = identity.ble_shared_addr.replace(/:/g, '');
+            }
+        } catch (e) {
+            console.warn("Failed to fetch device identity for cache key", e);
+        }
+        const cacheKey = `tecleados_phys_${macRaw || hidService.getDeviceName()}`;
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) {
+            try {
+                const parsed = parsePhysicalLayoutJson(cached);
+                if (parsed) {
+                    setPhysicalLayout(parsed);
+                    setPhysLayoutStatus('loaded');
+                    onLogRef.current('Physical layout loaded from cache');
+                    return true;
+                }
+            } catch (e) {
+                console.error("Failed to parse cached physical layout", e);
+            }
+        }
+
         const plPayload = buildConfigPayload(CFG_CMD_GET, CFG_KEY_PHYSICAL_LAYOUT);
         const plResp = await hidService.sendCommand(plPayload);
-        if (plResp && plResp.status === 0 && plResp.jsonText.trim().length > 0) {
-            const parsed = parsePhysicalLayoutJson(plResp.jsonText);
+        if (plResp && plResp.status === 0 && plResp.data.length > 0) {
+            let jsonText = new TextDecoder().decode(plResp.data);
+            jsonText = jsonText.replace(/\0/g, '');
+            const parsed = parsePhysicalLayoutJson(jsonText);
             if (parsed) {
+                localStorage.setItem(cacheKey, jsonText);
                 setPhysicalLayout(parsed);
                 setPhysLayoutStatus('loaded');
                 onLogRef.current('Physical layout loaded from device');
@@ -883,18 +876,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                 </svg>
                                 Duplicate layout
                             </button>
-                            <button className="dropdown-item" onClick={() => { exportLayout(); setIsMenuOpen(false); }}>
-                                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-                                    <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
-                                </svg>
-                                Export layout
-                            </button>
-                            <button className="dropdown-item" onClick={() => { handleImportClick(); setIsMenuOpen(false); }}>
-                                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-                                    <path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z" />
-                                </svg>
-                                Import layout
-                            </button>
+
                             <div className="dropdown-divider" />
                             <button className="dropdown-item dropdown-item-danger" onClick={() => {
                                 setLayerDataCache(prev => {
@@ -966,7 +948,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                 try {
                                     const resp = await withTimeout(hidService.sendCommand(payload), 7000);
                                     const r = resp as any;
-                                    console.log('[LayoutEditor] KLE Apply SET response:', r ? { status: r.status, statusHex: '0x' + r.status.toString(16), cmd: r.cmd, keyId: r.keyId, jsonLen: r.jsonText.length } : 'NULL (timeout)');
+                                    console.log('[LayoutEditor] KLE Apply SET response:', r ? { status: r.status, statusHex: '0x' + r.status.toString(16), cmd: r.cmd, keyId: r.keyId, dataLen: r.data?.length } : 'NULL (timeout)');
 
                                     if (r && r.status === 0) {
                                         onLogRef.current(`KLE layout saved to device: ${parsed.length} rows, ${parsed.reduce((s, r) => s + r.length, 0)} keys (${jsonBytes.length} bytes)`);
@@ -1618,7 +1600,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                             ref={fileInputRef}
                             style={{ display: 'none' }}
                             accept=".json"
-                            onChange={importLayout}
+                            onChange={() => {}}
                         />
 
                         {/* Universal Apply button */}

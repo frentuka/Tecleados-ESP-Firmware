@@ -1,0 +1,85 @@
+.connect-overlay {
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  align-items: flex-start !important;
+  pointer-events: auto;
+}
+
+.connect-modal {
+  margin-top: 75px; /* Position right below the 70px header */
+  background: rgba(22, 27, 34, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  animation: slideDown 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.connect-modal .transport-options {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  justify-content: center;
+}
+
+.connect-modal .btn-transport {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: rgba(255, 255, 255, 0.05);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  width: 44px;
+  height: 44px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  color: var(--text-color);
+  padding: 0;
+}
+
+.connect-modal .btn-transport:hover {
+  background-color: rgba(88, 166, 255, 0.15);
+  border-color: var(--accent-color);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(88, 166, 255, 0.2);
+}
+
+.connect-modal .transport-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-color);
+  opacity: 0.7;
+  transition: all 0.2s ease;
+}
+
+.connect-modal .btn-transport:hover .transport-icon {
+  opacity: 1;
+  color: var(--accent-color);
+}
+
+.connect-modal .no-transport-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  color: var(--error-color);
+  background-color: rgba(239, 68, 68, 0.1);
+  border-radius: 8px;
+  font-size: 1.2rem;
+}

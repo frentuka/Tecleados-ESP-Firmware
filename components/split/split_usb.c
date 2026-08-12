@@ -6,8 +6,7 @@
 
 #include "esp_log.h"
 
-#include "usbmod.h"
-#include "usb_send.h"
+#include "comm_module.h"
 
 #include "splitmod.h"
 #include "split_protocol.h"
@@ -36,23 +35,22 @@
 
 #define SPLIT_USB_RESP_HDR_SIZE 7
 
-static void send_usb_json_response(uint8_t cmd, const char *json, size_t json_len)
+static void send_usb_json_response(comm_transport_t source, uint8_t cmd, const char *json, size_t json_len)
 {
-    uint8_t *resp = malloc(SPLIT_USB_RESP_HDR_SIZE + json_len);
+    uint8_t *resp = malloc(6 + json_len);
     if (!resp) {
         ESP_LOGW(TAG, "resp alloc failed (%u bytes)",
-                 (unsigned)(SPLIT_USB_RESP_HDR_SIZE + json_len));
+                 (unsigned)(6 + json_len));
         return;
     }
-    resp[0] = MODULE_SPLIT;
-    resp[1] = cmd;
-    resp[2] = 0x00; // key ID (unused)
-    resp[3] = 0x00; // status OK
+    resp[0] = cmd;
+    resp[1] = 0x00; // key ID (unused)
+    resp[2] = 0x00; // status OK
+    resp[3] = 0x00;
     resp[4] = 0x00;
     resp[5] = 0x00;
-    resp[6] = 0x00;
-    memcpy(resp + SPLIT_USB_RESP_HDR_SIZE, json, json_len);
-    send_payload(resp, (uint16_t)(SPLIT_USB_RESP_HDR_SIZE + json_len));
+    memcpy(resp + 6, json, json_len);
+    comm_send_message(source, MODULE_SPLIT, resp, 6 + json_len);
     free(resp);
 }
 
@@ -72,7 +70,7 @@ static void handle_start_pairing(const uint8_t *data, uint16_t data_len)
     splitmod_start_pairing(timeout_ms);
 }
 
-static void handle_get_remote_matrix(uint8_t cmd)
+static void handle_get_remote_matrix(comm_transport_t source, uint8_t cmd)
 {
     uint8_t rm[SPLIT_MATRIX_BYTES];
     split_sync_get_remote_matrix(rm);
@@ -88,22 +86,22 @@ static void handle_get_remote_matrix(uint8_t cmd)
     }
     json[pos++] = ']';
     json[pos]   = '\0';
-    send_usb_json_response(cmd, json, (size_t)pos);
+    send_usb_json_response(source, cmd, json, (size_t)pos);
 }
 
-static void handle_get_bench(uint8_t cmd)
+static void handle_get_bench(comm_transport_t source, uint8_t cmd)
 {
     char   json[320];   /* expanded for floor/avg/peak fields + sent count (~280 chars max) */
     size_t n = split_bench_format_json(json, sizeof(json));
     if (n == 0) return;
-    send_usb_json_response(cmd, json, n);
+    send_usb_json_response(source, cmd, json, n);
 }
 
 /* =========================================================================
  * Public callback
  * ========================================================================= */
 
-bool split_usb_callback(uint8_t *data, uint16_t data_len)
+bool split_usb_callback(comm_transport_t source, uint8_t *data, uint16_t data_len)
 {
     if (!data || data_len == 0) return false;
 
@@ -121,7 +119,7 @@ bool split_usb_callback(uint8_t *data, uint16_t data_len)
     case SPLIT_USB_CMD_GET_STATUS:
         return true;   // Configurator polls MODULE_STATUS for this.
     case SPLIT_USB_CMD_GET_REMOTE_MATRIX:
-        handle_get_remote_matrix(cmd);
+        handle_get_remote_matrix(source, cmd);
         return true;
     case SPLIT_USB_CMD_ROLE_SWAP:
         splitmod_request_role_swap();
@@ -130,7 +128,7 @@ bool split_usb_callback(uint8_t *data, uint16_t data_len)
         split_bench_start();
         return true;
     case SPLIT_USB_CMD_GET_BENCH:
-        handle_get_bench(cmd);
+        handle_get_bench(source, cmd);
         return true;
     default:
         ESP_LOGW(TAG, "unknown USB split command 0x%02X", cmd);

@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { hidService } from '../HIDService';
 import type { Combo, ComboLimits } from '../types/combos';
 import { withTimeout } from '../utils/withTimeout';
@@ -12,6 +12,13 @@ export function useCombos(
 ) {
     const [combos, setCombos] = useState<Combo[]>([]);
     const [comboLimits, setComboLimits] = useState<ComboLimits | null>(null);
+
+    useEffect(() => {
+        if (!isConnected) {
+            setCombos([]);
+            setComboLimits(null);
+        }
+    }, [isConnected]);
 
     const fetchComboLimits = useCallback(async () => {
         if (!isConnected) return;
@@ -43,13 +50,19 @@ export function useCombos(
     const fetchCombos = useCallback(async () => {
         if (!isConnected) return;
         try {
-            const outline = await hidService.fetchCombos();
-            setCombos(outline.sort((a, b) => a.id - b.id));
+            const ids = await hidService.fetchCombos();
+            
+            const skeletons = ids.map(id => ({ 
+                id, name: `Loading... (ID ${id})`, action: 0, delayMs: 0, 
+                activeLayers: [], strictOrder: false, cancelKeys: false, 
+                delayedPress: false, releaseOnFirstKey: false, keys: [] 
+            } as Combo));
+            setCombos(skeletons);
 
-            addLog(`Found ${outline.length} combos. Fetching details...`);
+            addLog(`Found ${ids.length} combos. Fetching details...`);
 
-            for (const k of outline) {
-                await fetchSingleCombo(k.id);
+            for (const id of ids) {
+                await fetchSingleCombo(id);
             }
             addLog(`All combo details loaded.`);
         } catch (e) {

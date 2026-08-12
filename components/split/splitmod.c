@@ -12,7 +12,7 @@
 #include "kb_system_action.h"
 #include "kb_layout.h"
 #include "kb_manager.h"
-#include "usbmod.h"
+#include "comm_module.h"
 
 #include "split_session.h"
 #include "split_transport.h"
@@ -151,8 +151,8 @@ esp_err_t splitmod_init(void)
     esp_event_handler_register(KB_EVENTS,     KB_EVENT_SYSTEM_ACTION,    on_kb_system_action,         NULL);
     esp_event_handler_register(CONFIG_EVENTS, CONFIG_EVENT_KIND_UPDATED, on_config_updated,           NULL);
     esp_event_handler_register(BLE_EVENTS,    ESP_EVENT_ANY_ID,          split_bridge_on_ble_event,   NULL);
-    usbmod_register_callback(MODULE_SPLIT, split_usb_callback);
-    usbmod_register_callback(MODULE_BLE,   split_bridge_ble_usb_callback);
+    comm_register_module(MODULE_SPLIT, split_usb_callback);
+    comm_register_module(MODULE_BLE,   split_bridge_ble_usb_callback);
 
     ESP_LOGI(TAG, "splitmod initialised");
     return ESP_OK;

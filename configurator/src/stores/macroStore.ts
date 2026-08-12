@@ -34,8 +34,14 @@ export const useMacroStore = create<MacroState>((set, get) => ({
     fetchMacros: async (controller) => {
         set({ isLoading: true });
         try {
-            const macros = await controller.fetchMacroOutline();
-            set({ macros });
+            const ids = await controller.fetchMacroOutline();
+            const macros: Macro[] = [];
+            for (const id of ids) {
+                const m = await get().fetchSingleMacro(controller, id);
+                if (m) macros.push(m);
+            }
+            // Sorting by ID to keep order
+            set({ macros: macros.sort((a, b) => a.id - b.id) });
         } catch (e) {
             console.error('[MacroStore] fetchMacros error:', e);
         } finally {

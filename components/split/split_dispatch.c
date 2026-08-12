@@ -10,7 +10,7 @@
 
 #include "event_bus.h"
 #include "kb_manager.h"
-#include "usbmod.h"
+
 #include "blemod.h"
 
 #include "split_session.h"

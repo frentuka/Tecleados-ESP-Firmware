@@ -158,13 +158,6 @@ static uint8_t const desc_configuration[] = {
                              )};
 
 // ------------ String Descriptors ------------
-static char const *string_desc_arr[] = {
-    (const char[]){0x09, 0x04},      // 0: Language
-    "Tecleados",                     // 1: Manufacturer
-    "TEF",                     // 2: Product
-    "13548",                         // 3: Serial
-    "Tecleados Deltafors Donaltron", // 4: Keyboard interface
-    "Tecleados Comms ITF"            // 5: Bulk COMM interface
-};
+// Defined in usbmod.c
 
 #endif /* USB_DESCRIPTORS_H_ */

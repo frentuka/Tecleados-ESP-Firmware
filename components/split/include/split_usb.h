@@ -11,5 +11,6 @@
  * benchmark controls. JSON responses for queries are built here.
  * ========================================================================= */
 
-/** @brief Registered with usbmod as the MODULE_SPLIT callback. */
-bool split_usb_callback(uint8_t *data, uint16_t data_len);
+#include "comm_transport.h"
+/** @brief Registered with comm_module as the MODULE_SPLIT callback. */
+bool split_usb_callback(comm_transport_t source, uint8_t *data, uint16_t data_len);

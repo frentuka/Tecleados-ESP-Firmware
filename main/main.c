@@ -27,6 +27,7 @@
 #include "button.h"
 #include "cfgmod.h"
 #include "rgb.h"
+#include "comm_module.h"
 #include "usbmod.h"
 #include "statusmod.h"
 
@@ -48,19 +49,27 @@ void single_press_test() {
 }
 
 void double_press_test() {
-  ESP_LOGI(TAG, "test double press: Media Mute");
-  kb_macro_process_action(SYS_ACTION_MUTE, true);
-  kb_macro_process_action(SYS_ACTION_MUTE, false);
+  ESP_LOGI(TAG, "test double press: Activate BLE pairing on Profile 1");
+  if (!ble_hid_is_routing_active()) {
+      ble_hid_set_routing_active(true);
+  }
+  ble_hid_profile_pair(0);
+}
+
+void hold_press_test() {
+  ESP_LOGI(TAG, "test hold press: Start split pairing");
+  splitmod_start_pairing(0);
 }
 
 static void init_procedure(void) {
   event_bus_init();
-  button_init(*single_press_test, *double_press_test);
+  button_init(single_press_test, double_press_test, hold_press_test);
   cfg_init();
 
   // Initialize RGB. GPIO 48 is standard on many ESP32-S3 boards.
   rgb_init(GPIO_NUM_48);
 
+  comm_init();
   usb_init();
   ble_hid_init();
 

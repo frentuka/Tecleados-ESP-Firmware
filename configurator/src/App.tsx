@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { hidService, HIDTransport } from './HIDService';
+import { hidService, HIDTransport, BLETransport } from './HIDService';
+import ConnectModal from './ConnectModal';
 import KeyboardLayoutEditor from './KeyboardLayoutEditor';
 import MacrosDashboard from './MacrosDashboard';
 import CustomKeysDashboard from './CustomKeysDashboard';
@@ -38,6 +39,11 @@ import { useLayoutStore } from './stores/layoutStore';
 import { useOnboardingStore } from './stores/onboardingStore';
 import OnboardingWizard from './components/onboarding/OnboardingWizard';
 import { MACRO_BASE, CKEY_BASE } from './KeyDefinitions';
+import GlobalExportModal from './components/GlobalExportModal';
+import type { GlobalExportSelection } from './components/GlobalExportModal';
+import GlobalImportModal from './components/GlobalImportModal';
+import type { GlobalImportData, GlobalImportSelection } from './components/GlobalImportModal';
+import { saveJsonFile } from './utils/fileUtils';
 
 // Re-export types for backward compatibility — consumers can import from './App'
 export type { Macro, MacroElement, MacroAction } from './types/macros';
@@ -48,12 +54,20 @@ function App() {
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
+  const [isConnectModalOpen, setIsConnectModalOpen] = useState(false);
   const [highlightMacroId] = useState<number | null>(null);
   const [highlightCkeyId] = useState<number | null>(null);
   
   // State for directly opening the editor modal without changing sidebar tab
   const [editMacroId, setEditMacroId] = useState<number | null>(null);
   const [editCkeyId, setEditCkeyId] = useState<number | null>(null);
+const [isGlobalExportOpen, setIsGlobalExportOpen] = useState(false);
+  const [isGlobalImportOpen, setIsGlobalImportOpen] = useState(false);
+  const [isGlobalExporting, setIsGlobalExporting] = useState(false);
+  const [isGlobalImporting, setIsGlobalImporting] = useState(false);
+  const [globalImportData, setGlobalImportData] = useState<GlobalImportData | null>(null);
+  
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [isConnected, setIsConnected] = useState(false);
   const [deviceName, setDeviceName] = useState<string>('');
@@ -73,6 +87,176 @@ function App() {
   const { confirm } = useConfirm();
 
   const logIdCounter = useRef<number>(0);
+
+  
+  const handleGlobalExport = async (selection: GlobalExportSelection) => {
+    setIsGlobalExporting(true);
+    try {
+      const data: any = { version: 1 };
+      
+      if (selection.layers.length > 0) {
+        data.layers = {};
+        data.layerNames = {};
+        const cache = useLayoutStore.getState().layerDataCache;
+        const metas = useLayoutStore.getState().layoutMetas;
+        selection.layers.forEach(l => {
+          if (cache[l]) {
+            data.layers[l] = cache[l];
+            const meta = metas.find(m => m.id === l);
+            if (meta) data.layerNames[l] = meta.name;
+          }
+        });
+      }
+      
+      if (selection.includePhysicalLayout) {
+        data.physicalLayout = useLayoutStore.getState().physicalLayout;
+      }
+      
+      if (selection.macroIds.length > 0) {
+        data.macros = macros.filter(m => selection.macroIds.includes(m.id));
+      }
+      
+      if (selection.customKeyIds.length > 0) {
+        data.customKeys = customKeys.filter(c => selection.customKeyIds.includes(c.id));
+      }
+      
+      if (selection.comboIds.length > 0) {
+        data.combos = combos.filter(c => selection.comboIds.includes(c.id));
+      }
+      
+      const fileName = `${hidService.getDeviceName()}_backup_${new Date().toISOString().slice(0, 10)}.json`;
+      await saveJsonFile(JSON.stringify(data, null, 2), fileName);
+      showNotification('Device configuration exported successfully', 'success');
+      setIsGlobalExportOpen(false);
+    } catch (err) {
+      showNotification('Failed to export configuration', 'error');
+    } finally {
+      setIsGlobalExporting(false);
+    }
+  };
+
+  const handleGlobalImportSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const data = JSON.parse(event.target?.result as string);
+        
+        const importData: GlobalImportData = {
+          layers: data.layers ? Object.keys(data.layers).map(Number) : [],
+          layerNames: data.layerNames || {},
+          hasPhysicalLayout: !!data.physicalLayout,
+          macros: data.macros || [],
+          customKeys: data.customKeys || [],
+          combos: data.combos || []
+        };
+        
+        // Cache the parsed file data
+        (window as any).__globalImportRawData = data;
+        
+        setGlobalImportData(importData);
+        setIsGlobalExportOpen(false);
+        setIsGlobalImportOpen(true);
+      } catch (err) {
+        showNotification('Failed to parse configuration file', 'error');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  const handleGlobalImport = async (selection: GlobalImportSelection) => {
+    setIsGlobalImporting(true);
+    try {
+      const rawData = (window as any).__globalImportRawData;
+      
+      // Hardware
+      if (selection.includePhysicalLayout && rawData?.physicalLayout) {
+        useLayoutStore.getState().setPhysicalLayout(rawData.physicalLayout);
+        // Note: they need to save physical layout manually, or we can't save it directly here easily without the DeviceController.
+        // Actually, saving physical layout requires `hidService`. We'll just load it into state.
+      }
+      
+      // Layers
+      if (selection.layers.length > 0 && rawData?.layers) {
+        const updater: any = {};
+        const existingLayers = Object.keys(useLayoutStore.getState().layerDataCache).map(Number);
+        const existingSet = new Set(existingLayers);
+        let nextAvailable = 0;
+
+        for (const l of selection.layers) {
+          if (rawData.layers[l]) {
+            const importedName = rawData.layerNames?.[l] || `Layer ${l}`;
+            const replaceId = selection.layerMapping[l];
+            
+            if (replaceId !== null && replaceId !== undefined) {
+                // Replacing existing layer
+                await hidService.renameLayout(replaceId, importedName);
+                await hidService.saveLayout(replaceId, rawData.layers[l]);
+                
+                updater[replaceId] = rawData.layers[l];
+                
+                const metas = useLayoutStore.getState().layoutMetas;
+                const updatedMetas = metas.map(m => m.id === replaceId ? { ...m, name: importedName } : m);
+                useLayoutStore.getState().setLayoutMetas(updatedMetas);
+            } else {
+                // Adding as new
+                while (existingSet.has(nextAvailable)) {
+                  nextAvailable++;
+                }
+                if (nextAvailable > 31) {
+                  throw new Error("Maximum number of layers (32) reached.");
+                }
+                
+                const newId = await hidService.createLayout(importedName);
+                
+                if (newId !== null) {
+                    await hidService.saveLayout(newId, rawData.layers[l]);
+                    updater[newId] = rawData.layers[l];
+                    
+                    const metas = useLayoutStore.getState().layoutMetas;
+                    useLayoutStore.getState().setLayoutMetas([...metas, { id: newId, name: importedName }]);
+                }
+                
+                existingSet.add(nextAvailable);
+            }
+          }
+        }
+        useLayoutStore.getState().setLayerDataCache(prev => ({ ...prev, ...updater }));
+      }
+      
+      // Macros
+      for (const m of selection.macros) {
+        const replaceId = selection.macroMapping[m.id];
+        const targetId = (replaceId !== null && replaceId !== undefined) ? replaceId : -1;
+        await handleSaveMacro({ ...m, id: targetId });
+      }
+      
+      // Custom Keys
+      for (const c of selection.customKeys) {
+        const replaceId = selection.ckeyMapping[c.id];
+        const targetId = (replaceId !== null && replaceId !== undefined) ? replaceId : -1;
+        await handleSaveCustomKey({ ...c, id: targetId });
+      }
+      
+      // Combos
+      for (const c of selection.combos) {
+        const replaceId = selection.comboMapping[c.id];
+        const targetId = (replaceId !== null && replaceId !== undefined) ? replaceId : -1;
+        await handleSaveCombo({ ...c, id: targetId });
+      }
+      
+      showNotification('Configuration imported successfully', 'success');
+      setIsGlobalImportOpen(false);
+      setGlobalImportData(null);
+    } catch (err) {
+      showNotification('Failed to import some configuration items', 'error');
+    } finally {
+      setIsGlobalImporting(false);
+    }
+  };
 
   const getNextLogId = useCallback(() => {
     logIdCounter.current += 1;
@@ -164,6 +348,10 @@ function App() {
           setIsSettingsOpen(false);
           handled = true;
         }
+        if (isConnectModalOpen) {
+          setIsConnectModalOpen(false);
+          handled = true;
+        }
         if (handled) return;
 
         // Don't close sidebar if a child modal or popover is open
@@ -216,6 +404,10 @@ function App() {
       if (!connected) {
         setDeviceStatus(null);
         setDeviceName('');
+        useLayoutStore.getState().setPhysicalLayout(null);
+        useLayoutStore.getState().setLayoutMetas([]);
+        useLayoutStore.getState().setLayerDataCache({});
+        useLayoutStore.getState().setActiveLayerId(0);
       } else {
         setDeviceName(hidService.getDeviceName() || 'Unknown Device');
       }
@@ -433,8 +625,20 @@ function App() {
 
 
   const handleConnect = async () => {
-    setNotification(null);
+    setIsConnectModalOpen(true);
+  };
+
+  const handleSelectTransport = async (transportType: 'usb' | 'ble') => {
+    const transport = transportType === 'usb' ? new HIDTransport() : new BLETransport();
+    hidService.setTransport(transport);
+    
+    // CRITICAL: requestDevice must be called before ANY state updates 
+    // to preserve the transient user activation in Chrome.
     const result = await hidService.requestDevice();
+    
+    setNotification(null);
+    setIsConnectModalOpen(false);
+    
     if (!result.ok && result.notification) {
       setNotification(result.notification);
     }
@@ -572,7 +776,7 @@ function App() {
             />
           </div>
 
-          <Sidebar
+                    <Sidebar
             activeTab={sidebarTab}
             onTabChange={setSidebarTab}
             onSettingsClick={() => setIsSettingsOpen(true)}
@@ -626,6 +830,8 @@ function App() {
 
           <SettingsModal
             isOpen={isSettingsOpen}
+        onOpenExport={() => { setIsSettingsOpen(false); setIsGlobalExportOpen(true); }}
+        onOpenImport={() => { setIsSettingsOpen(false); fileInputRef.current?.click(); }}
             onClose={() => setIsSettingsOpen(false)}
             isConnected={isConnected}
             isDeveloperMode={isDeveloperMode}
@@ -638,6 +844,12 @@ function App() {
             onClose={() => setIsConsoleOpen(false)}
             logEntries={logs.map(l => l.text)}
             onClearLog={() => setLogs([])}
+          />
+          
+          <ConnectModal 
+            isOpen={isConnectModalOpen} 
+            onClose={() => setIsConnectModalOpen(false)} 
+            onSelectTransport={handleSelectTransport} 
           />
         </div>
       ) : hasCompletedOnboarding ? (
@@ -664,6 +876,14 @@ function App() {
           </div>
         </div>
       ) : null}
+
+      {!isConnected && (
+        <ConnectModal 
+          isOpen={isConnectModalOpen} 
+          onClose={() => setIsConnectModalOpen(false)} 
+          onSelectTransport={handleSelectTransport} 
+        />
+      )}
 
       {/* Global Floating Notifications */}
       {((typeof displayedNotification?.message === 'string' && displayedNotification.message === 'PERMISSION_DENIED') || (typeof displayedNotification?.message === 'string' && displayedNotification.message.includes('System lock'))) && HIDTransport.isLinux() && (
@@ -788,6 +1008,53 @@ function App() {
             </button>
           </div>
         )}
+
+      
+      {/* Global Modals */}
+      <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept=".json" onChange={handleGlobalImportSelect} />
+      
+
+      
+      {isGlobalExportOpen && (
+        <GlobalExportModal
+          data={{
+            layers: Object.keys(useLayoutStore.getState().layerDataCache).map(Number),
+            layerNames: useLayoutStore.getState().layoutMetas.reduce((acc, curr) => ({...acc, [curr.id]: curr.name}), {}),
+            hasPhysicalLayout: !!useLayoutStore.getState().physicalLayout,
+            macros,
+            customKeys,
+            combos
+          }}
+          onClose={() => setIsGlobalExportOpen(false)}
+          onExport={handleGlobalExport}
+          isExporting={isGlobalExporting}
+          isDeveloperMode={isDeveloperMode}
+        />
+      )}
+      
+      {isGlobalImportOpen && globalImportData && (
+        <GlobalImportModal
+          data={globalImportData}
+          existingData={{
+            layers: useLayoutStore.getState().layoutMetas,
+            macros,
+            customKeys,
+            combos
+          }}
+          onClose={() => { setIsGlobalImportOpen(false); setGlobalImportData(null); }}
+          onImport={handleGlobalImport}
+          isImporting={isGlobalImporting}
+          isDeveloperMode={isDeveloperMode}
+          limits={{
+            maxMacros: macroLimits?.maxMacros ?? 32,
+            currentMacros: macros.length,
+            maxCustomKeys: 120,
+            currentCustomKeys: customKeys.length,
+            maxCombos: comboLimits?.maxCombos ?? 32,
+            currentCombos: combos.length
+          }}
+        />
+      )}
 
       {/* Onboarding Wizard (renders above everything via portal) */}
       {!hasCompletedOnboarding && (

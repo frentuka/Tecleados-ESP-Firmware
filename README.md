@@ -650,9 +650,9 @@ The BLE module manages up to **9 independent pairing profiles**. Each profile st
 
 **Location:** `configurator/`
 
-A React 19 + TypeScript single-page application that communicates with the keyboard over WebHID.
+A React 19 + TypeScript single-page application that communicates with the keyboard over WebHID or Web Bluetooth.
 
-**Requirements:** Chrome, Edge, or Opera (WebHID is not available in Firefox).
+**Requirements:** Chrome, Edge, or Opera (WebHID/Web Bluetooth are not available in Firefox).
 
 **Features:**
 
@@ -671,7 +671,7 @@ A React 19 + TypeScript single-page application that communicates with the keybo
 | Language | TypeScript |
 | Build | Vite |
 | State | Zustand (stores), React hooks (`useMacros`, `useCustomKeys`) |
-| Transport | WebHID + custom `HIDTransport` class |
+| Transport | WebHID (`HIDTransport`) + Web Bluetooth (`BLETransport`) |
 | High-level API | `DeviceController` (typed commands over transport) |
 
 **Connection:** VID `0x303A`, PID `0x1324`, usage page `0xFFFF` (vendor-defined HID interface).
@@ -680,16 +680,16 @@ A React 19 + TypeScript single-page application that communicates with the keybo
 
 ## Communication Protocol
 
-The keyboard exposes a bidirectional comm channel on USB HID Interface 1 (Report ID 3, 63 bytes per report). A custom **Blast+Reconcile** protocol with CRC-8 integrity checking handles payloads up to ~21 KB.
+The keyboard exposes a bidirectional comm channel on USB HID Interface 1 (Report ID 3, 63 bytes) and via a Custom BLE GATT Service (dynamic MTU, up to 260 bytes). A transport-agnostic **Blast+Reconcile** protocol with CRC-8 integrity checking handles payloads up to ~21 KB.
 
-**Packet structure (63 bytes):**
+**Packet structure (variable up to Max Packet Size):**
 
 ```
 Byte  0     : flags       — control bitfield
 Bytes 1–2   : remaining   — packets remaining after this one (little-endian u16)
-Byte  3     : payload_len — valid bytes in payload field (0–58)
-Bytes 4–61  : payload     — application data (zero-padded)
-Byte  62    : crc8        — CRC-8 over bytes 0–61 (polynomial 0x07)
+Byte  3     : payload_len — valid bytes in payload field
+Bytes 4–N   : payload     — application data
+Byte  N+1   : crc8        — CRC-8 over bytes 0–N (polynomial 0x07)
 ```
 
 **For payloads ≤ 58 bytes** (single packet):

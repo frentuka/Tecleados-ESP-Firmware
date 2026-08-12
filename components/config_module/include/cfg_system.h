@@ -23,6 +23,15 @@ typedef struct {
   bool transparent_stack_fallback;
 } cfg_system_t;
 
+typedef struct __attribute__((packed)) {
+    uint8_t  sys_cmd;       // e.g. SYS_CMD_INJECT_KEY (0x01) or SYS_CMD_TRIGGER_ACTION
+    uint8_t  row;           // For INJECT_KEY
+    uint8_t  col;           // For INJECT_KEY
+    uint8_t  state;         // For INJECT_KEY (1=press, 0=release)
+    uint8_t  reserved[1];   // Pad to offset 5 so action_code is naturally aligned
+    uint16_t action_code;   // Starts at struct offset 5 (absolute offset 6) -> ALIGNED!
+} sysmod_msg_t;
+
 // Registers the system serializer with cfgmod
 void cfg_system_register(void);
 
