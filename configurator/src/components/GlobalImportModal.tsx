@@ -81,14 +81,8 @@ export default function GlobalImportModal({ data, existingData, onClose, onImpor
         setter(next);
     };
 
-    const allLayersChecked = data.layers.length > 0 && selectedLayers.size === data.layers.length;
-    const allMacrosChecked = data.macros.length > 0 && selectedMacros.size === data.macros.length;
-    const allCKeysChecked = data.customKeys.length > 0 && selectedCKeys.size === data.customKeys.length;
-    const allCombosChecked = data.combos.length > 0 && selectedCombos.size === data.combos.length;
-
     const totalSelected = selectedLayers.size + selectedMacros.size + selectedCKeys.size + selectedCombos.size;
     const totalItems = data.layers.length + data.macros.length + data.customKeys.length + data.combos.length;
-    const allChecked = totalItems > 0 && totalSelected === totalItems;
 
     const allowedMacros = Math.max(0, limits.maxMacros - limits.currentMacros);
     const isMacrosOverLimit = selectedMacros.size > allowedMacros;
@@ -163,12 +157,11 @@ export default function GlobalImportModal({ data, existingData, onClose, onImpor
         setMapping: React.Dispatch<React.SetStateAction<Record<number, number | null>>>,
         existingItems: { id: number, name: string }[]
     ) => {
-        const takenIds = new Set(Object.entries(mapping).filter(([k, v]) => parseInt(k) !== itemId && v !== null).map(([k, v]) => v));
+        const takenIds = new Set(Object.entries(mapping).filter(([k, v]) => parseInt(k) !== itemId && v !== null).map(([_, v]) => v));
         const isAddNew = mapping[itemId] === null || mapping[itemId] === undefined;
         
         return (
             <CustomReplaceDropdown 
-                itemId={itemId}
                 value={mapping[itemId]}
                 isAddNew={isAddNew}
                 takenIds={takenIds}
@@ -179,9 +172,8 @@ export default function GlobalImportModal({ data, existingData, onClose, onImpor
     };
 
     const CustomReplaceDropdown = ({ 
-        itemId, value, isAddNew, takenIds, existingItems, onChange 
+        value, isAddNew, takenIds, existingItems, onChange 
     }: {
-        itemId: number;
         value: number | null | undefined;
         isAddNew: boolean;
         takenIds: Set<number | null>;

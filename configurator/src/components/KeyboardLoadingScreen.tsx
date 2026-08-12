@@ -1,4 +1,4 @@
-import React from 'react';
+
 import type { PhysKey } from '../types/device';
 
 interface KeyboardLoadingScreenProps {

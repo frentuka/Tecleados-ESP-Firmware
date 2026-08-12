@@ -59,14 +59,8 @@ export default function GlobalExportModal({ data, onClose, onExport, isExporting
         setter(next);
     };
 
-    const allLayersChecked = data.layers.length > 0 && selectedLayers.size === data.layers.length;
-    const allMacrosChecked = data.macros.length > 0 && selectedMacros.size === data.macros.length;
-    const allCKeysChecked = data.customKeys.length > 0 && selectedCKeys.size === data.customKeys.length;
-    const allCombosChecked = data.combos.length > 0 && selectedCombos.size === data.combos.length;
-
     const totalSelected = selectedLayers.size + selectedMacros.size + selectedCKeys.size + selectedCombos.size;
     const totalItems = data.layers.length + data.macros.length + data.customKeys.length + data.combos.length;
-    const allChecked = totalItems > 0 && totalSelected === totalItems;
 
     const handleSelectAllAll = () => {
         if (isExporting) return;

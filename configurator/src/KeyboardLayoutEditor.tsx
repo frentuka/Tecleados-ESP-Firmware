@@ -151,7 +151,7 @@ function SortableLayoutTab({ id, meta, isActive, hasChanges, onDelete, onSelect 
 export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, macros, customKeys = [], onLog, onEditEntity }: KeyboardLayoutEditorProps) {
     const { showNotification } = useNotificationStore();
     const { physicalLayout, setPhysicalLayout, layoutMetas, setLayoutMetas, layerDataCache, setLayerDataCache, activeLayerId, setActiveLayerId, maxLayouts, pressedCodes, setPressedCodes, heldTestKeys, setHeldTestKeys } = useLayoutStore();
-    const [layerStatus, setLayerStatus] = useState<Record<number, 'idle' | 'loading' | 'loaded' | 'error'>>({});
+    const [_layerStatus, setLayerStatus] = useState<Record<number, 'idle' | 'loading' | 'loaded' | 'error'>>({});
     const [physLayoutStatus, setPhysLayoutStatus] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle');
     const [showKleImport, setShowKleImport] = useState(false);
     const [kleInput, setKleInput] = useState('');
