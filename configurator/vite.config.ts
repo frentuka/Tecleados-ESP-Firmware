@@ -10,5 +10,20 @@ export default defineConfig({
   ],
   server: {
     host: true
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            if (id.includes('three') || id.includes('@react-three')) return 'three';
+            if (id.includes('lottie')) return 'lottie';
+            if (id.includes('@mediapipe')) return 'mediapipe';
+            if (id.includes('react') || id.includes('react-dom')) return 'react-core';
+          }
+        }
+      }
+    },
+    chunkSizeWarningLimit: 1500
   }
 })
