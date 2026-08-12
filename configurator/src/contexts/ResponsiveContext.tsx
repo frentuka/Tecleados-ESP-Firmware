@@ -1,4 +1,4 @@
-import { createContext, useContext, ReactNode } from 'react';
+import { createContext, useContext, type ReactNode } from 'react';
 import { useViewport } from '../hooks/useViewport';
 import { useTouchMode } from '../hooks/useTouchMode';
 

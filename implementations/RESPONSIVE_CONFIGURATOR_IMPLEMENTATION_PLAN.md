@@ -17,26 +17,26 @@
 - [x] **CI-3** — Wrap `<App />` with `<ResponsiveProvider>` in `src/main.tsx`
 
 ### Phase 1 — Structural Shell
-- [ ] **1.1** — Modify `Background3D.tsx` — CSS gradient fallback on non-desktop tiers; 3D canvas never initializes on mobile/tablet
-- [ ] **1.2** — Add `#root` mobile & tablet overrides in `responsive.css`
-- [ ] **1.3** — Add `.main-header` mobile overrides (56px height, compact padding)
-- [ ] **1.3** — Hide `.brand-title`, `.brand-separator`, `.brand-device-name` on mobile
-- [ ] **1.3** — Create `src/components/CompactStatusBadge.tsx`; wire into `App.tsx`
-- [ ] **1.4** — Create `src/components/MobileSidebar.tsx` (bottom tab bar + full-screen sheet with swipe-to-dismiss)
-- [ ] **1.4** — Create `src/assets/css/mobile-sidebar.css`
-- [ ] **1.4** — Modify `Sidebar.tsx` — branch to `MobileSidebar` on mobile tier
-- [ ] **1.4** — Hide `.sidebar-container` on mobile via `responsive.css`
-- [ ] **1.4** — Migrate `sidebar.css` breakpoint from `1100px` → `1024px`
+- [x] **1.1** — Modify `Background3D.tsx` — CSS gradient fallback on non-desktop tiers; 3D canvas never initializes on mobile/tablet
+- [x] **1.2** — Add `#root` mobile & tablet overrides in `responsive.css`
+- [x] **1.3** — Add `.main-header` mobile overrides (56px height, compact padding)
+- [x] **1.3** — Hide `.brand-title`, `.brand-separator`, `.brand-device-name` on mobile
+- [x] **1.3** — Create `src/components/CompactStatusBadge.tsx`; wire into `App.tsx`
+- [x] **1.4** — Create `src/components/MobileSidebar.tsx` (bottom tab bar + full-screen sheet with swipe-to-dismiss)
+- [x] **1.4** — Create `src/assets/css/mobile-sidebar.css`
+- [x] **1.4** — Modify `Sidebar.tsx` — branch to `MobileSidebar` on mobile tier
+- [x] **1.4** — Hide `.sidebar-container` on mobile via `responsive.css`
+- [x] **1.4** — Migrate `sidebar.css` breakpoint from `1100px` → `1024px`
 
 ### Phase 2 — Core Views
-- [ ] **2.1** — Dynamic `UNIT` scaling based on container width on mobile
-- [ ] **2.1** — Pinch-to-zoom gesture handler on keyboard grid
-- [ ] **2.1** — `.keyboard-grid` / `.keyboard-key` mobile overrides; `overscroll-behavior` + `touch-action`
-- [ ] **2.2** — `.layout-toolbar` mobile overrides (full-width, horizontal scroll, compact tabs)
-- [ ] **2.2** — Show `.layout-tab-delete-btn` on active tab for touch (no hover required)
-- [ ] **2.3** — `.accordion-modal` full-screen mobile overrides; 2×2 button grid; 48px key targets
-- [ ] **2.3** — Modify `SearchableKeyModal.tsx` — bottom-aligned overlay on mobile
-- [ ] **2.4** — `.key-action-popover` touch overrides (wider, larger buttons)
+- [x] **2.1** — Dynamic `UNIT` scaling based on container width on mobile
+- [x] **2.1** — Pinch-to-zoom gesture handler on keyboard grid
+- [x] **2.1** — `.keyboard-grid` / `.keyboard-key` mobile overrides; `overscroll-behavior` + `touch-action`
+- [x] **2.2** — `.layout-toolbar` mobile overrides (full-width, horizontal scroll, compact tabs)
+- [x] **2.2** — Show `.layout-tab-delete-btn` on active tab for touch (no hover required)
+- [x] **2.3** — `.accordion-modal` full-screen mobile overrides; 2×2 button grid; 48px key targets
+- [x] **2.3** — Modify `SearchableKeyModal.tsx` — bottom-aligned overlay on mobile
+- [x] **2.4** — `.key-action-popover` touch overrides (wider, larger buttons)
 
 ### Phase 3 — Sidebar Panels
 - [ ] **3.1** — Macros dashboard mobile overrides (padding, card sizing, search bar)

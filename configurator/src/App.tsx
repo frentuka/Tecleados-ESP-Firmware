@@ -33,6 +33,7 @@ import {
 } from './types/protocol';
 import './index.css';
 import './assets/css/sidebar.css';
+import './assets/css/responsive.css';
 
 import Background3D from './components/Background3D';
 import { useLayoutStore } from './stores/layoutStore';
@@ -44,6 +45,8 @@ import type { GlobalExportSelection } from './components/GlobalExportModal';
 import GlobalImportModal from './components/GlobalImportModal';
 import type { GlobalImportData, GlobalImportSelection } from './components/GlobalImportModal';
 import { saveJsonFile } from './utils/fileUtils';
+import CompactStatusBadge from './components/CompactStatusBadge';
+import { useResponsive } from './contexts/ResponsiveContext';
 
 // Re-export types for backward compatibility — consumers can import from './App'
 export type { Macro, MacroElement, MacroAction } from './types/macros';
@@ -55,6 +58,8 @@ function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
   const [isConnectModalOpen, setIsConnectModalOpen] = useState(false);
+  const [isStatusPopoverOpen, setIsStatusPopoverOpen] = useState(false);
+  const { isMobile } = useResponsive();
   const [highlightMacroId] = useState<number | null>(null);
   const [highlightCkeyId] = useState<number | null>(null);
   
@@ -740,20 +745,56 @@ const [isGlobalExportOpen, setIsGlobalExportOpen] = useState(false);
 
         <div className="header-right">
           <div className={`status-wrapper ${isConnected ? 'visible' : 'hidden'}`}>
-            <StatusWidget
-              isConnected={isConnected}
-              transportMode={deviceStatus?.mode ?? 0}
-              selectedProfile={deviceStatus?.profile ?? 0}
-              pairingProfile={deviceStatus?.pairing ?? -1}
-              connectedBitmap={deviceStatus?.bitmap ?? 0}
-              splitState={deviceStatus?.split_state ?? 0}
-              splitRole={deviceStatus?.split_role ?? 0}
-              onOfflineClick={handleConnect}
-              onBleToggleRouting={() => hidService.bleToggleRouting()}
-              onBleConnect={p => hidService.bleConnect(p)}
-              onBleToggleConn={p => hidService.bleToggleConn(p)}
-              onBlePair={p => hidService.blePair(p)}
-            />
+            {isMobile ? (
+              <CompactStatusBadge 
+                isConnected={isConnected} 
+                onClick={() => setIsStatusPopoverOpen(!isStatusPopoverOpen)} 
+              />
+            ) : (
+              <StatusWidget
+                isConnected={isConnected}
+                transportMode={deviceStatus?.mode ?? 0}
+                selectedProfile={deviceStatus?.profile ?? 0}
+                pairingProfile={deviceStatus?.pairing ?? -1}
+                connectedBitmap={deviceStatus?.bitmap ?? 0}
+                splitState={deviceStatus?.split_state ?? 0}
+                splitRole={deviceStatus?.split_role ?? 0}
+                onOfflineClick={handleConnect}
+                onBleToggleRouting={() => hidService.bleToggleRouting()}
+                onBleConnect={p => hidService.bleConnect(p)}
+                onBleToggleConn={p => hidService.bleToggleConn(p)}
+                onBlePair={p => hidService.blePair(p)}
+              />
+            )}
+            {isMobile && isStatusPopoverOpen && isConnected && (
+              <div 
+                className="mobile-status-popover" 
+                style={{
+                  position: 'absolute', top: '56px', right: '0', 
+                  background: 'rgba(13, 17, 23, 0.95)', padding: '10px 10px 10px 14px', 
+                  borderBottomLeftRadius: '16px', zIndex: 2000,
+                  boxShadow: '-4px 4px 20px rgba(0,0,0,0.5)',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  borderTop: 'none',
+                  borderRight: 'none'
+                }}
+              >
+                <StatusWidget
+                  isConnected={isConnected}
+                  transportMode={deviceStatus?.mode ?? 0}
+                  selectedProfile={deviceStatus?.profile ?? 0}
+                  pairingProfile={deviceStatus?.pairing ?? -1}
+                  connectedBitmap={deviceStatus?.bitmap ?? 0}
+                  splitState={deviceStatus?.split_state ?? 0}
+                  splitRole={deviceStatus?.split_role ?? 0}
+                  onOfflineClick={handleConnect}
+                  onBleToggleRouting={() => hidService.bleToggleRouting()}
+                  onBleConnect={p => hidService.bleConnect(p)}
+                  onBleToggleConn={p => hidService.bleToggleConn(p)}
+                  onBlePair={p => hidService.blePair(p)}
+                />
+              </div>
+            )}
           </div>
         </div>
 

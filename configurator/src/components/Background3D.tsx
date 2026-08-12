@@ -4,6 +4,7 @@ import * as THREE from 'three'
 import { Environment, ContactShadows } from '@react-three/drei'
 import { useLayoutStore } from '../stores/layoutStore'
 import { useUiStore } from '../stores/uiStore'
+import { useViewport } from '../hooks/useViewport'
 import { getKeyColor, getCategoryFromCode, KEY_BASE_COLORS } from '../utils/keyColors'
 import { getKeycapGeometry } from '../utils/keycapGeometry'
 
@@ -439,6 +440,20 @@ export default function Background3D() {
   const render3DModel = useUiStore(state => state.render3DModel);
   const [isAutoRotating, setIsAutoRotating] = useState(true);
   const [orangeTarget, setOrangeTarget] = useState<THREE.Object3D | null>(null);
+  const viewport = useViewport();
+
+  if (viewport.tier !== 'desktop') {
+    return (
+      <div style={{
+        position: 'fixed',
+        top: 0, left: 0, width: '100vw', height: '100vh',
+        zIndex: -10,
+        background: 'radial-gradient(circle at 50% 35%, #2d1304 0%, #0c0501 55%, #050201 100%)',
+        pointerEvents: 'none',
+        userSelect: 'none'
+      }} />
+    );
+  }
 
   return (
     <div style={{

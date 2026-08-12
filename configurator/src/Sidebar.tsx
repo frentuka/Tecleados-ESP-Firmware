@@ -1,4 +1,6 @@
 import React, { useRef, useEffect } from 'react';
+import MobileSidebar from './components/MobileSidebar';
+import { useResponsive } from './contexts/ResponsiveContext';
 
 // ── Sidebar Tab Type ──
 export type SidebarTab = 'macros' | 'ckeys' | 'combos' | null;
@@ -93,7 +95,7 @@ function SidebarIconButton({
 }
 
 // ── Main Sidebar Component ──
-export default function Sidebar({
+function DesktopSidebar({
     activeTab,
     onTabChange,
     onSettingsClick,
@@ -195,4 +197,12 @@ export default function Sidebar({
             </div>
         </div>
     );
+}
+
+export default function Sidebar(props: SidebarProps) {
+    const { isMobile } = useResponsive();
+    if (isMobile) {
+        return <MobileSidebar {...props} />;
+    }
+    return <DesktopSidebar {...props} />;
 }

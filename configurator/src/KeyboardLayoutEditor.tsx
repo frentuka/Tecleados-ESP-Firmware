@@ -23,6 +23,7 @@ import { getPredefinedLayout } from './utils/layoutUtils';
 
 import { useNotificationStore } from './stores/notificationStore';
 import { useLayoutStore } from './stores/layoutStore';
+import { useResponsive } from './contexts/ResponsiveContext';
 import './assets/css/keyboard-layout.css';
 import {
     DndContext,
@@ -131,6 +132,7 @@ function SortableLayoutTab({ id, meta, isActive, hasChanges, onDelete, onSelect 
 export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, macros, customKeys = [], onLog, onEditEntity }: KeyboardLayoutEditorProps) {
     const { showNotification } = useNotificationStore();
     const { physicalLayout, setPhysicalLayout, setPhysicalLayoutId, layoutMetas, setLayoutMetas, layerDataCache, setLayerDataCache, activeLayerId, setActiveLayerId, maxLayouts, pressedCodes, setPressedCodes, heldTestKeys, setHeldTestKeys } = useLayoutStore();
+    const { isMobile } = useResponsive();
     const [_layerStatus, setLayerStatus] = useState<Record<number, 'idle' | 'loading' | 'loaded' | 'error'>>({});
 
     const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
@@ -140,6 +142,11 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const [isKeyTestMode, setIsKeyTestMode] = useState(false);
     const [isRowColEditMode, setIsRowColEditMode] = useState(false);
+
+    const [zoomScale, setZoomScale] = useState(1);
+    const containerRef = useRef<HTMLDivElement>(null);
+    const initialPinchDistRef = useRef<number | null>(null);
+    const initialZoomScaleRef = useRef<number>(1);
 
     const [rowInput, setRowInput] = useState('');
     const [colInput, setColInput] = useState('');
@@ -875,7 +882,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                 />
             ) : (
                 <>
-                    <div style={{ width: '100%', overflowX: 'auto', padding: '1rem 0' }}>
+                    <div ref={containerRef} style={{ width: '100%', overflowX: 'auto', padding: '1rem 0', touchAction: isMobile ? 'pan-x pan-y' : undefined }}>
                         {(() => {
                             const layout = (physicalLayout || DEFAULT_PHYSICAL_LAYOUT);
 
@@ -923,18 +930,52 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                             const gridW = maxKeyX - minKeyX;
                             const gridH = maxKeyY - minKeyY;
 
+                            // Calculate dynamic UNIT scaling based on viewport for mobile
+                            const BASE_UNIT = 51.2; // 3.2rem = 51.2px
+                            let effectiveUnit = BASE_UNIT;
+                            let gap = 4; // 0.25rem = 4px
+
+                            if (isMobile) {
+                                const containerWidth = containerRef.current?.clientWidth ?? window.innerWidth;
+                                const naturalWidth = gridW * BASE_UNIT;
+                                const scaleFactor = Math.min(1, (containerWidth - 24) / naturalWidth); // 24px for padding
+                                effectiveUnit = BASE_UNIT * scaleFactor * zoomScale;
+                                gap = 4 * scaleFactor * zoomScale;
+                            }
+
                             return (
                                 <div className="keyboard-grid"
+                                    onTouchStart={(e) => {
+                                        if (e.touches.length === 2 && isMobile) {
+                                            const dist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+                                            initialPinchDistRef.current = dist;
+                                            initialZoomScaleRef.current = zoomScale;
+                                        }
+                                    }}
+                                    onTouchMove={(e) => {
+                                        if (e.touches.length === 2 && initialPinchDistRef.current !== null && isMobile) {
+                                            const dist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+                                            let newScale = initialZoomScaleRef.current * (dist / initialPinchDistRef.current);
+                                            newScale = Math.max(0.5, Math.min(newScale, 1.5));
+                                            setZoomScale(newScale);
+                                        }
+                                    }}
+                                    onTouchEnd={(e) => {
+                                        if (e.touches.length < 2) {
+                                            initialPinchDistRef.current = null;
+                                        }
+                                    }}
                                     onMouseDown={(e) => {
                                         if (e.target === e.currentTarget) setSelectedKeys(new Set());
                                         dragStartedInEditorRef.current = true;
                                     }}
                                     style={{
                                         position: 'relative',
-                                        width: `${gridW * 3.2}rem`,
-                                        height: `${gridH * 3.2}rem`,
+                                        width: `${gridW * effectiveUnit}px`,
+                                        height: `${gridH * effectiveUnit}px`,
                                         padding: 0,
                                         margin: '0 auto',
+                                        overscrollBehaviorX: isMobile ? 'contain' : 'auto',
                                     }}>
                                     {layout.map((physRow: PhysKey[], ri: number) => (
                                         <div key={ri} className="keyboard-row">
@@ -950,12 +991,12 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                                         key={physKeyId}
                                                         style={{
                                                             position: 'absolute',
-                                                            left: `${(pk.x - minKeyX) * 3.2}rem`,
-                                                            top: `${(pk.y - minKeyY) * 3.2}rem`,
-                                                            width: `${pk.w * 3.2 - 0.25}rem`,
-                                                            height: `${pk.h * 3.2 - 0.25}rem`,
+                                                            left: `${(pk.x - minKeyX) * effectiveUnit}px`,
+                                                            top: `${(pk.y - minKeyY) * effectiveUnit}px`,
+                                                            width: `${pk.w * effectiveUnit - gap}px`,
+                                                            height: `${pk.h * effectiveUnit - gap}px`,
                                                             transform: pk.r ? `rotate(${pk.r}deg)` : undefined,
-                                                            transformOrigin: pk.r ? `${(pk.rx! - pk.x) * 3.2}rem ${(pk.ry! - pk.y) * 3.2}rem` : undefined,
+                                                            transformOrigin: pk.r ? `${(pk.rx! - pk.x) * effectiveUnit}px ${(pk.ry! - pk.y) * effectiveUnit}px` : undefined,
                                                             zIndex: isSelected ? 5 : undefined,
                                                         }}
                                                     >
@@ -1106,8 +1147,8 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                     ))}
                                     {/* Row/Col Grid Overlay */}
                                     {isRowColEditMode && (() => {
-                                        const UNIT = 3.2 * 16;
-                                        const GAP = 0.25 * 16;
+                                        const UNIT = isMobile ? (effectiveUnit || 51.2) : (3.2 * 16);
+                                        const GAP = isMobile ? gap : (0.25 * 16);
                                         const svgW = gridW * UNIT;
                                         const svgH = gridH * UNIT;
                                         const MARGIN = 20;

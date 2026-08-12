@@ -479,7 +479,7 @@
 }
 
 /* ── Responsive: Slide-over on small screens ── */
-@media (max-width: 1100px) {
+@media (max-width: 1024px) {
     /* On small screens, the sidebar overlays the keyboard instead of pushing it */
     .sidebar-container {
         z-index: 600;
@@ -528,7 +528,7 @@
 }
 
 /* ── Right padding for sidebar on root — shrink on small screens ── */
-@media (max-width: 1100px) {
+@media (max-width: 1024px) {
     #root {
         padding-right: 2rem; /* Overlay mode: no need to push content */
     }
