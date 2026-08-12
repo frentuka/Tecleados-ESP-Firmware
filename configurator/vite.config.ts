@@ -18,10 +18,16 @@ export default defineConfig({
           if (id.includes('node_modules')) {
             if (id.includes('three') || id.includes('@react-three')) return 'three';
             if (id.includes('lottie')) return 'lottie';
-            if (id.includes('@mediapipe')) return 'mediapipe';
             if (id.includes('react') || id.includes('react-dom')) return 'react-core';
           }
         }
+      },
+      onwarn(warning, warn) {
+        // Suppress EVAL warning for lottie-web, as it relies on eval for advanced after-effects expressions internally
+        if (warning.code === 'EVAL' && warning.id?.includes('lottie-web')) {
+          return;
+        }
+        warn(warning);
       }
     },
     chunkSizeWarningLimit: 1500
