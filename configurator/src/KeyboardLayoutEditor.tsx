@@ -18,6 +18,7 @@ import {
 import SearchableKeyModal from './components/SearchableKeyModal';
 import InputModal from './components/InputModal';
 import KeyActionPopover from './components/KeyActionPopover';
+import KeyboardLoadingScreen from './components/KeyboardLoadingScreen';
 import type { Macro } from './types/macros';
 import { parseKleJson } from './utils/kleParser';
 import { parsePhysicalLayoutJson, serializePhysicalLayout } from './utils/layoutUtils';
@@ -989,16 +990,9 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
 
             {/* Keyboard visual */}
             {!currentLayer ? (
-                <div className="layout-placeholder">
-                    {!isConnected
-                        ? 'Connect device to load layout.'
-                        : layerStatus[activeLayerId] === 'loading'
-                            ? `Loading layout from device...`
-                            : layerStatus[activeLayerId] === 'error'
-                                ? `⚠ Failed to load layout.`
-                                : `No data for layout.`
-                    }
-                </div>
+                <KeyboardLoadingScreen 
+                    physicalLayout={physicalLayout || DEFAULT_PHYSICAL_LAYOUT} 
+                />
             ) : (
                 <>
                     <div style={{ width: '100%', overflowX: 'auto', padding: '1rem 0' }}>
