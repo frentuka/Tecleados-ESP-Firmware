@@ -8,6 +8,7 @@ import '../assets/css/import-export.css';
 export interface GlobalImportData {
     layers: number[];
     layerNames?: Record<number, string>;
+    physicalLayoutId?: string;
     hasPhysicalLayout: boolean;
     macros: Macro[];
     customKeys: CustomKey[];
@@ -17,7 +18,7 @@ export interface GlobalImportData {
 export interface GlobalImportSelection {
     layers: number[];
     layerMapping: Record<number, number | null>;
-    includePhysicalLayout: boolean;
+
     macros: Macro[];
     macroMapping: Record<number, number | null>;
     customKeys: CustomKey[];
@@ -34,10 +35,10 @@ interface GlobalImportModalProps {
         customKeys: CustomKey[];
         combos: Combo[];
     };
+    currentPhysicalLayoutId: string | null;
     onClose: () => void;
     onImport: (selection: GlobalImportSelection) => void;
     isImporting: boolean;
-    isDeveloperMode: boolean;
     limits: {
         maxMacros: number;
         currentMacros: number;
@@ -48,7 +49,7 @@ interface GlobalImportModalProps {
     };
 }
 
-export default function GlobalImportModal({ data, existingData, onClose, onImport, isImporting, isDeveloperMode, limits }: GlobalImportModalProps) {
+export default function GlobalImportModal({ data, existingData, currentPhysicalLayoutId, onClose, onImport, isImporting, limits }: GlobalImportModalProps) {
     const [selectedLayers, setSelectedLayers] = useState<Set<number>>(new Set(data.layers));
     const [selectedMacros, setSelectedMacros] = useState<Set<number>>(new Set(data.macros.map(m => m.id)));
     const [selectedCKeys, setSelectedCKeys] = useState<Set<number>>(new Set(data.customKeys.map(c => c.id)));
@@ -59,7 +60,7 @@ export default function GlobalImportModal({ data, existingData, onClose, onImpor
     const [ckeyMapping, setCkeyMapping] = useState<Record<number, number | null>>({});
     const [comboMapping, setComboMapping] = useState<Record<number, number | null>>({});
     
-    const [includePhysicalLayout, setIncludePhysicalLayout] = useState<boolean>(false);
+    
 
     type ViewState = 'grid' | 'layers' | 'macros' | 'ckeys' | 'combos';
     type CheckState = 'all' | 'partial' | 'none';
@@ -295,7 +296,12 @@ export default function GlobalImportModal({ data, existingData, onClose, onImpor
                                 </div>
                             );
                         })}
-                    </div>
+                    </div>,
+                    (data.physicalLayoutId && data.physicalLayoutId !== currentPhysicalLayoutId) ? (
+                        <div style={{ color: '#ff4444', fontSize: '0.85rem', marginTop: '4px', fontStyle: 'italic', padding: '0 12px' }}>
+                            Warning: Imported layers use a different physical layout ({data.physicalLayoutId}) and may be incompatible with your keyboard ({currentPhysicalLayoutId || 'Unknown'}).
+                        </div>
+                    ) : null
                 )}
 
                 {activeView === 'macros' && renderDetailView('macros', 'Macros', selectedMacros.size, data.macros.length,
@@ -350,22 +356,13 @@ export default function GlobalImportModal({ data, existingData, onClose, onImpor
                 )}
 
                 <div className="ie-footer">
-                    {isDeveloperMode && data.hasPhysicalLayout && (
-                        <div className="ie-dev-toggle" onClick={() => setIncludePhysicalLayout(!includePhysicalLayout)}>
-                            <CustomCheckbox state={includePhysicalLayout} onClick={(e) => { e.stopPropagation(); setIncludePhysicalLayout(!includePhysicalLayout); }} />
-                            <div className="ie-dev-toggle-text">
-                                Overwrite Physical Layout Geometry (Developer)
-                            </div>
-                        </div>
-                    )}
 
                     <div className="ie-footer-actions">
                         <button className="btn btn-secondary" onClick={onClose} disabled={isImporting}>Cancel</button>
-                        <button className="btn btn-success" disabled={totalSelected === 0 && !includePhysicalLayout || isAnyOverLimit || isImporting} onClick={() => {
+                        <button className="btn btn-success" disabled={totalSelected === 0 || isAnyOverLimit || isImporting} onClick={() => {
                             onImport({
                                 layers: Array.from(selectedLayers),
                                 layerMapping,
-                                includePhysicalLayout,
                                 macros: data.macros.filter(m => selectedMacros.has(m.id)),
                                 macroMapping,
                                 customKeys: data.customKeys.filter(c => selectedCKeys.has(c.id)),

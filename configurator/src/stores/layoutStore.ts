@@ -7,6 +7,9 @@ export interface LayoutMeta {
 }
 
 interface LayoutState {
+    physicalLayoutId: string | null;
+    setPhysicalLayoutId: (id: string | null) => void;
+
     physicalLayout: PhysKey[][] | null;
     setPhysicalLayout: (layout: PhysKey[][] | null) => void;
     
@@ -33,6 +36,9 @@ interface LayoutState {
 }
 
 export const useLayoutStore = create<LayoutState>((set) => ({
+    physicalLayoutId: null,
+    setPhysicalLayoutId: (physicalLayoutId) => set({ physicalLayoutId }),
+
     physicalLayout: null,
     setPhysicalLayout: (physicalLayout) => set({ physicalLayout }),
     

@@ -108,8 +108,8 @@ const [isGlobalExportOpen, setIsGlobalExportOpen] = useState(false);
         });
       }
       
-      if (selection.includePhysicalLayout) {
-        data.physicalLayout = useLayoutStore.getState().physicalLayout;
+      if (useLayoutStore.getState().physicalLayoutId) {
+        data.physicalLayoutId = useLayoutStore.getState().physicalLayoutId;
       }
       
       if (selection.macroIds.length > 0) {
@@ -147,7 +147,8 @@ const [isGlobalExportOpen, setIsGlobalExportOpen] = useState(false);
         const importData: GlobalImportData = {
           layers: data.layers ? Object.keys(data.layers).map(Number) : [],
           layerNames: data.layerNames || {},
-          hasPhysicalLayout: !!data.physicalLayout,
+          hasPhysicalLayout: !!data.physicalLayoutId || !!data.physicalLayout,
+          physicalLayoutId: data.physicalLayoutId,
           macros: data.macros || [],
           customKeys: data.customKeys || [],
           combos: data.combos || []
@@ -172,12 +173,7 @@ const [isGlobalExportOpen, setIsGlobalExportOpen] = useState(false);
     try {
       const rawData = (window as any).__globalImportRawData;
       
-      // Hardware
-      if (selection.includePhysicalLayout && rawData?.physicalLayout) {
-        useLayoutStore.getState().setPhysicalLayout(rawData.physicalLayout);
-        // Note: they need to save physical layout manually, or we can't save it directly here easily without the DeviceController.
-        // Actually, saving physical layout requires `hidService`. We'll just load it into state.
-      }
+      // Physical Layout (No longer imported directly, selected via UI instead)
       
       // Layers
       if (selection.layers.length > 0 && rawData?.layers) {
@@ -1020,7 +1016,7 @@ const [isGlobalExportOpen, setIsGlobalExportOpen] = useState(false);
           data={{
             layers: Object.keys(useLayoutStore.getState().layerDataCache).map(Number),
             layerNames: useLayoutStore.getState().layoutMetas.reduce((acc, curr) => ({...acc, [curr.id]: curr.name}), {}),
-            hasPhysicalLayout: !!useLayoutStore.getState().physicalLayout,
+            hasPhysicalLayout: !!useLayoutStore.getState().physicalLayoutId,
             macros,
             customKeys,
             combos
@@ -1028,7 +1024,6 @@ const [isGlobalExportOpen, setIsGlobalExportOpen] = useState(false);
           onClose={() => setIsGlobalExportOpen(false)}
           onExport={handleGlobalExport}
           isExporting={isGlobalExporting}
-          isDeveloperMode={isDeveloperMode}
         />
       )}
       
@@ -1041,10 +1036,10 @@ const [isGlobalExportOpen, setIsGlobalExportOpen] = useState(false);
             customKeys,
             combos
           }}
+          currentPhysicalLayoutId={useLayoutStore.getState().physicalLayoutId}
           onClose={() => { setIsGlobalImportOpen(false); setGlobalImportData(null); }}
           onImport={handleGlobalImport}
           isImporting={isGlobalImporting}
-          isDeveloperMode={isDeveloperMode}
           limits={{
             maxMacros: macroLimits?.maxMacros ?? 32,
             currentMacros: macros.length,

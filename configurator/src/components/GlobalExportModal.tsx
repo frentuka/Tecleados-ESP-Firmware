@@ -16,7 +16,7 @@ export interface GlobalExportData {
 
 export interface GlobalExportSelection {
     layers: number[];
-    includePhysicalLayout: boolean;
+
     macroIds: number[];
     customKeyIds: number[];
     comboIds: number[];
@@ -27,17 +27,13 @@ interface GlobalExportModalProps {
     onClose: () => void;
     onExport: (selection: GlobalExportSelection) => void;
     isExporting: boolean;
-    isDeveloperMode: boolean;
 }
 
-export default function GlobalExportModal({ data, onClose, onExport, isExporting, isDeveloperMode }: GlobalExportModalProps) {
+export default function GlobalExportModal({ data, onClose, onExport, isExporting }: GlobalExportModalProps) {
     const [selectedLayers, setSelectedLayers] = useState<Set<number>>(new Set(data.layers));
     const [selectedMacros, setSelectedMacros] = useState<Set<number>>(new Set(data.macros.map(m => m.id)));
     const [selectedCKeys, setSelectedCKeys] = useState<Set<number>>(new Set(data.customKeys.map(c => c.id)));
     const [selectedCombos, setSelectedCombos] = useState<Set<number>>(new Set(data.combos.map(c => c.id)));
-    
-    // Only togglable via footer in dev mode
-    const [includePhysicalLayout, setIncludePhysicalLayout] = useState<boolean>(false);
 
     type ViewState = 'grid' | 'layers' | 'macros' | 'ckeys' | 'combos';
     type CheckState = 'all' | 'partial' | 'none';
@@ -228,21 +224,11 @@ export default function GlobalExportModal({ data, onClose, onExport, isExporting
                 )}
 
                 <div className="ie-footer">
-                    {isDeveloperMode && data.hasPhysicalLayout && (
-                        <div className="ie-dev-toggle" onClick={() => setIncludePhysicalLayout(!includePhysicalLayout)}>
-                            <CustomCheckbox state={includePhysicalLayout} onClick={(e) => { e.stopPropagation(); setIncludePhysicalLayout(!includePhysicalLayout); }} />
-                            <div className="ie-dev-toggle-text">
-                                Include Physical Layout Geometry (Developer)
-                            </div>
-                        </div>
-                    )}
-
                     <div className="ie-footer-actions">
                         <button className="btn btn-secondary" onClick={onClose} disabled={isExporting}>Cancel</button>
-                        <button className="btn btn-success" disabled={totalSelected === 0 && !includePhysicalLayout || isExporting} onClick={() => {
+                        <button className="btn btn-success" disabled={totalSelected === 0 || isExporting} onClick={() => {
                             onExport({
                                 layers: Array.from(selectedLayers),
-                                includePhysicalLayout,
                                 macroIds: Array.from(selectedMacros),
                                 customKeyIds: Array.from(selectedCKeys),
                                 comboIds: Array.from(selectedCombos)

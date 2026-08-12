@@ -645,7 +645,7 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 6px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
-    z-index: 100;
+    z-index: 9999;
     min-width: 100%;
     max-height: 200px;
     overflow-y: auto;
@@ -685,4 +685,23 @@
     font-style: italic;
     cursor: not-allowed;
     background-color: transparent;
+}
+
+/* Fix dropdown clipping by making parents visible when dropdown is open */
+.ie-section:has(.ie-custom-dropdown.open),
+.ie-section-inner:has(.ie-custom-dropdown.open),
+.ie-body:has(.ie-custom-dropdown.open),
+.ie-detail-content:has(.ie-custom-dropdown.open),
+.ie-detail-container:has(.ie-custom-dropdown.open),
+.ie-modal-content:has(.ie-custom-dropdown.open) {
+    overflow: visible !important;
+}
+
+.ie-section:has(.ie-custom-dropdown.open),
+.ie-item-list:has(.ie-custom-dropdown.open),
+.ie-item:has(.ie-custom-dropdown.open),
+.ie-detail-content:has(.ie-custom-dropdown.open),
+.ie-detail-container:has(.ie-custom-dropdown.open) {
+    position: relative;
+    z-index: 9999;
 }

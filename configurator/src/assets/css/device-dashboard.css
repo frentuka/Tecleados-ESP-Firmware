@@ -77,7 +77,7 @@
   background: rgba(22, 27, 34, 0.5);
   border: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: 12px;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .dd-section-label {
@@ -603,4 +603,93 @@
     width: 100%;
     justify-content: flex-start;
   }
+}
+
+/* Custom Layout Dropdown Styling */
+.dd-custom-dropdown {
+    position: relative;
+    user-select: none;
+    width: 100%;
+}
+
+.dd-custom-dropdown-value {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--text-color, #eee);
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.dd-custom-dropdown-value svg {
+    width: 16px;
+    height: 16px;
+    stroke: #aaaaaa;
+    transition: transform 0.2s ease;
+}
+
+.dd-custom-dropdown.open .dd-custom-dropdown-value svg {
+    transform: rotate(180deg);
+}
+
+.dd-custom-dropdown:hover .dd-custom-dropdown-value {
+    background-color: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.dd-custom-dropdown.open .dd-custom-dropdown-value {
+    border-color: var(--accent-color, #a265ff);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color, #a265ff) 30%, transparent);
+}
+
+.dd-custom-dropdown-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    background-color: #1e1e1e;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+    z-index: 9999;
+    max-height: 250px;
+    overflow-y: auto;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.dd-custom-dropdown-option {
+    padding: 10px 14px;
+    font-size: 0.9rem;
+    color: #eee;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+
+.dd-custom-dropdown-option:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.dd-custom-dropdown-option.selected {
+    background-color: color-mix(in srgb, var(--accent-color, #a265ff) 20%, transparent);
+    color: var(--accent-color, #a265ff);
+}
+
+/* Fix dropdown clipping by making parents visible when dropdown is open */
+.dd-scrollable-content:has(.dd-custom-dropdown.open),
+.dd-section:has(.dd-custom-dropdown.open) {
+    overflow: visible !important;
+}
+.dd-section:has(.dd-custom-dropdown.open) {
+    position: relative;
+    z-index: 9999;
 }

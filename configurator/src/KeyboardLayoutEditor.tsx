@@ -3,7 +3,6 @@ import {
     hidService,
     MODULE_CONFIG,
     CFG_CMD_GET,
-    CFG_CMD_SET,
     CFG_KEY_PHYSICAL_LAYOUT
 } from './HIDService';
 import type { CustomKey } from './types/customKeys';
@@ -20,12 +19,10 @@ import InputModal from './components/InputModal';
 import KeyActionPopover from './components/KeyActionPopover';
 import KeyboardLoadingScreen from './components/KeyboardLoadingScreen';
 import type { Macro } from './types/macros';
-import { parseKleJson } from './utils/kleParser';
-import { parsePhysicalLayoutJson, serializePhysicalLayout } from './utils/layoutUtils';
+import { getPredefinedLayout } from './utils/layoutUtils';
 
 import { useNotificationStore } from './stores/notificationStore';
 import { useLayoutStore } from './stores/layoutStore';
-import { withTimeout, TimeoutError } from './utils/withTimeout';
 import './assets/css/keyboard-layout.css';
 import {
     DndContext,
@@ -65,24 +62,7 @@ interface KeyboardLayoutEditorProps {
 
 
 
-// ── Physical layout fallback (65% KLE) ─────────────────────────────────────
-// Each entry: { row, col, w, h, x, y } in KLE-unit coordinates.
-// Matches the keyboard's firmware DEFAULT layout. Overridden once the device
-// sends its own physical layout via CFG_KEY_PHYSICAL_LAYOUT.
-const DEFAULT_PHYSICAL_LAYOUT: PhysKey[][] = [
-    // Row 0: ESC  1  2  3  4  5  6  7  8  9  0  -  =  BKSP(2u)  DEL
-    [{ row: 0, col: 0, w: 1, h: 1, x: 0, y: 0 }, { row: 0, col: 1, w: 1, h: 1, x: 1, y: 0 }, { row: 0, col: 2, w: 1, h: 1, x: 2, y: 0 }, { row: 0, col: 3, w: 1, h: 1, x: 3, y: 0 }, { row: 0, col: 4, w: 1, h: 1, x: 4, y: 0 }, { row: 0, col: 5, w: 1, h: 1, x: 5, y: 0 }, { row: 0, col: 6, w: 1, h: 1, x: 6, y: 0 }, { row: 0, col: 7, w: 1, h: 1, x: 7, y: 0 }, { row: 0, col: 8, w: 1, h: 1, x: 8, y: 0 }, { row: 0, col: 9, w: 1, h: 1, x: 9, y: 0 }, { row: 0, col: 10, w: 1, h: 1, x: 10, y: 0 }, { row: 0, col: 11, w: 1, h: 1, x: 11, y: 0 }, { row: 0, col: 12, w: 1, h: 1, x: 12, y: 0 }, { row: 0, col: 13, w: 2, h: 1, x: 13, y: 0 }, { row: 0, col: 14, w: 1, h: 1, x: 15, y: 0 }],
-    // Row 1: TAB(1.5u)  Q W E R T Y U I O P [ ] \(1.5u) HOME
-    [{ row: 1, col: 0, w: 1.5, h: 1, x: 0, y: 1 }, { row: 1, col: 1, w: 1, h: 1, x: 1.5, y: 1 }, { row: 1, col: 2, w: 1, h: 1, x: 2.5, y: 1 }, { row: 1, col: 3, w: 1, h: 1, x: 3.5, y: 1 }, { row: 1, col: 4, w: 1, h: 1, x: 4.5, y: 1 }, { row: 1, col: 5, w: 1, h: 1, x: 5.5, y: 1 }, { row: 1, col: 6, w: 1, h: 1, x: 6.5, y: 1 }, { row: 1, col: 7, w: 1, h: 1, x: 7.5, y: 1 }, { row: 1, col: 8, w: 1, h: 1, x: 8.5, y: 1 }, { row: 1, col: 9, w: 1, h: 1, x: 9.5, y: 1 }, { row: 1, col: 10, w: 1, h: 1, x: 10.5, y: 1 }, { row: 1, col: 11, w: 1, h: 1, x: 11.5, y: 1 }, { row: 1, col: 12, w: 1, h: 1, x: 12.5, y: 1 }, { row: 1, col: 13, w: 1.5, h: 1, x: 13.5, y: 1 }, { row: 1, col: 14, w: 1, h: 1, x: 15, y: 1 }],
-    // Row 2: CAPS(1.75u) A S D F G H J K L ; ' ENTER(2.25u) PGUP
-    [{ row: 2, col: 0, w: 1.75, h: 1, x: 0, y: 2 }, { row: 2, col: 1, w: 1, h: 1, x: 1.75, y: 2 }, { row: 2, col: 2, w: 1, h: 1, x: 2.75, y: 2 }, { row: 2, col: 3, w: 1, h: 1, x: 3.75, y: 2 }, { row: 2, col: 4, w: 1, h: 1, x: 4.75, y: 2 }, { row: 2, col: 5, w: 1, h: 1, x: 5.75, y: 2 }, { row: 2, col: 6, w: 1, h: 1, x: 6.75, y: 2 }, { row: 2, col: 7, w: 1, h: 1, x: 7.75, y: 2 }, { row: 2, col: 8, w: 1, h: 1, x: 8.75, y: 2 }, { row: 2, col: 9, w: 1, h: 1, x: 9.75, y: 2 }, { row: 2, col: 10, w: 1, h: 1, x: 10.75, y: 2 }, { row: 2, col: 11, w: 1, h: 1, x: 11.75, y: 2 }, { row: 2, col: 12, w: 2.25, h: 1, x: 12.75, y: 2 }, { row: 2, col: 14, w: 1, h: 1, x: 15, y: 2 }],
-    // Row 3: LSHIFT(2.25u) Z X C V B N M , . / RSHIFT(1.75u) ↑ PGDN
-    [{ row: 3, col: 0, w: 2.25, h: 1, x: 0, y: 3 }, { row: 3, col: 2, w: 1, h: 1, x: 2.25, y: 3 }, { row: 3, col: 3, w: 1, h: 1, x: 3.25, y: 3 }, { row: 3, col: 4, w: 1, h: 1, x: 4.25, y: 3 }, { row: 3, col: 5, w: 1, h: 1, x: 5.25, y: 3 }, { row: 3, col: 6, w: 1, h: 1, x: 6.25, y: 3 }, { row: 3, col: 7, w: 1, h: 1, x: 7.25, y: 3 }, { row: 3, col: 8, w: 1, h: 1, x: 8.25, y: 3 }, { row: 3, col: 9, w: 1, h: 1, x: 9.25, y: 3 }, { row: 3, col: 10, w: 1, h: 1, x: 10.25, y: 3 }, { row: 3, col: 11, w: 1, h: 1, x: 11.25, y: 3 }, { row: 3, col: 12, w: 1.75, h: 1, x: 12.25, y: 3 }, { row: 3, col: 13, w: 1, h: 1, x: 14, y: 3 }, { row: 3, col: 14, w: 1, h: 1, x: 15, y: 3 }],
-    // Row 4: LCTRL(1.25u) LGUI(1.25u) LALT(1.25u) SPACE(6.25u) RALT FN1 FN2 ← ↓ →
-    [{ row: 4, col: 0, w: 1.25, h: 1, x: 0, y: 4 }, { row: 4, col: 1, w: 1.25, h: 1, x: 1.25, y: 4 }, { row: 4, col: 2, w: 1.25, h: 1, x: 2.5, y: 4 }, { row: 4, col: 5, w: 6.25, h: 1, x: 3.75, y: 4 }, { row: 4, col: 9, w: 1, h: 1, x: 10, y: 4 }, { row: 4, col: 10, w: 1, h: 1, x: 11, y: 4 }, { row: 4, col: 11, w: 1, h: 1, x: 12, y: 4 }, { row: 4, col: 12, w: 1, h: 1, x: 13, y: 4 }, { row: 4, col: 13, w: 1, h: 1, x: 14, y: 4 }, { row: 4, col: 14, w: 1, h: 1, x: 15, y: 4 }],
-    // Row 5: (Optional/Thumb keys)
-    []
-];
+const DEFAULT_PHYSICAL_LAYOUT: PhysKey[][] = getPredefinedLayout('stag-65p');
 
 function BaseLayoutTab({ meta, isActive, hasChanges, onSelect }: any) {
     return (
@@ -150,12 +130,9 @@ function SortableLayoutTab({ id, meta, isActive, hasChanges, onDelete, onSelect 
 
 export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, macros, customKeys = [], onLog, onEditEntity }: KeyboardLayoutEditorProps) {
     const { showNotification } = useNotificationStore();
-    const { physicalLayout, setPhysicalLayout, layoutMetas, setLayoutMetas, layerDataCache, setLayerDataCache, activeLayerId, setActiveLayerId, maxLayouts, pressedCodes, setPressedCodes, heldTestKeys, setHeldTestKeys } = useLayoutStore();
+    const { physicalLayout, setPhysicalLayout, setPhysicalLayoutId, layoutMetas, setLayoutMetas, layerDataCache, setLayerDataCache, activeLayerId, setActiveLayerId, maxLayouts, pressedCodes, setPressedCodes, heldTestKeys, setHeldTestKeys } = useLayoutStore();
     const [_layerStatus, setLayerStatus] = useState<Record<number, 'idle' | 'loading' | 'loaded' | 'error'>>({});
-    const [physLayoutStatus, setPhysLayoutStatus] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle');
-    const [showKleImport, setShowKleImport] = useState(false);
-    const [kleInput, setKleInput] = useState('');
-    const [kleError, setKleError] = useState<string | null>(null);
+
     const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
@@ -163,7 +140,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const [isKeyTestMode, setIsKeyTestMode] = useState(false);
     const [isRowColEditMode, setIsRowColEditMode] = useState(false);
-    const [hasPhysLayoutChanges, setHasPhysLayoutChanges] = useState(false);
+
     const [rowInput, setRowInput] = useState('');
     const [colInput, setColInput] = useState('');
     
@@ -553,10 +530,10 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
         const cached = localStorage.getItem(cacheKey);
         if (cached) {
             try {
-                const parsed = parsePhysicalLayoutJson(cached);
+                const parsed = getPredefinedLayout(cached);
                 if (parsed) {
+                    setPhysicalLayoutId(cached);
                     setPhysicalLayout(parsed);
-                    setPhysLayoutStatus('loaded');
                     onLogRef.current('Physical layout loaded from cache');
                     return true;
                 }
@@ -570,20 +547,19 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
         if (plResp && plResp.status === 0 && plResp.data.length > 0) {
             let jsonText = new TextDecoder().decode(plResp.data);
             jsonText = jsonText.replace(/\0/g, '');
-            const parsed = parsePhysicalLayoutJson(jsonText);
+            const parsed = getPredefinedLayout(jsonText);
             if (parsed) {
                 localStorage.setItem(cacheKey, jsonText);
+                setPhysicalLayoutId(jsonText);
                 setPhysicalLayout(parsed);
-                setPhysLayoutStatus('loaded');
                 onLogRef.current('Physical layout loaded from device');
                 return true;
             }
         }
-        setPhysLayoutStatus('error');
         setPhysicalLayout(DEFAULT_PHYSICAL_LAYOUT);
         onLogRef.current('Physical layout fetch failed - using default');
         return false;
-    }, [setPhysicalLayout]);
+    }, [setPhysicalLayout, setPhysicalLayoutId]);
 
     useEffect(() => {
         if (!isConnected) {
@@ -594,7 +570,6 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
         hasFetchedRef.current = true;
 
         (async () => {
-            setPhysLayoutStatus('loading');
             await fetchPhysicalLayout();
 
             // Fetch limits first
@@ -850,14 +825,6 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                     {isRowColEditMode ? 'Exit Row/Col Edit' : 'Row/Col Edit'}
                                 </button>
                             )}
-                            {isDeveloperMode && (
-                                <button className="dropdown-item" onClick={() => { setShowKleImport(true); setKleError(null); setIsMenuOpen(false); }}>
-                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-                                        <path d="M20 5H4c-1.1 0-1.99.9-1.99 2L2 17c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm-9 3h2v2h-2V8zm0 3h2v2h-2v-2zM8 8h2v2H8V8zm0 3h2v2H8v-2zM5 8h2v2H5V8zm0 3h2v2H5v-2zm9 7H8v-2h6v2zm0-5h2v2h-2v-2zm0-3h2v2h-2V8zm3 3h2v2h-2v-2zm0-3h2v2h-2V8z" />
-                                    </svg>
-                                    Import physical layout
-                                </button>
-                            )}
                             {isDeveloperMode && <div className="dropdown-divider" />}
                             <button className="dropdown-item" onClick={() => { fetchLayouts(); setIsMenuOpen(false); }}>
                                 <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
@@ -900,93 +867,6 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                 </div>
             </div>
 
-            {/* KLE Import panel */}
-            {showKleImport && (
-                <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '8px', padding: '1rem', marginBottom: '1rem', border: '1px solid var(--border-color)' }}>
-                    <p style={{ margin: '0 0 0.5rem', fontSize: '0.85rem', opacity: 0.7 }}>
-                        Paste KLE JSON here (from keyboard-layout-editor.com → Raw Data tab):
-                    </p>
-                    <textarea
-                        value={kleInput}
-                        onChange={(e) => { setKleInput(e.target.value); setKleError(null); }}
-                        placeholder={'[\n  ["Esc","1","2",...,{"w":2},"Backspace"],\n  [{"w":1.5},"Tab","Q","W",...],\n  ...\n]'}
-                        style={{
-                            width: '100%', minHeight: '120px', fontFamily: 'monospace', fontSize: '0.8rem',
-                            background: 'var(--bg-color)', color: 'var(--text-primary)', border: '1px solid var(--border-color)',
-                            borderRadius: '4px', padding: '0.5rem', resize: 'vertical', boxSizing: 'border-box'
-                        }}
-                    />
-                    {kleError && <p style={{ color: '#ff6b6b', margin: '0.5rem 0 0', fontSize: '0.85rem' }}>⚠ {kleError}</p>}
-                    <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
-                        <button
-                            className="btn btn-success"
-                            disabled={!kleInput.trim() || !isConnected}
-                            onClick={async () => {
-                                const parsed = parseKleJson(kleInput);
-                                if (!parsed) {
-                                    setKleError('Failed to parse KLE JSON. Make sure you copied the raw JSON data (array format).');
-                                    return;
-                                }
-
-                                // Validate all keys are within matrix bounds
-                                const outOfBounds = parsed.flat().find(k => k.row >= MATRIX_ROWS || k.col >= MATRIX_COLS);
-                                if (outOfBounds) {
-                                    setKleError(`Key at row ${outOfBounds.row}, col ${outOfBounds.col} exceeds matrix bounds (max row index ${MATRIX_ROWS - 1}, max column index ${MATRIX_COLS - 1}).`);
-                                    return;
-                                }
-
-                                // Update local state
-                                setPhysicalLayout(parsed);
-                                setPhysLayoutStatus('loaded');
-
-                                // Save to device
-                                const jsonStr = serializePhysicalLayout(parsed, 6, 18);
-                                const jsonBytes = new TextEncoder().encode(jsonStr);
-                                console.log(`[LayoutEditor] KLE Apply: sending SET PHYSICAL_LAYOUT, json len=${jsonStr.length}, json preview:`, jsonStr.substring(0, 150));
-                                const payload = buildConfigPayload(CFG_CMD_SET, CFG_KEY_PHYSICAL_LAYOUT, jsonBytes);
-                                console.log(`[LayoutEditor] KLE Apply: payload total=${payload.length} bytes, header: ${Array.from(payload.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
-
-                                try {
-                                    const resp = await withTimeout(hidService.sendCommand(payload), 7000);
-                                    const r = resp as any;
-                                    console.log('[LayoutEditor] KLE Apply SET response:', r ? { status: r.status, statusHex: '0x' + r.status.toString(16), cmd: r.cmd, keyId: r.keyId, dataLen: r.data?.length } : 'NULL (timeout)');
-
-                                    if (r && r.status === 0) {
-                                        onLogRef.current(`KLE layout saved to device: ${parsed.length} rows, ${parsed.reduce((s, r) => s + r.length, 0)} keys (${jsonBytes.length} bytes)`);
-                                        showNotification('Physical layout updated', 'success');
-                                    } else {
-                                        onLogRef.current(`KLE layout save failed (status: ${r?.status ?? 'timeout'})`);
-                                        showNotification('Failed to update physical layout', 'error');
-                                    }
-                                } catch (e) {
-                                    if (e instanceof TimeoutError) {
-                                        onLogRef.current('KLE layout save timed out');
-                                        showNotification('Physical layout save timed out — please retry', 'error');
-                                    } else {
-                                        onLogRef.current('KLE layout save failed');
-                                        showNotification('Failed to update physical layout', 'error');
-                                    }
-                                }
-                                setShowKleImport(false);
-                                setKleInput('');
-                                setKleError(null);
-                            }}
-                        >
-                            Apply Layout
-                        </button>
-                        <button className="btn" onClick={() => { setShowKleImport(false); setKleInput(''); setKleError(null); }}>
-                            Cancel
-                        </button>
-                    </div>
-                </div>
-            )}
-
-            {/* Physical layout status */}
-            {physLayoutStatus === 'error' && (
-                <div className="layout-placeholder" style={{ background: 'rgba(255,180,0,0.1)', color: '#ffb400', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
-                    ℹ No physical layout stored on this device yet — using built-in default. Click <strong>"📋 Import KLE Layout"</strong> above to set one.
-                </div>
-            )}
 
             {/* Keyboard visual */}
             {!currentLayer ? (
@@ -1505,7 +1385,6 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                 setPhysicalLayout(result.nextLayout);
                                 setSelectedKeys(new Set([result.newId]));
                                 setRowInput(String(targetValue));
-                                setHasPhysLayoutChanges(true);
                             }
                         };
 
@@ -1516,7 +1395,6 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
                                 setPhysicalLayout(result.nextLayout);
                                 setSelectedKeys(new Set([result.newId]));
                                 setColInput(String(targetValue));
-                                setHasPhysLayoutChanges(true);
                             }
                         };
 
@@ -1599,33 +1477,7 @@ export default function KeyboardLayoutEditor({ isConnected, isDeveloperMode, mac
 
                         {/* Universal Apply button */}
                         <div style={{ display: 'flex', gap: '0.5rem' }}>
-                            {hasPhysLayoutChanges && (
-                                <button
-                                    className="btn btn-success btn-apply-active"
-                                    disabled={isSaving || !isConnected}
-                                    onClick={async () => {
-                                        if (!physicalLayout) return;
-                                        setIsSaving(true);
-                                        const jsonStr = serializePhysicalLayout(physicalLayout, 6, 18);
-                                        const jsonBytes = new TextEncoder().encode(jsonStr);
-                                        const payload = buildConfigPayload(CFG_CMD_SET, CFG_KEY_PHYSICAL_LAYOUT, jsonBytes);
-                                        const resp = await hidService.sendCommand(payload);
-                                        if (resp && resp.status === 0) {
-                                            onLogRef.current('Physical layout saved to device');
-                                            setHasPhysLayoutChanges(false);
-                                        } else {
-                                            onLogRef.current('Physical layout save failed');
-                                        }
-                                        setIsSaving(false);
-                                    }}
-                                    title="Save physical layout changes to device"
-                                >
-                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-                                        <path d="M3 3v18h18V3H3zm16 16H5V5h14v14zM7 7h2v2H7V7zm0 4h2v2H7v-2zm0 4h2v2H7v-2zm4-8h2v2h-2V7zm0 4h2v2h-2v-2zm0 4h2v2h-2v-2zm4-8h2v2h-2V7zm0 4h2v2h-2v-2zm0 4h2v2h-2v-2z" />
-                                    </svg>
-                                    Save Layout
-                                </button>
-                            )}
+
                             {Object.values(hasChanges).some(c => c) && (
                                 <button
                                     className={`btn btn-success btn-apply-active`}

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { hidService } from './HIDService';
 import type { DeviceIdentity } from './services/DeviceController';
 import {
@@ -16,9 +17,80 @@ import type { DeviceStatus } from './types/device';
 import { useNotificationStore } from './stores/notificationStore';
 import { useOnboardingStore } from './stores/onboardingStore';
 import { useUiStore } from './stores/uiStore';
+import { useLayoutStore } from './stores/layoutStore';
 import { withTimeout, TimeoutError } from './utils/withTimeout';
+import { PREDEFINED_LAYOUTS } from './utils/predefinedLayouts';
+import LayoutPreview from './components/LayoutPreview';
+import { CFG_CMD_SET, CFG_KEY_PHYSICAL_LAYOUT, MODULE_CONFIG } from './HIDService';
 import './assets/css/device-dashboard.css';
 import './assets/css/split-dashboard.css';
+
+// ── Payload helper ────────────────────────────────────────────────────────────
+
+function buildConfigPayload(cmd: number, keyId: number, data?: Uint8Array): Uint8Array {
+    const dataLen = data ? data.length : 0;
+    const buf = new Uint8Array(8 + dataLen);
+    buf[0] = MODULE_CONFIG;
+    buf[1] = cmd;
+    buf[2] = keyId;
+    buf[3] = 0; // item_id LSB
+    buf[4] = 0; // item_id MSB
+    buf[5] = 0; // reserved
+    buf[6] = 0; // reserved
+    buf[7] = 0; // reserved
+    if (data) buf.set(data, 8);
+    return buf;
+}
+
+// ── Custom Layout Dropdown ────────────────────────────────────────────────────
+
+function CustomLayoutDropdown({ value, onChange, onHover }: { value: string | null, onChange: (val: string) => void, onHover: (val: string | null, e?: React.MouseEvent) => void }) {
+    const [isOpen, setIsOpen] = useState(false);
+    const containerRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const handleClickOutside = (e: MouseEvent) => {
+            if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+                setIsOpen(false);
+            }
+        };
+        if (isOpen) document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [isOpen]);
+
+    const options = Object.keys(PREDEFINED_LAYOUTS);
+    const label = value || '-- Select a layout --';
+
+    return (
+        <div className={`dd-custom-dropdown ${isOpen ? 'open' : ''}`} ref={containerRef} onClick={(e) => { e.stopPropagation(); setIsOpen(!isOpen); }}>
+            <div className="dd-custom-dropdown-value">
+                {label}
+                <svg viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round'>
+                    <polyline points='6 9 12 15 18 9'></polyline>
+                </svg>
+            </div>
+            {isOpen && (
+                <div className="dd-custom-dropdown-menu">
+                    {options.map(id => (
+                        <div
+                            key={id}
+                            className={`dd-custom-dropdown-option ${value === id ? 'selected' : ''}`}
+                            onMouseEnter={(e) => onHover(id, e)}
+                            onMouseLeave={() => onHover(null)}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onChange(id);
+                                setIsOpen(false);
+                            }}
+                        >
+                            {id}
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
 
 // ── Split label helpers ───────────────────────────────────────────────────────
 
@@ -134,6 +206,32 @@ const DeviceDashboard: React.FC<DeviceDashboardProps> = ({
     const [saveResult, setSaveResult] = useState<'ok' | 'err' | null>(null);
     const [activeTab, setActiveTab] = useState<'device' | 'configurator'>('device');
 
+    const physicalLayoutId = useLayoutStore(state => state.physicalLayoutId);
+    const setStorePhysicalLayoutId = useLayoutStore(state => state.setPhysicalLayoutId);
+    const [draftLayoutId, setDraftLayoutId] = useState<string | null>(null);
+    const [hoveredLayoutId, setHoveredLayoutId] = useState<string | null>(null);
+    const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
+    const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    const handleLayoutHover = useCallback((id: string | null, e?: React.MouseEvent) => {
+        if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+        if (id && e) {
+            setMousePos({ x: e.clientX, y: e.clientY });
+            hoverTimeoutRef.current = setTimeout(() => {
+                setHoveredLayoutId(id);
+            }, 500); // 500ms delay for "stands still for a little"
+        } else {
+            setHoveredLayoutId(null);
+        }
+    }, []);
+
+    // Sync draftLayoutId when physicalLayoutId loads
+    useEffect(() => {
+        if (physicalLayoutId && draftLayoutId === null) {
+            setDraftLayoutId(physicalLayoutId);
+        }
+    }, [physicalLayoutId, draftLayoutId]);
+
     const isDirty =
         draft.device_name      !== saved.device_name      ||
         draft.is_split          !== saved.is_split          ||
@@ -141,7 +239,8 @@ const DeviceDashboard: React.FC<DeviceDashboardProps> = ({
         draft.split_variant     !== saved.split_variant     ||
         draft.ble_shared_name  !== saved.ble_shared_name   ||
         draft.ble_shared_addr  !== saved.ble_shared_addr   ||
-        draft.transparent_stack_fallback !== saved.transparent_stack_fallback;
+        draft.transparent_stack_fallback !== saved.transparent_stack_fallback ||
+        (draftLayoutId !== null && draftLayoutId !== physicalLayoutId);
 
     // ── Split state ───────────────────────────────────────────────────────
 
@@ -195,8 +294,22 @@ const DeviceDashboard: React.FC<DeviceDashboardProps> = ({
         setSaveResult(null);
         try {
             const ok = await withTimeout(hidService.saveDeviceIdentity(draft), 7000);
-            setSaveResult(ok ? 'ok' : 'err');
-            if (ok) {
+            let layoutOk = true;
+            if (draftLayoutId !== null && draftLayoutId !== physicalLayoutId) {
+                const jsonBytes = new TextEncoder().encode(draftLayoutId);
+                const payload = buildConfigPayload(CFG_CMD_SET, CFG_KEY_PHYSICAL_LAYOUT, jsonBytes);
+                const resp = await hidService.sendCommand(payload);
+                layoutOk = !!(resp && resp.status === 0);
+                if (layoutOk) {
+                    setStorePhysicalLayoutId(draftLayoutId);
+                    onLog('Physical layout ID saved to device');
+                } else {
+                    onLog('Physical layout ID save failed');
+                }
+            }
+
+            setSaveResult(ok && layoutOk ? 'ok' : 'err');
+            if (ok && layoutOk) {
                 setSaved(draft);
                 onLog(`Device Identity: saved (name="${draft.device_name}", ble_name="${draft.ble_shared_name}", split=${draft.is_split})`);
                 showNotification('Device identity saved successfully', 'success');
@@ -435,6 +548,46 @@ const DeviceDashboard: React.FC<DeviceDashboardProps> = ({
                             </div>
                         </FieldGroup>
 
+
+
+                        {isDeveloperMode && (
+                            <FieldGroup label="Physical Layout" hint="Select the physical layout identifier to load the visual map for this board.">
+                                <div style={{ position: 'relative', display: 'inline-block', width: '100%' }}>
+                                    <CustomLayoutDropdown 
+                                        value={draftLayoutId} 
+                                        onChange={setDraftLayoutId} 
+                                        onHover={handleLayoutHover}
+                                    />
+                                    
+                                    {/* Hover Preview Pop-up */}
+                                    {createPortal(
+                                        <div
+                                            style={{
+                                                position: 'fixed',
+                                                top: mousePos.y - 10,
+                                                left: mousePos.x + 20,
+                                                transform: 'translateY(-100%)',
+                                                zIndex: 9999999,
+                                                background: 'var(--panel-bg)',
+                                                border: '1px solid rgba(255,255,255,0.1)',
+                                                borderRadius: '8px',
+                                                padding: '12px',
+                                                boxShadow: '0 8px 32px rgba(0,0,0,0.8)',
+                                                opacity: hoveredLayoutId ? 1 : 0,
+                                                visibility: hoveredLayoutId ? 'visible' : 'hidden',
+                                                transition: 'opacity 0.2s ease, visibility 0.2s ease',
+                                                pointerEvents: 'none'
+                                            }}
+                                        >
+                                            <div style={{ marginBottom: '8px', fontSize: '0.8rem', opacity: 0.8 }}>Preview: <strong>{hoveredLayoutId}</strong></div>
+                                            {hoveredLayoutId && <LayoutPreview layoutId={hoveredLayoutId} />}
+                                        </div>,
+                                        document.body
+                                    )}
+                                </div>
+                            </FieldGroup>
+                        )}
+
                     </DdSection>
 
                     {/* ── BACKUP / CONFIGURATION ──────────────────────── */}
@@ -665,6 +818,7 @@ const DeviceDashboard: React.FC<DeviceDashboardProps> = ({
                     {/* ── DEVELOPER MODE ──────────────────────────────── */}
                     {isDeveloperMode && (
                         <>
+
                             {isConnectedS && splitRole === SPLIT_ROLE_MASTER && (
                                 <DdSection label="Remote Key Test">
                                     <div className="dd-section-header-row">
